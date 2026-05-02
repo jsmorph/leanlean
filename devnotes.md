@@ -6,7 +6,7 @@ This file records sources, rationale, and small plans for the project.  The refe
 
 This effort is spec-driven.  It does not derive a Lean kernel in Lean from the Lean 4 sources, and it does not treat the current Lean 4 implementation as a substitute for a specification.  Drafting the specification is therefore a major part of the work, not a preliminary formality.
 
-The first implementation target is a small data fragment.  It includes closed universes, dependent functions, axioms, transparent definitions, and single inductive declarations with direct recursive fields.  It excludes the parts of Lean 4 that would force immediate commitments on universes, propositions, or richer inductive families before the base recursor story is stable.
+The first implementation target is a small data fragment.  It includes closed universes, dependent functions, axioms, transparent definitions, and single inductive declarations with strict positivity checking and primitive recursor families.  It excludes the parts of Lean 4 that would force immediate commitments on universe polymorphism, propositions, or richer inductive families before the base recursor story is stable.
 
 ## References
 
@@ -30,3 +30,7 @@ The first implementation target is a small data fragment.  It includes closed un
 ## Current Decisions
 
 The first specification draft lives in `spec.md`.  It covers the data fragment only, with single inductive declarations, direct recursive fields, generated recursors, and beta, delta, zeta, and iota reduction.  It omits `Prop`, proof irrelevance, quotient types, mutual or nested inductives, indices, and universe polymorphism.
+
+Universe levels are now represented by a small closed level language rather than by raw natural numbers.  The kernel still requires an explicit result universe for each inductive type, but it now checks that constructors do not require a larger universe.  That keeps the present subset minimal while preserving a clean path to later level variables and substitution.
+
+The positivity check is now compositional across earlier inductive declarations.  The kernel computes which parameters of each inductive are positive, and it uses that information when another inductive nests a recursive occurrence under that type constructor.  The recursor generator now follows the same structure, producing helper recursors for nested positive targets such as `List T` in addition to the primary recursor for `T`.

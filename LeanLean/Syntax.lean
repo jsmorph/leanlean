@@ -1,7 +1,37 @@
 namespace LeanLean
 
 abbrev Name := String
-abbrev Level := Nat
+
+inductive Level where
+  | zero : Level
+  | succ : Level → Level
+  | max : Level → Level → Level
+  deriving DecidableEq, Repr, Inhabited
+
+namespace Level
+
+def ofNat : Nat → Level
+  | 0 => .zero
+  | n + 1 => .succ (ofNat n)
+
+instance instOfNatLevel (n : Nat) : OfNat Level n where
+  ofNat := ofNat n
+
+def eval : Level → Nat
+  | .zero => 0
+  | .succ level => eval level + 1
+  | .max left right => Nat.max (eval left) (eval right)
+
+def normalize (level : Level) : Level :=
+  ofNat (eval level)
+
+def defEq (left right : Level) : Bool :=
+  eval left = eval right
+
+def le (left right : Level) : Bool :=
+  eval left <= eval right
+
+end Level
 
 inductive Expr where
   | bvar : Nat → Expr
@@ -49,7 +79,7 @@ def closed (expr : Expr) : Bool :=
 
 def alphaEq : Expr → Expr → Bool
   | .bvar left, .bvar right => left = right
-  | .sort left, .sort right => left = right
+  | .sort left, .sort right => Level.defEq left right
   | .const left, .const right => left = right
   | .app leftFn leftArg, .app rightFn rightArg =>
       alphaEq leftFn rightFn && alphaEq leftArg rightArg
@@ -95,6 +125,37 @@ def liftFrom (cutoff delta : Nat) : Expr → Expr
 
 def lift (delta : Nat) (expr : Expr) : Expr :=
   liftFrom 0 delta expr
+
+def lowerFrom (cutoff delta : Nat) : Expr → Option Expr
+  | .bvar index =>
+      if index < cutoff then
+        some (.bvar index)
+      else if delta <= index then
+        some (.bvar (index - delta))
+      else
+        none
+  | .sort level => some (.sort level)
+  | .const name => some (.const name)
+  | .app fn arg => do
+      let fn' ← lowerFrom cutoff delta fn
+      let arg' ← lowerFrom cutoff delta arg
+      pure (.app fn' arg')
+  | .lam name ty body => do
+      let ty' ← lowerFrom cutoff delta ty
+      let body' ← lowerFrom (cutoff + 1) delta body
+      pure (.lam name ty' body')
+  | .forallE name ty body => do
+      let ty' ← lowerFrom cutoff delta ty
+      let body' ← lowerFrom (cutoff + 1) delta body
+      pure (.forallE name ty' body')
+  | .letE name ty val body => do
+      let ty' ← lowerFrom cutoff delta ty
+      let val' ← lowerFrom cutoff delta val
+      let body' ← lowerFrom (cutoff + 1) delta body
+      pure (.letE name ty' val' body')
+
+def lower (delta : Nat) (expr : Expr) : Option Expr :=
+  lowerFrom 0 delta expr
 
 def instantiateFrom (cutoff : Nat) (value : Expr) : Expr → Expr
   | .bvar index =>
