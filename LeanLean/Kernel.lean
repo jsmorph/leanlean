@@ -756,7 +756,7 @@ partial def infer (env : Env) (ctx : Context) (expr : Expr) : Result Expr := do
   match expr with
   | .bvar index =>
       match lookupCtx ctx index with
-      | some binder => pure binder.type
+      | some binder => pure (Expr.lift (index + 1) binder.type)
       | none => .error s!"unbound variable #{index}"
   | .sort level =>
       if level.closed then
@@ -988,6 +988,16 @@ def checkClosed (what : String) (expr : Expr) : Result Unit :=
   else
     .error s!"{what} must be closed"
 
+def validateGeneratedType
+    (env : Env)
+    (what : String)
+    (levelParams : List Name)
+    (type : Expr) : Result Unit := do
+  let levels := List.replicate levelParams.length (0 : Level)
+  let instantiated := Expr.instantiateLevels levelParams levels type
+  let _ ← checkClosed what instantiated
+  let _ ← inferSort env [] instantiated
+
 def checkFreshName (env : Env) (name : Name) : Result Unit :=
   if env.contains name then
     .error s!"name already exists: {name}"
@@ -1087,12 +1097,26 @@ def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
       .error s!"duplicate name in inductive declaration: {target.recName}"
     let _ ← checkFreshName env target.recName
     seenNames := target.recName :: seenNames
-  let ctorInfos :=
-    spec.ctors.map fun ctor =>
-      .ctor ctor.name [] (constructorTypeExpr spec ctor) spec.name
+  let ctorInfos ←
+    spec.ctors.mapM fun ctor => do
+      let ctorType := constructorTypeExpr spec ctor
+      let _ ←
+        validateGeneratedType
+          infoEnv
+          s!"generated constructor {ctor.name} type"
+          []
+          ctorType
+      pure (.ctor ctor.name [] ctorType spec.name)
+  let ctorEnv := ctorInfos.reverse ++ infoEnv
   let recInfos ←
     (List.zip (List.range family.targets.length) family.targets).mapM fun pair => do
       let recType ← buildRecursorType family pair.1
+      let _ ←
+        validateGeneratedType
+          ctorEnv
+          s!"generated recursor {pair.2.recName} type"
+          recursorLevelParams
+          recType
       pure (.recursor pair.2.recName recursorLevelParams recType pair.1 family)
   pure (recInfos.reverse ++ ctorInfos.reverse ++ (.inductive spec.name [] info :: env))
 

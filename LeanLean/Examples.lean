@@ -278,6 +278,30 @@ def depNestSpec : InductiveSpec :=
       ]
   }
 
+def depNestPSpec : InductiveSpec :=
+  {
+    name := "DepNestP"
+    params := [{ name := "β", type := .sort 0 }]
+    level := 0
+    ctors :=
+      [
+        {
+          name := "DepNestP.mk"
+          fields :=
+            [
+              {
+                name := "f"
+                type :=
+                  .forallE
+                    "n"
+                    natType
+                    (Expr.mkApps (const0 "WrapAt") [.bvar 0, Expr.mkApps (const0 "DepNestP") [.bvar 1]])
+              }
+            ]
+        }
+      ]
+  }
+
 def sampleEnv : Result Env := do
   let env ← addInductive [] boolSpec
   let env ← addInductive env natSpec
@@ -432,6 +456,29 @@ def wrapAtType (index elem : Expr) : Expr :=
 def wrapAtMk (index elem value : Expr) : Expr :=
   Expr.mkApps (const0 "WrapAt.mk") [index, elem, value]
 
+def wrapAtZeroBoolType : Expr :=
+  wrapAtType natZero boolType
+
+def wrapAtTrueZero : Expr :=
+  wrapAtMk natZero boolType boolTrue
+
+def wrapAtBoolMotive : Expr :=
+  .lam "t" wrapAtZeroBoolType natType
+
+def wrapAtBoolCase : Expr :=
+  .lam "x" boolType natZero
+
+def wrapAtRecOnTrueZero : Expr :=
+  Expr.mkApps
+    (recConst "WrapAt.rec")
+    [
+      natZero,
+      boolType,
+      wrapAtBoolMotive,
+      wrapAtBoolCase,
+      wrapAtTrueZero
+    ]
+
 def depNestFieldType : Expr :=
   .forallE "n" natType (wrapAtType (.bvar 0) depNestType)
 
@@ -466,6 +513,49 @@ def depNestHelperRecOnSeed : Expr :=
       depNestWrapCase,
       natZero,
       wrapAtSeedZero
+    ]
+
+def depNestPType (param : Expr) : Expr :=
+  Expr.mkApps (const0 "DepNestP") [param]
+
+def depNestPBoolType : Expr :=
+  depNestPType boolType
+
+def depNestPFieldType : Expr :=
+  .forallE "n" natType (wrapAtType (.bvar 0) depNestPBoolType)
+
+def depNestPMotive : Expr :=
+  .lam "t" depNestPBoolType boolType
+
+def wrapAtDepNestPMotive : Expr :=
+  .lam "n" natType (.lam "t" (wrapAtType (.bvar 0) depNestPBoolType) boolType)
+
+def depNestPRootCase : Expr :=
+  .lam "f" depNestPFieldType (.lam "ih" (.forallE "n" natType boolType) boolFalse)
+
+def depNestPWrapCase : Expr :=
+  .lam "n" natType (.lam "x" depNestPBoolType (.lam "ih" boolType boolTrue))
+
+def depNestPSeedName : Name :=
+  "depNestPSeed"
+
+def depNestPSeed : Expr :=
+  const0 depNestPSeedName
+
+def wrapAtDepNestPSeedZero : Expr :=
+  wrapAtMk natZero depNestPBoolType depNestPSeed
+
+def depNestPHelperRecOnSeed : Expr :=
+  Expr.mkApps
+    (recConst "DepNestP.rec_1")
+    [
+      boolType,
+      depNestPMotive,
+      wrapAtDepNestPMotive,
+      depNestPRootCase,
+      depNestPWrapCase,
+      natZero,
+      wrapAtDepNestPSeedZero
     ]
 
 def demoReport : Result (List String) := do
@@ -529,6 +619,10 @@ def demoReport : Result (List String) := do
   | some _ => .error "DupHelper should not generate a duplicate helper recursor"
   | none => pure ()
   let env ← addInductive env wrapAtSpec
+  let wrapAtRecTy ← infer env [] wrapAtRecOnTrueZero
+  let _ ← checkDefEq env wrapAtRecTy natType
+  let wrapAtRecNf ← normalize env wrapAtRecOnTrueZero
+  let _ ← checkDefEq env wrapAtRecNf natZero
   let env ← addInductive env depNestSpec
   let env ← addAxiom env depNestSeedName depNestType
   let _ ← infer env [] (recConst "DepNest.rec_1")
@@ -551,6 +645,15 @@ def demoReport : Result (List String) := do
   let depNestHelperNf ← normalize env depNestHelperRecOnSeed
   if depNestHelperNf != boolTrue then
     .error s!"unexpected normal form for DepNest.rec_1 example: {repr depNestHelperNf}"
+  else
+    pure ()
+  let env ← addInductive env depNestPSpec
+  let env ← addAxiom env depNestPSeedName depNestPBoolType
+  let depNestPHelperTy ← infer env [] depNestPHelperRecOnSeed
+  let _ ← checkDefEq env depNestPHelperTy boolType
+  let depNestPHelperNf ← normalize env depNestPHelperRecOnSeed
+  if depNestPHelperNf != boolTrue then
+    .error s!"unexpected normal form for DepNestP.rec_1 example: {repr depNestPHelperNf}"
   else
     pure ()
   match normalize env natRecMissingLevel with
@@ -581,9 +684,11 @@ def demoReport : Result (List String) := do
       "Nat.rec on one normalizes to Bool.false",
       "List Bool constructor application checks",
       "NatListTree.rec uses a nested helper recursor through List",
+      "WrapAt.rec respects inductive parameters",
       "let-bound field types are normalized before positivity analysis",
       "helper-recursion targets are deduplicated by canonical form",
       "helper recursors support binder-dependent nested targets",
+      "helper recursors support targets that depend on parameters and local binders",
       "constructorless inductives may sit below parameter universes",
       "constructor and field universes are rejected when they exceed the result universe",
       "recursor reduction rejects targets whose constructor parameters disagree",

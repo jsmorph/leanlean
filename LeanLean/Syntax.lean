@@ -257,8 +257,47 @@ def instantiateFrom (cutoff : Nat) (value : Expr) : Expr → Expr
 def instantiate1 (value body : Expr) : Expr :=
   instantiateFrom 0 value body
 
+def listGet? : List α → Nat → Option α
+  | [], _ => none
+  | value :: _, 0 => some value
+  | _ :: rest, index + 1 => listGet? rest index
+
+def instantiateManyFrom (cutoff : Nat) (values : List Expr) : Expr → Expr
+  | .bvar index =>
+      if index < cutoff then
+        .bvar index
+      else
+        let rel := index - cutoff
+        if rel < values.length then
+          match listGet? values (values.length - 1 - rel) with
+          | some value => .lift cutoff value
+          | none => panic! "invalid simultaneous instantiation index"
+        else
+          .bvar (index - values.length)
+  | .sort level => .sort level
+  | .const name levels => .const name levels
+  | .app fn arg =>
+      .app (instantiateManyFrom cutoff values fn) (instantiateManyFrom cutoff values arg)
+  | .lam name ty body =>
+      .lam
+        name
+        (instantiateManyFrom cutoff values ty)
+        (instantiateManyFrom (cutoff + 1) values body)
+  | .forallE name ty body =>
+      .forallE
+        name
+        (instantiateManyFrom cutoff values ty)
+        (instantiateManyFrom (cutoff + 1) values body)
+  | .letE name ty val body =>
+      .letE
+        name
+        (instantiateManyFrom cutoff values ty)
+        (instantiateManyFrom cutoff values val)
+        (instantiateManyFrom (cutoff + 1) values body)
+termination_by expr => expr
+
 def instantiateMany (values : List Expr) (body : Expr) : Expr :=
-  values.reverse.foldl (fun acc value => instantiate1 value acc) body
+  instantiateManyFrom 0 values body
 
 def instantiateLevels (params : List Name) (values : List Level) : Expr → Expr
   | .bvar index => .bvar index
