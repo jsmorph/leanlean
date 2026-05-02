@@ -24,13 +24,13 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Define the minimal scope for the first specification.
 - [x] Review the recorded references and the relevant Lean reference sections.
 - [x] Draft the initial minimal Lean 4 specification, including inductive types.
-- [ ] Implement the first running kernel model in Lean 4 for that specification.
-- [ ] Check that the resulting specification and kernel together constitute a serious proof of concept.
+- [x] Implement the first running kernel model in Lean 4 for that specification.
+- [x] Check that the resulting specification and kernel together constitute a serious proof of concept.
 
 ## Current Decisions
 
-The first specification draft lives in `spec.md`.  It covers the data fragment only, with single inductive declarations, direct recursive fields, generated recursors, and beta, delta, zeta, and iota reduction.  It omits `Prop`, proof irrelevance, quotient types, mutual or nested inductives, indices, and universe polymorphism.
+The first specification draft lives in `spec.md`.  It now covers the data fragment with single inductive declarations, strictly positive recursive fields, generated recursor families, and beta, delta, zeta, and iota reduction.  It still omits `Prop`, proof irrelevance, quotient types, mutual inductives, indices, and general user-declared universe polymorphism.
 
-Universe levels are now represented by a small closed level language rather than by raw natural numbers.  The kernel still requires an explicit result universe for each inductive type, but it now checks that constructors do not require a larger universe.  That keeps the present subset minimal while preserving a clean path to later level variables and substitution.
+Universe levels are represented by a small level language rather than by raw natural numbers.  Inductive result universes remain explicit and closed, and the kernel checks that constructor arguments do not force a larger universe.  The term language now also carries explicit universe arguments on constants, because primitive recursors need a motive universe parameter in order to exist as ordinary constants with ordinary types.
 
-The positivity check is now compositional across earlier inductive declarations.  The kernel computes which parameters of each inductive are positive, and it uses that information when another inductive nests a recursive occurrence under that type constructor.  The recursor generator now follows the same structure, producing helper recursors for nested positive targets such as `List T` in addition to the primary recursor for `T`.
+The positivity check is compositional across earlier inductive declarations.  The kernel computes which parameters of each inductive are positive, and it uses that information when another inductive nests a recursive occurrence under that type constructor.  The recursor generator follows the same structure, producing helper recursors for nested positive targets such as `List T` in addition to the primary recursor for `T`.  Recursor constants now type-check through the ordinary spine rule, and iota reduction is confined to saturated applications.

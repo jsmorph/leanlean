@@ -6,15 +6,15 @@ The subset follows the shape of Lean's core language described in the Lean refer
 
 ## Scope
 
-The first subset covers transparent definitions, axioms, and single inductive declarations.  It supports parameters on inductive types, strictly positive constructor fields, generated recursor families, and the reduction rules required to compute through those recursors.  It excludes the parts of Lean 4 that would force a larger theory before the inductive fragment is stable, such as quotient types, mutual inductives, structure projections, proof irrelevance, indices, and universe polymorphism.
+The first subset covers transparent definitions, axioms, and single inductive declarations.  It supports parameters on inductive types, strictly positive constructor fields, generated recursor families, and the reduction rules required to compute through those recursors.  It excludes the parts of Lean 4 that would force a larger theory before the inductive fragment is stable, such as quotient types, mutual inductives, structure projections, proof irrelevance, indices, and general user-declared universe polymorphism.
 
-The subset is a data fragment.  Universes are predicative and closed: terms may mention `Sort u` for closed level expressions, and the first implementation does not quantify over universe levels or include `Prop`.  This restriction leaves the type checker small enough to inspect while preserving the main questions about constructor formation, recursor generation, and iota reduction.
+The subset remains a data fragment.  Inductive result universes are predicative and closed, and the implementation still omits `Prop`.  The term language nevertheless carries explicit universe arguments on constants, because generated recursors need a motive universe parameter in order to exist as ordinary primitive constants rather than as a typing special case.
 
 ## Terms and Declarations
 
-Expressions have seven forms: bound variables, sorts, constants, application, lambda abstraction, dependent function types, and `let` bindings.  Bound variables use de Bruijn indices.  Constants refer to entries in a global environment, and the environment contains only closed declarations.
+Expressions have seven forms: bound variables, sorts, constants, application, lambda abstraction, dependent function types, and `let` bindings.  Bound variables use de Bruijn indices.  Constants carry explicit universe instantiations, and the environment stores the corresponding level-parameterized primitive types.  User-facing declarations in the first subset remain closed and monomorphic, but generated recursors introduce a controlled use of level parameters inside the kernel.
 
-The environment admits three user-facing declarations.  An axiom adds a closed constant with a closed type.  A definition adds a closed constant with a closed type and a closed value whose inferred type is definitionally equal to the declared type.  An inductive declaration adds a type constructor, one constant for each constructor, and one primitive recursor.
+The environment admits three user-facing declarations.  An axiom adds a closed constant with a closed type.  A definition adds a closed constant with a closed type and a closed value whose inferred type is definitionally equal to the declared type.  An inductive declaration adds a type constructor, one constant for each constructor, and a family of primitive recursors.
 
 ## Inductive Fragment
 
@@ -24,24 +24,22 @@ The result universe of an inductive type remains explicit in the first subset, b
 
 Recursive occurrences must be strictly positive.  A recursive occurrence may not appear to the left of an arrow.  It may appear in the codomain of an arrow, producing function-valued induction hypotheses, and it may appear as an argument to another inductive type constructor only when the corresponding parameter of that inductive has already been established as positive.  This makes the positivity check compositional across earlier inductive declarations: `List Tree` is accepted because `List` is positive in its element parameter, while a type such as `BadParam Tree`, where the parameter occurs negatively inside `BadParam`, is rejected.
 
-The kernel derives a family of primitive recursors from the inductive type and the strictly positive types reachable from its constructor fields.  The primary recursor eliminates the inductive type itself.  Helper recursors eliminate nested positive types such as `List Tree`, sharing the same parameters, motives, and minor premises as the primary recursor.  Each constructor contributes one minor premise, and each strictly positive recursive field contributes an induction-hypothesis argument whose shape follows the field: direct recursive fields contribute a direct hypothesis, function-valued fields contribute a function of hypotheses, and nested inductive fields contribute a hypothesis through the corresponding helper recursor.  A saturated recursor application reduces by iota when its target reduces to a constructor application of the corresponding target type.
+The kernel derives a family of primitive recursors from the inductive type and the strictly positive types reachable from its constructor fields.  The primary recursor eliminates the inductive type itself.  Helper recursors eliminate nested positive types such as `List Tree`, sharing the same parameters, motives, and minor premises as the primary recursor.  Each recursor carries one explicit universe parameter for the common motive sort.  Each constructor contributes one minor premise, and each strictly positive recursive field contributes an induction-hypothesis argument whose shape follows the field: direct recursive fields contribute a direct hypothesis, function-valued fields contribute a function of hypotheses, and nested inductive fields contribute a hypothesis through the corresponding helper recursor.  A saturated recursor application reduces by iota when its target reduces to a constructor application of the corresponding target type.
 
 ## Conversion and Typing
 
-Typing follows the ordinary rules for a dependently typed lambda calculus.  `Sort u` has type `Sort (u + 1)`, and a dependent function type `∀ x : A, B` lives in `Sort (max u v)` when `A : Sort u` and `B : Sort v`.  Conversion uses normalization-based definitional equality in the first implementation.
+Typing follows the ordinary rules for a dependently typed lambda calculus.  `Sort u` has type `Sort (u + 1)`, and a dependent function type `∀ x : A, B` lives in `Sort (max u v)` when `A : Sort u` and `B : Sort v`.  Primitive recursors type-check through those same ordinary rules once their explicit universe argument is supplied, because the kernel now stores them as ordinary constants with ordinary dependent function types.  Conversion uses normalization-based definitional equality in the first implementation.
 
-The conversion relation includes beta, delta, zeta, and iota reduction.  Beta reduction substitutes an argument into a lambda body.  Delta reduction unfolds transparent definitions.  Zeta reduction substitutes the bound value of a `let`.  Iota reduction applies a recursor case to a constructor target and recursively computes the induction hypotheses for recursive fields.
-
-The first implementation uses saturated recursor applications as the primitive interface for elimination.  That choice keeps the typing and reduction rules explicit, because the result type comes directly from the motive and target.  Constructor constants remain ordinary curried constants, so parameterized data still behaves like a small dependently typed core language rather than a custom evaluator for a handful of examples.
+The conversion relation includes beta, delta, zeta, and iota reduction.  Beta reduction substitutes an argument into a lambda body.  Delta reduction unfolds transparent definitions.  Zeta reduction substitutes the bound value of a `let`.  Iota reduction applies a saturated recursor case to a constructor target and recursively computes the induction hypotheses for recursive fields.  Unsaturated recursor constants do not reduce, but they still type-check as ordinary constants.
 
 ## Deliberate Omissions
 
 | Feature | Status in first subset | Reason |
 | --- | --- | --- |
-| Universe polymorphism | Omitted | It requires a separate level language and comparison procedure. |
+| General user-declared universe polymorphism | Omitted | The subset admits only closed inductive universes and a single generated motive level parameter on primitive recursors. |
 | `Prop`, proof irrelevance, and large elimination | Omitted | They change both conversion and recursor formation. |
 | Quotients | Omitted | They add a primitive type former and an additional reduction rule. |
-| Mutual and nested inductives | Omitted | They enlarge the positivity and recursor-generation rules immediately. |
+| Mutual inductives | Omitted | They enlarge the positivity and recursor-generation rules immediately. |
 | Constructor field dependencies and indices | Omitted | They require a more general inductive-family specification. |
 
 These omissions are not placeholders for undocumented behavior.  The kernel either implements a feature or rejects it.  Later versions can enlarge the specification once the current fragment has stable examples, tests, and a clearer path toward universes and propositions.

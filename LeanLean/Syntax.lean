@@ -4,11 +4,17 @@ abbrev Name := String
 
 inductive Level where
   | zero : Level
+  | param : Name → Level
   | succ : Level → Level
   | max : Level → Level → Level
   deriving DecidableEq, Repr, Inhabited
 
 namespace Level
+
+structure Summand where
+  name? : Option Name
+  offset : Nat
+  deriving DecidableEq, Repr, Inhabited
 
 def ofNat : Nat → Level
   | 0 => .zero
@@ -17,26 +23,85 @@ def ofNat : Nat → Level
 instance instOfNatLevel (n : Nat) : OfNat Level n where
   ofNat := ofNat n
 
-def eval : Level → Nat
-  | .zero => 0
-  | .succ level => eval level + 1
-  | .max left right => Nat.max (eval left) (eval right)
+def closed : Level → Bool
+  | .zero => true
+  | .param _ => false
+  | .succ level => closed level
+  | .max left right => closed left && closed right
 
-def normalize (level : Level) : Level :=
-  ofNat (eval level)
+def bumpSummands : List Summand → List Summand :=
+  List.map fun summand => { summand with offset := summand.offset + 1 }
+
+def mergeSummand (summand : Summand) : List Summand → List Summand
+  | [] => [summand]
+  | entry :: rest =>
+      if entry.name? = summand.name? then
+        { entry with offset := Nat.max entry.offset summand.offset } :: rest
+      else
+        entry :: mergeSummand summand rest
+
+def mergeSummands (left right : List Summand) : List Summand :=
+  right.foldl (fun acc summand => mergeSummand summand acc) left
+
+def normalizeSummands : Level → List Summand
+  | .zero => [{ name? := none, offset := 0 }]
+  | .param name => [{ name? := some name, offset := 0 }]
+  | .succ level => bumpSummands (normalizeSummands level)
+  | .max left right =>
+      mergeSummands (normalizeSummands left) (normalizeSummands right)
+termination_by level => level
+
+def toLevel : Summand → Level
+  | { name? := none, offset } => ofNat offset
+  | { name? := some name, offset } =>
+      Nat.rec (.param name) (fun _ acc => .succ acc) offset
+
+def normalize : Level → Level
+  | level =>
+      match normalizeSummands level with
+      | [] => .zero
+      | summand :: rest =>
+          rest.foldl (fun acc entry => .max acc (toLevel entry)) (toLevel summand)
+
+def closedEval? (level : Level) : Option Nat :=
+  let summands := normalizeSummands level
+  if summands.all fun summand => summand.name?.isNone then
+    some (summands.foldl (fun acc summand => Nat.max acc summand.offset) 0)
+  else
+    none
+
+def eval (level : Level) : Nat :=
+  match closedEval? level with
+  | some value => value
+  | none => panic! s!"attempted to evaluate open universe level {repr level}"
 
 def defEq (left right : Level) : Bool :=
-  eval left = eval right
+  let leftN := normalizeSummands left
+  let rightN := normalizeSummands right
+  leftN.length = rightN.length &&
+    leftN.all fun summand => rightN.any fun other => other = summand
 
 def le (left right : Level) : Bool :=
-  eval left <= eval right
+  match closedEval? left, closedEval? right with
+  | some leftValue, some rightValue => leftValue <= rightValue
+  | _, _ => false
+
+def instantiate (params : List Name) (values : List Level) : Level → Level
+  | .zero => .zero
+  | .param name =>
+      match List.zip params values |>.find? (fun pair => pair.1 = name) with
+      | some (_, value) => value
+      | none => .param name
+  | .succ level => .succ (instantiate params values level)
+  | .max left right => .max (instantiate params values left) (instantiate params values right)
+termination_by level => level
 
 end Level
 
 inductive Expr where
   | bvar : Nat → Expr
   | sort : Level → Expr
-  | const : Name → Expr
+  | const : Name → List Level → Expr
   | app : Expr → Expr → Expr
   | lam : String → Expr → Expr → Expr
   | forallE : String → Expr → Expr → Expr
@@ -66,8 +131,8 @@ def bvarArgs (count inner : Nat) : List Expr :=
 
 def closedAt (depth : Nat) : Expr → Bool
   | .bvar index => index < depth
-  | .sort _ => true
-  | .const _ => true
+  | .sort level => level.closed
+  | .const _ levels => levels.all Level.closed
   | .app fn arg => closedAt depth fn && closedAt depth arg
   | .lam _ ty body => closedAt depth ty && closedAt (depth + 1) body
   | .forallE _ ty body => closedAt depth ty && closedAt (depth + 1) body
@@ -80,7 +145,10 @@ def closed (expr : Expr) : Bool :=
 def alphaEq : Expr → Expr → Bool
   | .bvar left, .bvar right => left = right
   | .sort left, .sort right => Level.defEq left right
-  | .const left, .const right => left = right
+  | .const leftName leftLevels, .const rightName rightLevels =>
+      leftName = rightName &&
+      leftLevels.length = rightLevels.length &&
+      (List.zip leftLevels rightLevels).all fun pair => Level.defEq pair.1 pair.2
   | .app leftFn leftArg, .app rightFn rightArg =>
       alphaEq leftFn rightFn && alphaEq leftArg rightArg
   | .lam _ leftTy leftBody, .lam _ rightTy rightBody =>
@@ -96,7 +164,7 @@ def alphaEq : Expr → Expr → Bool
 def occursConst (target : Name) : Expr → Bool
   | .bvar _ => false
   | .sort _ => false
-  | .const name => name = target
+  | .const name _ => name = target
   | .app fn arg => occursConst target fn || occursConst target arg
   | .lam _ ty body => occursConst target ty || occursConst target body
   | .forallE _ ty body => occursConst target ty || occursConst target body
@@ -110,7 +178,7 @@ def liftFrom (cutoff delta : Nat) : Expr → Expr
       else
         .bvar (index + delta)
   | .sort level => .sort level
-  | .const name => .const name
+  | .const name levels => .const name levels
   | .app fn arg => .app (liftFrom cutoff delta fn) (liftFrom cutoff delta arg)
   | .lam name ty body =>
       .lam name (liftFrom cutoff delta ty) (liftFrom (cutoff + 1) delta body)
@@ -135,7 +203,7 @@ def lowerFrom (cutoff delta : Nat) : Expr → Option Expr
       else
         none
   | .sort level => some (.sort level)
-  | .const name => some (.const name)
+  | .const name levels => some (.const name levels)
   | .app fn arg => do
       let fn' ← lowerFrom cutoff delta fn
       let arg' ← lowerFrom cutoff delta arg
@@ -166,7 +234,7 @@ def instantiateFrom (cutoff : Nat) (value : Expr) : Expr → Expr
       else
         .bvar (index - 1)
   | .sort level => .sort level
-  | .const name => .const name
+  | .const name levels => .const name levels
   | .app fn arg =>
       .app (instantiateFrom cutoff value fn) (instantiateFrom cutoff value arg)
   | .lam name ty body =>
@@ -191,6 +259,31 @@ def instantiate1 (value body : Expr) : Expr :=
 
 def instantiateMany (values : List Expr) (body : Expr) : Expr :=
   values.reverse.foldl (fun acc value => instantiate1 value acc) body
+
+def instantiateLevels (params : List Name) (values : List Level) : Expr → Expr
+  | .bvar index => .bvar index
+  | .sort level => .sort (Level.instantiate params values level)
+  | .const name levels =>
+      .const name (levels.map (Level.instantiate params values))
+  | .app fn arg =>
+      .app (instantiateLevels params values fn) (instantiateLevels params values arg)
+  | .lam name ty body =>
+      .lam
+        name
+        (instantiateLevels params values ty)
+        (instantiateLevels params values body)
+  | .forallE name ty body =>
+      .forallE
+        name
+        (instantiateLevels params values ty)
+        (instantiateLevels params values body)
+  | .letE name ty val body =>
+      .letE
+        name
+        (instantiateLevels params values ty)
+        (instantiateLevels params values val)
+        (instantiateLevels params values body)
+termination_by expr => expr
 
 end Expr
 

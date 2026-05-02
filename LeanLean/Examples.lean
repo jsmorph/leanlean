@@ -2,14 +2,20 @@ import LeanLean.Kernel
 
 namespace LeanLean
 
+def const0 (name : Name) : Expr :=
+  .const name []
+
+def recConst (name : Name) : Expr :=
+  .const name [0]
+
 def boolType : Expr :=
-  .const "Bool"
+  const0 "Bool"
 
 def natType : Expr :=
-  .const "Nat"
+  const0 "Nat"
 
 def listType (elem : Expr) : Expr :=
-  Expr.mkApps (.const "List") [elem]
+  Expr.mkApps (const0 "List") [elem]
 
 def boolSpec : InductiveSpec :=
   {
@@ -31,7 +37,7 @@ def natSpec : InductiveSpec :=
     ctors :=
       [
         { name := "Nat.zero", fields := [] },
-        { name := "Nat.succ", fields := [{ name := "n", type := .const "Nat" }] }
+        { name := "Nat.succ", fields := [{ name := "n", type := const0 "Nat" }] }
       ]
   }
 
@@ -48,7 +54,7 @@ def listSpec : InductiveSpec :=
           fields :=
             [
               { name := "head", type := .bvar 0 },
-              { name := "tail", type := Expr.mkApps (.const "List") [.bvar 0] }
+              { name := "tail", type := Expr.mkApps (const0 "List") [.bvar 0] }
             ]
         }
       ]
@@ -118,7 +124,7 @@ def badWrapSpec : InductiveSpec :=
       [
         {
           name := "BadWrap.mk"
-          fields := [{ name := "x", type := Expr.mkApps (.const "BadParam") [.const "BadWrap"] }]
+          fields := [{ name := "x", type := Expr.mkApps (const0 "BadParam") [const0 "BadWrap"] }]
         }
       ]
   }
@@ -134,7 +140,7 @@ def natListTreeSpec : InductiveSpec :=
         {
           name := "NatListTree.node"
           fields :=
-            [{ name := "children", type := Expr.mkApps (.const "List") [.const "NatListTree"] }]
+            [{ name := "children", type := Expr.mkApps (const0 "List") [const0 "NatListTree"] }]
         }
       ]
   }
@@ -147,54 +153,60 @@ def sampleEnv : Result Env := do
   let env ← addInductive env spuriousSpec
   let env ← addInductive env badParamSpec
   let env ← addInductive env natListTreeSpec
-  let one := Expr.mkApps (.const "Nat.succ") [.const "Nat.zero"]
+  let one := Expr.mkApps (const0 "Nat.succ") [const0 "Nat.zero"]
   addDefinition env "one" natType one
 
 def natSucc (value : Expr) : Expr :=
-  Expr.mkApps (.const "Nat.succ") [value]
+  Expr.mkApps (const0 "Nat.succ") [value]
 
 def boolFalse : Expr :=
-  .const "Bool.false"
+  const0 "Bool.false"
 
 def boolTrue : Expr :=
-  .const "Bool.true"
+  const0 "Bool.true"
 
 def natZero : Expr :=
-  .const "Nat.zero"
+  const0 "Nat.zero"
 
 def listNil (elem : Expr) : Expr :=
-  Expr.mkApps (.const "List.nil") [elem]
+  Expr.mkApps (const0 "List.nil") [elem]
 
 def listCons (elem head tail : Expr) : Expr :=
-  Expr.mkApps (.const "List.cons") [elem, head, tail]
+  Expr.mkApps (const0 "List.cons") [elem, head, tail]
 
 def natToBoolMotive : Expr :=
   .lam "n" natType boolType
 
+def natRecStepType : Expr :=
+  .forallE "n" natType (.forallE "ih" boolType boolType)
+
+def natRecPartial : Expr :=
+  Expr.mkApps (recConst "Nat.rec") [natToBoolMotive, boolTrue]
+
 def natIsZeroOnOne : Expr :=
   Expr.mkApps
-    (.const "Nat.rec")
+    (recConst "Nat.rec")
     [
       natToBoolMotive,
       boolTrue,
       .lam "n" natType (.lam "ih" boolType boolFalse),
-      .const "one"
+      const0 "one"
     ]
 
 def singletonTrue : Expr :=
   listCons boolType boolTrue (listNil boolType)
 
 def natListTreeType : Expr :=
-  .const "NatListTree"
+  const0 "NatListTree"
 
 def leafZero : Expr :=
-  Expr.mkApps (.const "NatListTree.leaf") [natZero]
+  Expr.mkApps (const0 "NatListTree.leaf") [natZero]
 
 def leafList : Expr :=
   listCons natListTreeType leafZero (listNil natListTreeType)
 
 def nodeLeafList : Expr :=
-  Expr.mkApps (.const "NatListTree.node") [leafList]
+  Expr.mkApps (const0 "NatListTree.node") [leafList]
 
 def natListTreeMotive : Expr :=
   .lam "t" natListTreeType natType
@@ -222,7 +234,7 @@ def natListTreeConsCase : Expr :=
 
 def natListTreeRecOnNode : Expr :=
   Expr.mkApps
-    (.const "NatListTree.rec")
+    (recConst "NatListTree.rec")
     [
       natListTreeMotive,
       natListMotive,
@@ -235,7 +247,7 @@ def natListTreeRecOnNode : Expr :=
 
 def natListTreeRecOnList : Expr :=
   Expr.mkApps
-    (.const "NatListTree.rec_1")
+    (recConst "NatListTree.rec_1")
     [
       natListTreeMotive,
       natListMotive,
@@ -248,8 +260,15 @@ def natListTreeRecOnList : Expr :=
 
 def demoReport : Result (List String) := do
   let env ← sampleEnv
-  let oneTy ← infer env [] (.const "one")
+  let oneTy ← infer env [] (const0 "one")
   let _ ← checkDefEq env oneTy natType
+  let _ ← infer env [] (recConst "Nat.rec")
+  let natRecPartialTy ← infer env [] natRecPartial
+  let _ ←
+    checkDefEq
+      env
+      natRecPartialTy
+      (.forallE "step" natRecStepType (.forallE "t" natType boolType))
   let natRecTy ← infer env [] natIsZeroOnOne
   let _ ← checkDefEq env natRecTy boolType
   let natRecNf ← normalize env natIsZeroOnOne
@@ -276,9 +295,13 @@ def demoReport : Result (List String) := do
   match addInductive env badWrapSpec with
   | .ok _ => .error "BadWrap should fail the positivity check"
   | .error _ => pure ()
+  match infer env [] (const0 "Nat.rec") with
+  | .ok _ => .error "Nat.rec should require an explicit universe argument"
+  | .error _ => pure ()
   pure
     [
       "definition one : Nat checks",
+      "recursor constants type-check and support partial application",
       "Nat.rec on one normalizes to Bool.false",
       "List Bool constructor application checks",
       "NatListTree.rec uses a nested helper recursor through List",
