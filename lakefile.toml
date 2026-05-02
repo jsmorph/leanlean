@@ -8,3 +8,7 @@ name = "LeanLean"
 [[lean_exe]]
 name = "leanlean"
 root = "Main"
+
+[[lean_exe]]
+name = "leanleantest"
+root = "Test"

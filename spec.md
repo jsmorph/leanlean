@@ -16,6 +16,14 @@ Expressions have seven forms: bound variables, sorts, constants, application, la
 
 The environment admits three user-facing declarations.  An axiom adds a closed constant with a closed type.  A definition adds a closed constant with a closed type and a closed value whose inferred type is definitionally equal to the declared type.  An inductive declaration adds a type constructor, one constant for each constructor, and a family of primitive recursors.  The kernel checks the derived constructor and recursor types before it admits them, so generated declarations do not bypass the ordinary well-formedness discipline.
 
+## Contexts and Substitution
+
+Runtime contexts are stored innermost binder first: de Bruijn index `0` refers to the head of the context, and index `i + 1` refers one binder farther out.  Source-level telescopes are written outermost first.  Binding a telescope as dependent function types therefore introduces the first listed binder as the outermost binder and the last listed binder as the innermost binder.
+
+A binder type stored in a context is relative to the context that existed when the binder was introduced.  When the checker looks up de Bruijn index `i`, it lifts the stored binder type by `i + 1` before returning it, so the type lives in the current context.  This rule is part of the typing specification, not an implementation convenience.
+
+Simultaneous substitution is the primitive multi-substitution operation.  Given values `[v_0, ..., v_n]` ordered outermost to innermost, simultaneous substitution replaces de Bruijn index `0` with `v_n`, index `1` with `v_{n-1}`, and so on, while preserving variables below the active cutoff.  Under a binder, the cutoff increases and inserted values are lifted to avoid capture.  The kernel does not define target-schema or telescope instantiation by repeated one-variable substitution, because that would allow later substitutions to rewrite variables inside earlier inserted values.
+
 ## Inductive Fragment
 
 An inductive declaration introduces exactly one inductive type in the first subset.  The declaration may bind parameters, but it may not bind indices.  Each constructor field type is checked in the parameter context, which means field types may depend on parameters but not on earlier constructor fields.

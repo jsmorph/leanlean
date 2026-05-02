@@ -33,6 +33,9 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Replace closed helper-target expressions with contextual target schemas and indexed field shapes.
 - [x] Rewrite family construction, motive formation, minor-premise generation, and iota reduction around target schemas.
 - [x] Re-admit binder-dependent nested positive examples.
+- [x] Add focused tests for simultaneous substitution and raw malformed-entry rejection.
+- [x] Add generated-declaration validation coverage.
+- [x] Record the de Bruijn context and simultaneous-substitution invariants in the specification.
 - [ ] Revisit constructor field dependencies and indexed inductive families on top of the target-schema representation.
 
 ## Current Decisions
@@ -52,3 +55,5 @@ Primitive recursor reduction now checks that the constructor target arguments ar
 The target-schema rewrite required one further correction in the term language itself.  Open substitution across a schema context cannot be implemented as repeated one-variable substitution, because later substitutions then rewrite variables inside earlier inserted terms.  The kernel now uses simultaneous instantiation for `Expr.instantiateMany`, which restores the intended behavior for parameterized recursors such as `WrapAt.rec` and for helper targets that depend on both a parameter and a local binder.
 
 Generated declarations now undergo kernel-side validation before admission to the environment.  The earlier draft built constructor and recursor types, then trusted them.  The kernel now rechecks generated constructor types against the extended environment and rechecks generated recursor types against the inductive and constructor declarations they mention.  That validation step exposed a second structural bug in the inferencer: context lookup must lift a stored binder type back into the current context before returning it.  The kernel now does that, which restores dependent typing for generated recursor binders.
+
+The regression suite now has a separate `leanleantest` executable.  It covers simultaneous substitution directly, including nonzero cutoff and lifting of open inserted values.  It also checks that generated-declaration validation rejects an ill-typed generated type, and that raw inference and normalization entry points reject malformed primitive uses.  The demonstration executable remains available as `leanlean`.
