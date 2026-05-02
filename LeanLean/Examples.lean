@@ -166,6 +166,76 @@ def letTreeSpec : InductiveSpec :=
       ]
   }
 
+def harmlessWrapSpec : InductiveSpec :=
+  {
+    name := "HarmlessWrap"
+    params := [{ name := "α", type := .sort 0 }]
+    level := 0
+    ctors :=
+      [
+        {
+          name := "HarmlessWrap.mk"
+          fields := [{ name := "x", type := .letE "y" (.sort 0) (.bvar 0) natType }]
+        }
+      ]
+  }
+
+def nestThroughHarmlessWrapSpec : InductiveSpec :=
+  {
+    name := "NestThroughHarmlessWrap"
+    params := []
+    level := 0
+    ctors :=
+      [
+        {
+          name := "NestThroughHarmlessWrap.mk"
+          fields :=
+            [{ name := "x", type := Expr.mkApps (const0 "HarmlessWrap") [const0 "NestThroughHarmlessWrap"] }]
+        }
+      ]
+  }
+
+def harmlessBadParamSpec : InductiveSpec :=
+  {
+    name := "HarmlessBadParam"
+    params := []
+    level := 0
+    ctors :=
+      [
+        {
+          name := "HarmlessBadParam.mk"
+          fields :=
+            [
+              {
+                name := "x"
+                type := Expr.mkApps (const0 "BadParam") [.letE "y" (.sort 0) (const0 "HarmlessBadParam") natType]
+              }
+            ]
+        }
+      ]
+  }
+
+def dupHelperSpec : InductiveSpec :=
+  {
+    name := "DupHelper"
+    params := []
+    level := 0
+    ctors :=
+      [
+        {
+          name := "DupHelper.mk"
+          fields :=
+            [
+              { name := "a", type := Expr.mkApps (const0 "List") [const0 "DupHelper"] },
+              {
+                name := "b"
+                type := Expr.mkApps (const0 "List") [.letE "T" (.sort 0) (const0 "DupHelper") (.bvar 0)]
+              }
+            ]
+        }
+      ]
+  }
+
 def sampleEnv : Result Env := do
   let env ← addInductive [] boolSpec
   let env ← addInductive env natSpec
@@ -338,6 +408,28 @@ def demoReport : Result (List String) := do
   match addInductive env badWrapSpec with
   | .ok _ => .error "BadWrap should fail the positivity check"
   | .error _ => pure ()
+  let env ← addInductive env harmlessWrapSpec
+  match env.findInductive? "HarmlessWrap" with
+  | some info =>
+      if info.positiveParams != [true] then
+        .error s!"HarmlessWrap should record its parameter as positive, got {repr info.positiveParams}"
+      else
+        pure ()
+  | none => .error "HarmlessWrap should be present in the environment"
+  let env ← addInductive env nestThroughHarmlessWrapSpec
+  let env ← addInductive env harmlessBadParamSpec
+  let env ← addInductive env dupHelperSpec
+  let _ ← infer env [] (recConst "DupHelper.rec_1")
+  match env.findRecursor? "DupHelper.rec" with
+  | some (_, family) =>
+      if family.targets.length != 2 then
+        .error s!"DupHelper should have exactly two family targets, got {family.targets.length}"
+      else
+        pure ()
+  | none => .error "DupHelper.rec should be present in the environment"
+  match env.find? "DupHelper.rec_2" with
+  | some _ => .error "DupHelper should not generate a duplicate helper recursor"
+  | none => pure ()
   match normalize env natRecMissingLevel with
   | .ok _ => .error "Nat.rec without a universe argument should not normalize"
   | .error _ => pure ()
@@ -361,6 +453,7 @@ def demoReport : Result (List String) := do
       "List Bool constructor application checks",
       "NatListTree.rec uses a nested helper recursor through List",
       "let-bound field types are normalized before positivity analysis",
+      "helper-recursion targets are deduplicated by canonical form",
       "constructorless inductives may sit below parameter universes",
       "constructor and field universes are rejected when they exceed the result universe",
       "non-positive nested uses of inductive parameters are rejected"

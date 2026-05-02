@@ -275,180 +275,6 @@ def decomposeInductiveApp (env : Env) (expr : Expr) :
       | none => none
   | _ => none
 
-partial def whnfForAnalysis (env : Env) (expr : Expr) : Result Expr := do
-  match expr with
-  | .app _ _ =>
-      let head := expr.getAppFn
-      let args := expr.getAppArgs
-      let headWhnf ← whnfForAnalysis env head
-      let rebuilt := Expr.mkApps headWhnf args
-      match headWhnf with
-      | .lam _ _ body =>
-          match args with
-          | [] => pure rebuilt
-          | arg :: rest =>
-              whnfForAnalysis env (Expr.mkApps (Expr.instantiate1 arg body) rest)
-      | .const name levels =>
-          match env.find? name with
-          | some info =>
-              let _ ← info.checkLevels levels
-              match ← info.value? levels with
-              | some value => whnfForAnalysis env (Expr.mkApps value args)
-              | none => pure rebuilt
-          | none => .error s!"unknown constant: {name}"
-      | .letE _ _ value body =>
-          whnfForAnalysis env (Expr.mkApps (Expr.instantiate1 value body) args)
-      | _ =>
-          if rebuilt = expr then
-            pure rebuilt
-          else
-            whnfForAnalysis env rebuilt
-  | .letE _ _ value body =>
-      whnfForAnalysis env (Expr.instantiate1 value body)
-  | .const name levels =>
-      match env.find? name with
-      | some info =>
-          let _ ← info.checkLevels levels
-          match ← info.value? levels with
-          | some value => whnfForAnalysis env value
-          | none => pure expr
-      | none => .error s!"unknown constant: {name}"
-  | _ => pure expr
-
-partial def positiveParamOccurrence
-    (env : Env)
-    (self : InductiveSpec)
-    (selfPositive : List Bool)
-    (targetIndex depth : Nat)
-    (expr : Expr) : Result Bool := do
-  let expr ← whnfForAnalysis env expr
-  if expr = Expr.bvar (targetIndex + depth) then
-    pure true
-  else
-    match expr with
-    | .bvar _ => pure false
-    | .sort _ => pure false
-    | .const _ _ => pure false
-    | .letE _ _ _ _ =>
-        .error s!"unexpected let-expression in positivity check: {repr expr}"
-    | .lam _ _ _ =>
-        .error s!"unexpected lambda in positivity check: {repr expr}"
-    | .forallE _ dom body =>
-        let dom ← whnfForAnalysis env dom
-        if containsBVarAt targetIndex depth dom then
-          .error s!"non-positive parameter occurrence in {repr expr}"
-        else
-          positiveParamOccurrence env self selfPositive targetIndex (depth + 1) body
-    | .app _ _ =>
-        match decomposeInductiveApp env expr with
-        | some (headName, info, args) =>
-            let positiveFlags :=
-              if headName = self.name then
-                selfPositive
-              else
-                info.positiveParams
-            let mut found := false
-            for pair in List.zip args positiveFlags do
-              let arg := pair.1
-              let isPositive := pair.2
-              let occurs := containsBVarAt targetIndex depth arg
-              if occurs then
-                if !isPositive then
-                  .error s!"parameter occurs in a non-positive argument of {headName}"
-                let nested ←
-                  positiveParamOccurrence env self selfPositive targetIndex depth arg
-                if nested then
-                  found := true
-            pure found
-        | none =>
-            if containsBVarAt targetIndex depth expr then
-              .error s!"non-positive parameter occurrence in {repr expr}"
-            else
-              pure false
-
-def computePositiveParams (env : Env) (spec : InductiveSpec) : Result (List Bool) := do
-  let paramCount := spec.params.length
-  let rec iterate (flags : List Bool) : Nat → Result (List Bool)
-    | 0 => pure flags
-    | fuel + 1 => do
-        let next ←
-          (List.range paramCount).mapM fun index => do
-            let baseIndex := paramBaseIndex paramCount index
-            let mut positive := true
-            for ctor in spec.ctors do
-              for field in ctor.fields do
-                match positiveParamOccurrence env spec flags baseIndex 0 field.type with
-                | .ok occurs =>
-                    if !occurs && containsBVarAt baseIndex 0 field.type then
-                      positive := false
-                | .error _ =>
-                    positive := false
-                if !positive then
-                  break
-              if !positive then
-                break
-            pure positive
-        if next = flags then
-          pure next
-        else
-          iterate next fuel
-  iterate (List.replicate paramCount true) paramCount
-
-partial def analyzeRecursiveShape
-    (env : Env)
-    (root : InductiveInfo)
-    (depth : Nat)
-    (expr : Expr) : Result FieldShape := do
-  let expr ← whnfForAnalysis env expr
-  let target := Expr.lift depth (recursiveTargetExpr root.spec)
-  if expr = target then
-    pure .direct
-  else
-    match expr with
-    | .bvar _ => pure .none
-    | .sort _ => pure .none
-    | .const _ _ => pure .none
-    | .letE _ _ _ _ =>
-        .error s!"unexpected let-expression in positivity check: {repr expr}"
-    | .lam _ _ _ =>
-        .error s!"unexpected lambda in positivity check: {repr expr}"
-    | .forallE name dom body =>
-        let dom ← whnfForAnalysis env dom
-        if containsExprAt (recursiveTargetExpr root.spec) depth dom then
-          .error s!"non-positive recursive occurrence in {repr expr}"
-        else
-          let bodyShape ← analyzeRecursiveShape env root (depth + 1) body
-          match bodyShape with
-          | .none => pure .none
-          | _ => pure (.pi name dom bodyShape)
-    | .app _ _ =>
-        match decomposeInductiveApp env expr with
-        | some (headName, info, args) =>
-            if headName = root.spec.name then
-              .error s!"recursive occurrence must be {repr target}"
-            let mut found := false
-            for pair in List.zip args info.positiveParams do
-              let arg := pair.1
-              let isPositive := pair.2
-              let occurs := containsExprAt (recursiveTargetExpr root.spec) depth arg
-              if occurs then
-                if !isPositive then
-                  .error s!"recursive occurrence appears in a non-positive argument of {headName}"
-                let shape ← analyzeRecursiveShape env root depth arg
-                if shapeHasIH shape then
-                  found := true
-            if found then
-              let some lowered := expr.lower depth
-                | .error s!"failed to lower nested target {repr expr}"
-              pure (.nested lowered)
-            else
-              pure .none
-        | none =>
-            if containsExprAt (recursiveTargetExpr root.spec) depth expr then
-              .error s!"non-positive recursive occurrence in {repr expr}"
-            else
-              pure .none
-
 structure RecursorSplit where
   params : List Expr
   motives : List Expr
@@ -576,52 +402,6 @@ def familyRecName (rootName : Name) (index : Nat) : Name :=
     recursorName rootName
   else
     helperRecursorName rootName index
-
-partial def buildRecursorFamily
-    (env : Env)
-    (root : InductiveInfo) : Result RecursorFamily := do
-  let rootTarget := recursiveTargetExpr root.spec
-  let rec loop
-      (seen : List Expr)
-      (queue : List Expr)
-      (built : List FamilyTarget) : Result (List FamilyTarget) := do
-    match queue with
-    | [] => pure built
-    | typeExpr :: rest =>
-        let some (headName, info, args) := decomposeInductiveApp env typeExpr
-          | .error s!"internal error: invalid family target {repr typeExpr}"
-        let index := built.length
-        let targetName := familyRecName root.spec.name index
-        let ctors ←
-          info.spec.ctors.mapM fun ctor => do
-            let specialized :=
-              ctor.fields.map fun field =>
-                { field with type := Expr.instantiateMany args field.type }
-            let fields ←
-              specialized.mapM fun field => do
-                let shape ← analyzeRecursiveShape env root 0 field.type
-                pure { binder := field, shape }
-            pure { name := ctor.name, fields }
-        let target : FamilyTarget :=
-          { recName := targetName, typeExpr, headName, ctors }
-        let nested :=
-          ctors.foldr
-            (fun ctor rest =>
-              ctor.fields.foldr
-                (fun field inner => shapeNestedTargets field.shape ++ inner)
-                rest)
-            []
-        let mut newSeen := seen
-        let mut newQueue := rest
-        for nestedTarget in nested do
-          let already :=
-            newSeen.any fun seenTarget => seenTarget.alphaEq nestedTarget
-          if !already then
-            newSeen := nestedTarget :: newSeen
-            newQueue := newQueue ++ [nestedTarget]
-        loop newSeen newQueue (built ++ [target])
-  let targets ← loop [rootTarget] [rootTarget] []
-  pure { rootName := root.spec.name, params := root.spec.params, targets }
 
 def instantiateTargetExpr (params : List Expr) (target : FamilyTarget) : Expr :=
   Expr.instantiateMany params target.typeExpr
@@ -899,6 +679,187 @@ partial def infer (env : Env) (ctx : Context) (expr : Expr) : Result Expr := do
       pure (Expr.instantiate1 value bodyTy)
 
 end
+
+def normalizeForInductiveAnalysis (env : Env) (expr : Expr) : Result Expr :=
+  normalize env expr
+
+partial def positiveParamOccurrence
+    (env : Env)
+    (self : InductiveSpec)
+    (selfPositive : List Bool)
+    (targetIndex depth : Nat)
+    (expr : Expr) : Result Bool := do
+  let expr ← normalizeForInductiveAnalysis env expr
+  if expr = Expr.bvar (targetIndex + depth) then
+    pure true
+  else
+    match expr with
+    | .bvar _ => pure false
+    | .sort _ => pure false
+    | .const _ _ => pure false
+    | .letE _ _ _ _ =>
+        .error s!"unexpected let-expression in positivity check: {repr expr}"
+    | .lam _ _ _ =>
+        .error s!"unexpected lambda in positivity check: {repr expr}"
+    | .forallE _ dom body =>
+        if containsBVarAt targetIndex depth dom then
+          .error s!"non-positive parameter occurrence in {repr expr}"
+        else
+          positiveParamOccurrence env self selfPositive targetIndex (depth + 1) body
+    | .app _ _ =>
+        match decomposeInductiveApp env expr with
+        | some (headName, info, args) =>
+            let positiveFlags :=
+              if headName = self.name then
+                selfPositive
+              else
+                info.positiveParams
+            let mut found := false
+            for pair in List.zip args positiveFlags do
+              let arg := pair.1
+              let isPositive := pair.2
+              let occurs := containsBVarAt targetIndex depth arg
+              if occurs then
+                if !isPositive then
+                  .error s!"parameter occurs in a non-positive argument of {headName}"
+                let nested ←
+                  positiveParamOccurrence env self selfPositive targetIndex depth arg
+                if nested then
+                  found := true
+            pure found
+        | none =>
+            if containsBVarAt targetIndex depth expr then
+              .error s!"non-positive parameter occurrence in {repr expr}"
+            else
+              pure false
+
+def computePositiveParams (env : Env) (spec : InductiveSpec) : Result (List Bool) := do
+  let paramCount := spec.params.length
+  let rec iterate (flags : List Bool) : Nat → Result (List Bool)
+    | 0 => pure flags
+    | fuel + 1 => do
+        let next ←
+          (List.range paramCount).mapM fun index => do
+            let baseIndex := paramBaseIndex paramCount index
+            let mut positive := true
+            for ctor in spec.ctors do
+              for field in ctor.fields do
+                match positiveParamOccurrence env spec flags baseIndex 0 field.type with
+                | .ok _ => pure ()
+                | .error _ => positive := false
+                if !positive then
+                  break
+              if !positive then
+                break
+            pure positive
+        if next = flags then
+          pure next
+        else
+          iterate next fuel
+  iterate (List.replicate paramCount true) paramCount
+
+partial def analyzeRecursiveShape
+    (env : Env)
+    (root : InductiveInfo)
+    (depth : Nat)
+    (expr : Expr) : Result FieldShape := do
+  let expr ← normalizeForInductiveAnalysis env expr
+  let target := Expr.lift depth (recursiveTargetExpr root.spec)
+  if expr = target then
+    pure .direct
+  else
+    match expr with
+    | .bvar _ => pure .none
+    | .sort _ => pure .none
+    | .const _ _ => pure .none
+    | .letE _ _ _ _ =>
+        .error s!"unexpected let-expression in positivity check: {repr expr}"
+    | .lam _ _ _ =>
+        .error s!"unexpected lambda in positivity check: {repr expr}"
+    | .forallE name dom body =>
+        if containsExprAt (recursiveTargetExpr root.spec) depth dom then
+          .error s!"non-positive recursive occurrence in {repr expr}"
+        else
+          let bodyShape ← analyzeRecursiveShape env root (depth + 1) body
+          match bodyShape with
+          | .none => pure .none
+          | _ => pure (.pi name dom bodyShape)
+    | .app _ _ =>
+        match decomposeInductiveApp env expr with
+        | some (headName, info, args) =>
+            if headName = root.spec.name then
+              .error s!"recursive occurrence must be {repr target}"
+            let mut found := false
+            for pair in List.zip args info.positiveParams do
+              let arg := pair.1
+              let isPositive := pair.2
+              let occurs := containsExprAt (recursiveTargetExpr root.spec) depth arg
+              if occurs then
+                if !isPositive then
+                  .error s!"recursive occurrence appears in a non-positive argument of {headName}"
+                let shape ← analyzeRecursiveShape env root depth arg
+                if shapeHasIH shape then
+                  found := true
+            if found then
+              let some lowered := expr.lower depth
+                | .error s!"failed to lower nested target {repr expr}"
+              pure (.nested lowered)
+            else
+              pure .none
+        | none =>
+            if containsExprAt (recursiveTargetExpr root.spec) depth expr then
+              .error s!"non-positive recursive occurrence in {repr expr}"
+            else
+              pure .none
+
+partial def buildRecursorFamily
+    (env : Env)
+    (root : InductiveInfo) : Result RecursorFamily := do
+  let rootTarget ← normalizeForInductiveAnalysis env (recursiveTargetExpr root.spec)
+  let rec loop
+      (seen : List Expr)
+      (queue : List Expr)
+      (built : List FamilyTarget) : Result (List FamilyTarget) := do
+    match queue with
+    | [] => pure built
+    | typeExpr :: rest =>
+        let typeExpr ← normalizeForInductiveAnalysis env typeExpr
+        let some (headName, info, args) := decomposeInductiveApp env typeExpr
+          | .error s!"internal error: invalid family target {repr typeExpr}"
+        let index := built.length
+        let targetName := familyRecName root.spec.name index
+        let ctors ←
+          info.spec.ctors.mapM fun ctor => do
+            let specialized ←
+              ctor.fields.mapM fun field => do
+                let type ← normalizeForInductiveAnalysis env (Expr.instantiateMany args field.type)
+                pure { field with type }
+            let fields ←
+              specialized.mapM fun field => do
+                let shape ← analyzeRecursiveShape env root 0 field.type
+                pure { binder := field, shape }
+            pure { name := ctor.name, fields }
+        let target : FamilyTarget :=
+          { recName := targetName, typeExpr, headName, ctors }
+        let nested :=
+          ctors.foldr
+            (fun ctor rest =>
+              ctor.fields.foldr
+                (fun field inner => shapeNestedTargets field.shape ++ inner)
+                rest)
+            []
+        let mut newSeen := seen
+        let mut newQueue := rest
+        for nestedTarget in nested do
+          let nestedTarget ← normalizeForInductiveAnalysis env nestedTarget
+          let already :=
+            newSeen.any fun seenTarget => seenTarget.alphaEq nestedTarget
+          if !already then
+            newSeen := nestedTarget :: newSeen
+            newQueue := newQueue ++ [nestedTarget]
+        loop newSeen newQueue (built ++ [target])
+  let targets ← loop [rootTarget] [rootTarget] []
+  pure { rootName := root.spec.name, params := root.spec.params, targets }
 
 def checkClosed (what : String) (expr : Expr) : Result Unit :=
   if expr.closed then
