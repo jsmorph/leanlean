@@ -2,7 +2,7 @@
 
 This plan describes a path from the current specification-driven proof of concept to a complete Lean 4 kernel.  The project has two operating standards.  Every trusted feature needs a written local specification before implementation work builds around it.  Every object admitted to the environment needs the same well-formedness discipline, whether the object came from user input or from kernel generation.
 
-The current kernel has a useful base.  It implements a small dependent type theory with closed predicative universes, axioms, transparent definitions, single inductive declarations, strict positivity, first-class recursor constants, nested helper recursors, telescope-aware helper targets, beta, delta, zeta, and iota reduction, simultaneous substitution, and validation of generated constructor and recursor types.  Lean 4 contains substantially more theory.  Universe polymorphism, `Prop`, quotient reduction, indexed inductive families, mutual inductives, irrelevance, opacity, and the full declaration model all affect typing or conversion.
+The current kernel has a useful base.  It implements a small dependent type theory with closed predicative universes, axioms, transparent definitions, single inductive declarations, dependent constructor-field telescopes, strict positivity, first-class recursor constants, nested helper recursors, telescope-aware helper targets, beta, delta, zeta, and iota reduction, simultaneous substitution, and validation of generated constructor and recursor types.  Lean 4 contains substantially more theory.  Universe polymorphism, `Prop`, quotient reduction, indexed inductive families, mutual inductives, irrelevance, opacity, and the full declaration model all affect typing or conversion.
 
 ## Principles
 
@@ -39,7 +39,7 @@ Acceptance criteria:
 
 ## Phase 3: Constructor Field Dependencies
 
-The current subset checks every constructor field type in the parameter context.  Lean constructors allow later fields and constructor results to depend on earlier fields.  This phase adds constructor-field telescopes on top of the shared telescope core.  It comes before indexed inductive families because many indexed examples require constructor results whose indices depend on constructor fields.
+The earlier subset checked every constructor field type in the parameter context.  Lean constructors allow later fields and constructor results to depend on earlier fields.  This phase adds constructor-field telescopes on top of the shared telescope core.  It comes before indexed inductive families because many indexed examples require constructor results whose indices depend on constructor fields.
 
 Field types need sequential checking, with each later field seeing earlier fields.  Recursor minor premises must bind fields in that same order.  Induction hypotheses should be inserted at the points determined by recursive fields, with their types computed in the full field context.  Reduction then substitutes field arguments into later field types and induction hypotheses.
 
@@ -162,4 +162,4 @@ Acceptance criteria:
 
 ## Immediate Next Work
 
-The stabilization phase is complete, and the shared telescope core is now the active foundation for later work.  The next implementation phase should add constructor field dependencies on top of that core.  This should happen before indexed families, because indexed constructor targets depend on the same field-context machinery and would otherwise duplicate binder arithmetic in a larger setting.
+The stabilization, shared-telescope, and constructor-field phases are complete for the parameter-only inductive fragment.  The next implementation phase should add indexed inductive families.  This is the next hard foundation change because constructor targets will carry field-dependent index terms, and every later feature depends on the kernel keeping parameters, indices, helper locals, and constructor fields distinct.

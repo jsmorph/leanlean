@@ -54,7 +54,7 @@ def listSpec : InductiveSpec :=
           fields :=
             [
               { name := "head", type := .bvar 0 },
-              { name := "tail", type := Expr.mkApps (const0 "List") [.bvar 0] }
+              { name := "tail", type := Expr.mkApps (const0 "List") [.bvar 1] }
             ]
         }
       ]
@@ -302,6 +302,57 @@ def depNestPSpec : InductiveSpec :=
       ]
   }
 
+def depAfterRecSpec : InductiveSpec :=
+  {
+    name := "DepAfterRec"
+    params := []
+    level := 0
+    ctors :=
+      [
+        {
+          name := "DepAfterRec.mk"
+          fields :=
+            [
+              { name := "n", type := natType },
+              { name := "child", type := const0 "DepAfterRec" },
+              { name := "box", type := Expr.mkApps (const0 "WrapAt") [.bvar 1, boolType] }
+            ]
+        }
+      ]
+  }
+
+def depFieldTreeSpec : InductiveSpec :=
+  {
+    name := "DepFieldTree"
+    params := []
+    level := 0
+    ctors :=
+      [
+        {
+          name := "DepFieldTree.mk"
+          fields :=
+            [
+              { name := "n", type := natType },
+              { name := "child", type := Expr.mkApps (const0 "WrapAt") [.bvar 0, const0 "DepFieldTree"] }
+            ]
+        }
+      ]
+  }
+
+def badForwardFieldSpec : InductiveSpec :=
+  {
+    name := "BadForwardField"
+    params := []
+    level := 0
+    ctors :=
+      [
+        {
+          name := "BadForwardField.mk"
+          fields := [{ name := "x", type := .bvar 0 }]
+        }
+      ]
+  }
+
 def sampleEnv : Result Env := do
   let env ← addInductive [] boolSpec
   let env ← addInductive env natSpec
@@ -417,9 +468,12 @@ def natListTreeConsCase : Expr :=
     "head"
     natListTreeType
     (.lam
-      "tail"
-      (listType natListTreeType)
-      (.lam "ihHead" natType (.lam "ihTail" natType (natSucc (.bvar 0)))))
+      "ihHead"
+      natType
+      (.lam
+        "tail"
+        (listType natListTreeType)
+        (.lam "ihTail" natType (natSucc (.bvar 0)))))
 
 def natListTreeRecOnNode : Expr :=
   Expr.mkApps
@@ -558,6 +612,83 @@ def depNestPHelperRecOnSeed : Expr :=
       wrapAtDepNestPSeedZero
     ]
 
+def depAfterRecType : Expr :=
+  const0 "DepAfterRec"
+
+def depAfterRecMotive : Expr :=
+  .lam "t" depAfterRecType natType
+
+def depAfterRecCase : Expr :=
+  .lam
+    "n"
+    natType
+    (.lam
+      "child"
+      depAfterRecType
+      (.lam
+        "ih"
+        natType
+        (.lam "box" (wrapAtType (.bvar 2) boolType) (.bvar 1))))
+
+def depAfterRecSeedName : Name :=
+  "depAfterRecSeed"
+
+def depAfterRecSeed : Expr :=
+  const0 depAfterRecSeedName
+
+def depAfterRecOnSeed : Expr :=
+  Expr.mkApps
+    (recConst "DepAfterRec.rec")
+    [
+      depAfterRecMotive,
+      depAfterRecCase,
+      depAfterRecSeed
+    ]
+
+def depFieldTreeType : Expr :=
+  const0 "DepFieldTree"
+
+def depFieldTreeMotive : Expr :=
+  .lam "t" depFieldTreeType natType
+
+def wrapAtDepFieldTreeMotive : Expr :=
+  .lam "n" natType (.lam "t" (wrapAtType (.bvar 0) depFieldTreeType) natType)
+
+def depFieldTreeRootCase : Expr :=
+  .lam
+    "n"
+    natType
+    (.lam
+      "child"
+      (wrapAtType (.bvar 0) depFieldTreeType)
+      (.lam "ih" natType (.bvar 0)))
+
+def depFieldTreeWrapCase : Expr :=
+  .lam "n" natType (.lam "x" depFieldTreeType (.lam "ih" natType natZero))
+
+def depFieldTreeSeedName : Name :=
+  "depFieldTreeSeed"
+
+def depFieldTreeSeed : Expr :=
+  const0 depFieldTreeSeedName
+
+def wrapAtDepFieldTreeSeedZero : Expr :=
+  wrapAtMk natZero depFieldTreeType depFieldTreeSeed
+
+def depFieldTreeNode : Expr :=
+  Expr.mkApps (const0 "DepFieldTree.mk") [natZero, wrapAtDepFieldTreeSeedZero]
+
+def depFieldTreeRecOnNode : Expr :=
+  Expr.mkApps
+    (recConst "DepFieldTree.rec")
+    [
+      depFieldTreeMotive,
+      wrapAtDepFieldTreeMotive,
+      depFieldTreeRootCase,
+      depFieldTreeWrapCase,
+      depFieldTreeNode
+    ]
+
 def demoReport : Result (List String) := do
   let env ← sampleEnv
   let oneTy ← infer env [] (const0 "one")
@@ -592,6 +723,9 @@ def demoReport : Result (List String) := do
   | .error _ => pure ()
   match addInductive env lowSortBoxSpec with
   | .ok _ => .error "LowSortBox should fail the universe check"
+  | .error _ => pure ()
+  match addInductive env badForwardFieldSpec with
+  | .ok _ => .error "BadForwardField should fail field telescope checking"
   | .error _ => pure ()
   match addInductive env badWrapSpec with
   | .ok _ => .error "BadWrap should fail the positivity check"
@@ -656,6 +790,30 @@ def demoReport : Result (List String) := do
     .error s!"unexpected normal form for DepNestP.rec_1 example: {repr depNestPHelperNf}"
   else
     pure ()
+  let env ← addInductive env depAfterRecSpec
+  let env ← addAxiom env depAfterRecSeedName depAfterRecType
+  let depAfterRecTy ← infer env [] depAfterRecOnSeed
+  let _ ← checkDefEq env depAfterRecTy natType
+  let env ← addInductive env depFieldTreeSpec
+  let env ← addAxiom env depFieldTreeSeedName depFieldTreeType
+  match env.findRecursor? "DepFieldTree.rec" with
+  | some (_, family) =>
+      if family.targets.length != 2 then
+        .error s!"DepFieldTree should have exactly two family targets, got {family.targets.length}"
+      else
+        match listGet? family.targets 1 with
+        | some target =>
+            if target.schema.locals.length != 1 then
+              .error
+                s!"DepFieldTree helper target should carry one local binder, got {target.schema.locals.length}"
+            else
+              pure ()
+        | none => .error "DepFieldTree should expose a helper recursor target"
+  | none => .error "DepFieldTree.rec should be present in the environment"
+  let depFieldTreeTy ← infer env [] depFieldTreeRecOnNode
+  let _ ← checkDefEq env depFieldTreeTy natType
+  let depFieldTreeNf ← normalize env depFieldTreeRecOnNode
+  let _ ← checkDefEq env depFieldTreeNf natZero
   match normalize env natRecMissingLevel with
   | .ok _ => .error "Nat.rec without a universe argument should not normalize"
   | .error _ => pure ()
@@ -689,6 +847,10 @@ def demoReport : Result (List String) := do
       "helper-recursion targets are deduplicated by canonical form",
       "helper recursors support binder-dependent nested targets",
       "helper recursors support targets that depend on parameters and local binders",
+      "constructor fields may depend on earlier fields",
+      "ill-scoped field dependencies are rejected",
+      "minor premises insert induction hypotheses at recursive fields",
+      "helper recursors support targets that depend on constructor fields",
       "constructorless inductives may sit below parameter universes",
       "constructor and field universes are rejected when they exceed the result universe",
       "recursor reduction rejects targets whose constructor parameters disagree",

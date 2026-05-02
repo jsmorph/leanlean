@@ -35,8 +35,12 @@ def bindIndependentForall (tele : Telescope) (body : Expr) : Expr :=
   loop 0 tele
 
 def instantiateTypes (values : List Expr) (tele : Telescope) : Telescope :=
-  tele.map fun binder =>
-    { binder with type := Expr.instantiateMany values binder.type }
+  let rec loop (cutoff : Nat) : Telescope → Telescope
+    | [] => []
+    | binder :: rest =>
+        { binder with type := Expr.instantiateManyFrom cutoff values binder.type } ::
+          loop (cutoff + 1) rest
+  loop 0 tele
 
 def bindForallM
     (paramVars : List Expr)
@@ -239,7 +243,7 @@ def inductiveTypeExpr (spec : InductiveSpec) : Expr :=
 def constructorTypeExpr (spec : InductiveSpec) (ctor : ConstructorSpec) : Expr :=
   let paramArgs := Expr.bvarArgs spec.params.length ctor.fields.length
   let target := inductiveTarget spec.name paramArgs
-  let withFields := Telescope.bindIndependentForall ctor.fields target
+  let withFields := Telescope.bindForall ctor.fields target
   Telescope.bindForall spec.params withFields
 
 def inferSortOfPi (domain codomain : Level) : Level :=
@@ -309,6 +313,30 @@ def containsBVarAt (targetIndex depth : Nat) (expr : Expr) : Bool :=
       containsBVarAt targetIndex depth val ||
       containsBVarAt targetIndex (depth + 1) body
 termination_by expr
+
+def usedLocalPrefixLength (locals : Telescope) (expr : Expr) : Nat :=
+  let localCount := locals.length
+  let rec loop (sourceIndex : Nat) (used : Nat) : Nat :=
+    if h : sourceIndex < localCount then
+      let bvarIndex := localCount - 1 - sourceIndex
+      let used :=
+        if containsBVarAt bvarIndex 0 expr then
+          sourceIndex + 1
+        else
+          used
+      loop (sourceIndex + 1) used
+    else
+      used
+  loop 0 0
+
+def trimTargetSchema (schema : TargetSchema) : Result TargetSchema := do
+  let keep := usedLocalPrefixLength schema.locals schema.target
+  let drop := schema.locals.length - keep
+  match Expr.lower drop schema.target with
+  | some target =>
+      pure { schema with locals := schema.locals.take keep, target }
+  | none =>
+      .error s!"internal error: target schema mentions a dropped local: {repr schema.target}"
 
 def paramBaseIndex (paramCount paramIndex : Nat) : Nat :=
   paramCount - 1 - paramIndex
@@ -432,12 +460,12 @@ partial def ihTypeExpr
   | .nested targetIndex =>
       let some target := listGet? family.targets targetIndex
         | .error s!"internal error: unknown nested target index {targetIndex}"
-      if target.schema.locals.length != localVars.length then
-        .error s!"internal error: nested target #{targetIndex} expects {target.schema.locals.length} locals, got {localVars.length}"
+      if target.schema.locals.length > localVars.length then
+        .error s!"internal error: nested target #{targetIndex} expects at least {target.schema.locals.length} locals, got {localVars.length}"
       else
         let some motive := listGet? motives targetIndex
           | .error s!"internal error: missing motive for nested target #{targetIndex}"
-        pure (Expr.mkApps motive (localVars ++ [fieldExpr]))
+        pure (Expr.mkApps motive (localVars.take target.schema.locals.length ++ [fieldExpr]))
   | .pi binder body => do
       let dom := Expr.instantiateMany (paramVars ++ localVars) binder.type
       let bodyField := .app (Expr.lift 1 fieldExpr) (.bvar 0)
@@ -468,10 +496,11 @@ partial def ihTerm
   | .nested targetIndex =>
       let some target := listGet? family.targets targetIndex
         | .error s!"internal error: unknown nested target index {targetIndex}"
-      if target.schema.locals.length != localVars.length then
-        .error s!"internal error: nested target #{targetIndex} expects {target.schema.locals.length} locals, got {localVars.length}"
+      if target.schema.locals.length > localVars.length then
+        .error s!"internal error: nested target #{targetIndex} expects at least {target.schema.locals.length} locals, got {localVars.length}"
       else
-        pure (Expr.mkApps (.const target.recName levels) (prefixArgs ++ localVars ++ [fieldExpr]))
+        let schemaVars := localVars.take target.schema.locals.length
+        pure (Expr.mkApps (.const target.recName levels) (prefixArgs ++ schemaVars ++ [fieldExpr]))
   | .pi binder body => do
       let dom := Expr.instantiateMany (paramVars ++ localVars) binder.type
       let bodyField := .app (Expr.lift 1 fieldExpr) (.bvar 0)
@@ -486,6 +515,65 @@ partial def ihTerm
           bodyField
       pure (.lam binder.name dom bodyTerm)
 
+partial def familyCtorMinorBody
+    (family : RecursorFamily)
+    (motives : List Expr)
+    (paramVars : List Expr)
+    (schemaVars : List Expr)
+    (targetIndex : Nat)
+    (target : FamilyTarget)
+    (ctor : FamilyCtor) : Result Expr := do
+  let rec loop
+      (ihIndex : Nat)
+      (motives : List Expr)
+      (paramVars : List Expr)
+      (schemaVars : List Expr)
+      (fieldVars : List Expr) :
+      List FamilyField → Result Expr
+    | [] => do
+        let some motive := listGet? motives targetIndex
+          | .error s!"internal error: missing motive for target #{targetIndex}"
+        let targetExpr := instantiateTargetSchema paramVars schemaVars target.schema
+        let ctorApp := Expr.mkApps (.const ctor.name []) (targetExpr.getAppArgs ++ fieldVars)
+        pure (Expr.mkApps motive (schemaVars ++ [ctorApp]))
+    | field :: rest => do
+        let fieldTy :=
+          Expr.instantiateMany (paramVars ++ schemaVars ++ fieldVars) field.binder.type
+        let motivesAfterField := motives.map (Expr.lift 1)
+        let paramVarsAfterField := paramVars.map (Expr.lift 1)
+        let schemaVarsAfterField := schemaVars.map (Expr.lift 1)
+        let previousFieldVarsAfterField := fieldVars.map (Expr.lift 1)
+        let fieldVarsAfterField := previousFieldVarsAfterField ++ [.bvar 0]
+        let body ←
+          if shapeHasIH field.shape then
+            let ihTy ←
+              ihTypeExpr
+                family
+                motivesAfterField
+                paramVarsAfterField
+                (schemaVarsAfterField ++ previousFieldVarsAfterField)
+                field.shape
+                (.bvar 0)
+            let body ←
+              loop
+                (ihIndex + 1)
+                (motivesAfterField.map (Expr.lift 1))
+                (paramVarsAfterField.map (Expr.lift 1))
+                (schemaVarsAfterField.map (Expr.lift 1))
+                (fieldVarsAfterField.map (Expr.lift 1))
+                rest
+            pure (.forallE s!"ih{ihIndex}" ihTy body)
+          else
+            loop
+              ihIndex
+              motivesAfterField
+              paramVarsAfterField
+              schemaVarsAfterField
+              fieldVarsAfterField
+              rest
+        pure (.forallE field.binder.name fieldTy body)
+  loop 0 motives paramVars schemaVars [] ctor.fields
+
 partial def familyCtorMinorType
     (family : RecursorFamily)
     (paramVars : List Expr)
@@ -494,41 +582,14 @@ partial def familyCtorMinorType
     (target : FamilyTarget)
     (ctor : FamilyCtor) : Result Expr := do
   Telescope.bindForallM paramVars target.schema.locals fun paramVars localVars => do
-    let motiveVars := motives.map (Expr.lift target.schema.locals.length)
-    let some motive := listGet? motiveVars targetIndex
-      | .error s!"internal error: missing motive for target #{targetIndex}"
-    let fieldBinders : Telescope :=
-      Telescope.instantiateTypes (paramVars ++ localVars) (ctor.fields.map fun field => field.binder)
-    let fieldVarsForIH := Expr.bvarArgs fieldBinders.length 0
-    let motivesForIH := motiveVars.map (Expr.lift fieldBinders.length)
-    let paramVarsForIH := paramVars.map (Expr.lift fieldBinders.length)
-    let localVarsForIH := localVars.map (Expr.lift fieldBinders.length)
-    let mut ihBinders : Telescope := []
-    let mut ihIndex := 0
-    for pair in List.zip ctor.fields fieldVarsForIH do
-      let field := pair.1
-      let fieldVar := pair.2
-      if shapeHasIH field.shape then
-        let ihTy ←
-          ihTypeExpr
-            family
-            motivesForIH
-            paramVarsForIH
-            localVarsForIH
-            field.shape
-            fieldVar
-        ihBinders := ihBinders ++ [{ name := s!"ih{ihIndex}", type := ihTy }]
-        ihIndex := ihIndex + 1
-    let targetExpr := instantiateTargetSchema paramVars localVars target.schema
-    let totalBinders := fieldBinders.length + ihBinders.length
-    let liftedMotive := Expr.lift totalBinders motive
-    let liftedLocalVars := localVars.map (Expr.lift totalBinders)
-    let liftedTargetArgs := targetExpr.getAppArgs.map (Expr.lift totalBinders)
-    let fieldVars := Expr.bvarArgs fieldBinders.length ihBinders.length
-    let ctorApp := Expr.mkApps (.const ctor.name []) (liftedTargetArgs ++ fieldVars)
-    let body := Expr.mkApps liftedMotive (liftedLocalVars ++ [ctorApp])
-    let withIhs := Telescope.bindIndependentForall ihBinders body
-    pure (Telescope.bindIndependentForall fieldBinders withIhs)
+    familyCtorMinorBody
+      family
+      (motives.map (Expr.lift target.schema.locals.length))
+      paramVars
+      localVars
+      targetIndex
+      target
+      ctor
 
 def motiveBinderType
     (paramVars : List Expr)
@@ -646,16 +707,27 @@ partial def reduceRecursorApp
       let _ ← checkRecursorTargetArgs env recName targetArgs targetExpr.getAppArgs
       let fieldArgs := ctorArgs.drop targetExpr.getAppArgs.length
       let prefixArgs := split.params ++ split.motives ++ split.minors
-      let mut ihTerms : List Expr := []
+      let mut previousFields : List Expr := []
+      let mut minorArgs := split.locals
       for pair in List.zip ctor.fields fieldArgs do
         let field := pair.1
         let fieldArg := pair.2
+        minorArgs := minorArgs ++ [fieldArg]
         if shapeHasIH field.shape then
-          let ih ← ihTerm family levels prefixArgs split.params split.locals field.shape fieldArg
-          ihTerms := ihTerms ++ [ih]
+          let ih ←
+            ihTerm
+              family
+              levels
+              prefixArgs
+              split.params
+              (split.locals ++ previousFields)
+              field.shape
+              fieldArg
+          minorArgs := minorArgs ++ [ih]
+        previousFields := previousFields ++ [fieldArg]
       let some minor := lookupMinorExpr? family split.minors targetIndex ctor.name
         | .error s!"internal error: missing minor premise for {ctor.name}"
-      pure (some (Expr.mkApps minor (split.locals ++ fieldArgs ++ ihTerms)))
+      pure (some (Expr.mkApps minor minorArgs))
 
 partial def whnf (env : Env) (expr : Expr) : Result Expr := do
   match expr with
@@ -859,12 +931,14 @@ def computePositiveParams (env : Env) (spec : InductiveSpec) : Result (List Bool
             let baseIndex := paramBaseIndex paramCount index
             let mut positive := true
             for ctor in spec.ctors do
+              let mut fieldDepth := 0
               for field in ctor.fields do
-                match positiveParamOccurrence env spec flags baseIndex 0 field.type with
+                match positiveParamOccurrence env spec flags (baseIndex + fieldDepth) 0 field.type with
                 | .ok _ => pure ()
                 | .error _ => positive := false
                 if !positive then
                   break
+                fieldDepth := fieldDepth + 1
               if !positive then
                 break
             pure positive
@@ -938,6 +1012,7 @@ partial def internFieldShape
       let (bodyShape, schemas) ← internFieldShape schemas body
       pure (.pi binder bodyShape, schemas)
   | .nested schema =>
+      let schema ← trimTargetSchema schema
       let (index, schemas) := internSchema schemas schema
       pure (.nested index, schemas)
 
@@ -963,13 +1038,15 @@ partial def buildRecursorFamily
         let targetName := familyRecName root.spec.name index
         let rec buildFields
             (currentSchemas : List TargetSchema)
+            (fieldLocals : Telescope)
             (remaining : Telescope) : Result (List FamilyField × List TargetSchema) := do
           match remaining with
           | [] => pure ([], currentSchemas)
           | field :: rest =>
-              let rawShape ← analyzeRecursiveShape env root schema.locals field.type
+              let rawShape ← analyzeRecursiveShape env root fieldLocals field.type
               let (shape, currentSchemas) ← internFieldShape currentSchemas rawShape
-              let (restFields, currentSchemas) ← buildFields currentSchemas rest
+              let (restFields, currentSchemas) ←
+                buildFields currentSchemas (fieldLocals ++ [field]) rest
               pure ({ binder := field, shape } :: restFields, currentSchemas)
         let rec buildCtors
             (currentSchemas : List TargetSchema)
@@ -982,7 +1059,7 @@ partial def buildRecursorFamily
                 instantiated.mapM fun field => do
                   let type ← normalizeForInductiveAnalysis env field.type
                   pure { field with type }
-              let (fields, currentSchemas) ← buildFields currentSchemas specialized
+              let (fields, currentSchemas) ← buildFields currentSchemas schema.locals specialized
               let (restCtors, currentSchemas) ← buildCtors currentSchemas rest
               pure ({ name := ctor.name, fields } :: restCtors, currentSchemas)
         let (ctors, currentSchemas) ← buildCtors schemas info.spec.ctors
@@ -1033,14 +1110,18 @@ partial def inferBinderUniverse
   | .sort level => pure level
   | _ => inferSort env ctx type
 
-def checkTelescope (env : Env) (tele : Telescope) : Result Unit := do
-  let rec loop (ctx : Context) (remaining : Telescope) : Result Unit := do
+def checkTelescopeFrom (env : Env) (ctx : Context) (tele : Telescope) : Result Context := do
+  let rec loop (ctx : Context) (remaining : Telescope) : Result Context := do
     match remaining with
-    | [] => pure ()
+    | [] => pure ctx
     | binder :: rest =>
         let _ ← inferSort env ctx binder.type
         loop (Telescope.withBinder ctx binder) rest
-  loop [] tele
+  loop ctx tele
+
+def checkTelescope (env : Env) (tele : Telescope) : Result Unit := do
+  let _ ← checkTelescopeFrom env [] tele
+  pure ()
 
 def addAxiom (env : Env) (name : Name) (type : Expr) : Result Env := do
   let _ ← checkFreshName env name
@@ -1091,13 +1172,17 @@ def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
           checkParamLevels (Telescope.withBinder ctx binder) rest
     let _ ← checkParamLevels [] spec.params
   for ctor in spec.ctors do
-    for field in ctor.fields do
-      let level ← inferSort tempEnv paramCtx field.type
-      let _ ←
-        checkLevelAtMost
-          s!"field {ctor.name}.{field.name}"
-          level
-          spec.level
+    let rec checkFieldLevels (ctx : Context) : Telescope → Result Unit
+      | [] => pure ()
+      | field :: rest => do
+          let level ← inferSort tempEnv ctx field.type
+          let _ ←
+            checkLevelAtMost
+              s!"field {ctor.name}.{field.name}"
+              level
+              spec.level
+          checkFieldLevels (Telescope.withBinder ctx field) rest
+    let _ ← checkFieldLevels paramCtx ctor.fields
   let positiveParams ← computePositiveParams tempEnv spec
   let info : InductiveInfo := { type := indType, spec, positiveParams }
   let infoEnv := .inductive spec.name [] info :: env

@@ -42,6 +42,20 @@ def telescopeTests : Result Unit := do
       expectExprEq "telescope type instantiation is simultaneous" actual (Expr.app boolType natType)
   | _ => .error "telescope type instantiation changed telescope length"
 
+  match
+    Telescope.instantiateTypes
+      [boolType]
+      [
+        { name := "head", type := .bvar 0 },
+        { name := "tail", type := Expr.app (.bvar 1) (.bvar 0) }
+      ] with
+  | [_, { type := actual, .. }] =>
+      expectExprEq
+        "telescope type instantiation preserves earlier binders"
+        actual
+        (Expr.app boolType (.bvar 0))
+  | _ => .error "dependent telescope type instantiation changed telescope length"
+
 def substitutionTests : Result Unit := do
   let body := Expr.app (.bvar 1) (.bvar 0)
   let actual := Expr.instantiateMany [boolType, natType] body
