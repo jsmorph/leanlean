@@ -65,11 +65,13 @@ end Telescope
 structure ConstructorSpec where
   name : Name
   fields : Telescope
+  target? : Option Expr := none
   deriving DecidableEq, Repr, Inhabited
 
 structure InductiveSpec where
   name : Name
   params : Telescope
+  indices : Telescope := []
   level : Level
   ctors : List ConstructorSpec
   deriving DecidableEq, Repr, Inhabited
@@ -101,12 +103,15 @@ structure FamilyField where
 
 structure FamilyCtor where
   name : Name
+  target : Expr
   fields : List FamilyField
   deriving DecidableEq, Repr, Inhabited
 
 structure FamilyTarget where
   recName : Name
   schema : TargetSchema
+  paramCount : Nat
+  bindLocalsInMinors : Bool
   ctors : List FamilyCtor
   deriving DecidableEq, Repr, Inhabited
 
@@ -238,19 +243,54 @@ def inductiveTarget (indName : Name) (params : List Expr) : Expr :=
   Expr.mkApps (.const indName []) params
 
 def inductiveTypeExpr (spec : InductiveSpec) : Expr :=
-  Telescope.bindForall spec.params (.sort spec.level)
+  Telescope.bindForall (spec.params ++ spec.indices) (.sort spec.level)
 
-def constructorTypeExpr (spec : InductiveSpec) (ctor : ConstructorSpec) : Expr :=
-  let paramArgs := Expr.bvarArgs spec.params.length ctor.fields.length
-  let target := inductiveTarget spec.name paramArgs
+def constructorTargetExpr (spec : InductiveSpec) (ctor : ConstructorSpec) : Result Expr :=
+  match ctor.target? with
+  | some target => pure target
+  | none =>
+      if spec.indices.isEmpty then
+        let paramArgs := Expr.bvarArgs spec.params.length ctor.fields.length
+        pure (inductiveTarget spec.name paramArgs)
+      else
+        .error s!"constructor {ctor.name} for indexed inductive {spec.name} must declare a target"
+
+def checkConstructorTargetExpr
+    (spec : InductiveSpec)
+    (ctor : ConstructorSpec)
+    (target : Expr) : Result Unit := do
+  match target.getAppFn with
+  | .const name levels =>
+      if name != spec.name then
+        .error s!"constructor {ctor.name} target must be headed by {spec.name}"
+      else if !levels.isEmpty then
+        .error s!"constructor {ctor.name} target must not use universe arguments"
+      else
+        let args := target.getAppArgs
+        if args.length != spec.params.length + spec.indices.length then
+          .error s!"constructor {ctor.name} target has the wrong arity for {spec.name}"
+        else
+          let paramArgs := args.take spec.params.length
+          let expectedParams := Expr.bvarArgs spec.params.length ctor.fields.length
+          if (List.zip paramArgs expectedParams).all fun pair => pair.1.alphaEq pair.2 then
+            pure ()
+          else
+            .error s!"constructor {ctor.name} target must use the inductive parameters"
+  | _ => .error s!"constructor {ctor.name} target must be an application of {spec.name}"
+
+def constructorTypeExpr (spec : InductiveSpec) (ctor : ConstructorSpec) : Result Expr := do
+  let target ← constructorTargetExpr spec ctor
+  let _ ← checkConstructorTargetExpr spec ctor target
   let withFields := Telescope.bindForall ctor.fields target
-  Telescope.bindForall spec.params withFields
+  pure (Telescope.bindForall spec.params withFields)
 
 def inferSortOfPi (domain codomain : Level) : Level :=
   Level.normalize (.max domain codomain)
 
 def recursiveTargetExpr (spec : InductiveSpec) : Expr :=
-  inductiveTarget spec.name (Expr.bvarArgs spec.params.length 0)
+  let params := Expr.bvarArgs spec.params.length spec.indices.length
+  let indices := Expr.bvarArgs spec.indices.length 0
+  inductiveTarget spec.name (params ++ indices)
 
 def helperRecursorName (indName : Name) (index : Nat) : Name :=
   recursorName indName ++ "_" ++ toString index
@@ -351,7 +391,7 @@ def decomposeInductiveApp (env : Env) (expr : Expr) :
         none
       else match env.findInductive? name with
       | some info =>
-          if args.length = info.spec.params.length then
+          if args.length = info.spec.params.length + info.spec.indices.length then
             some (name, info, args)
           else
             none
@@ -533,9 +573,15 @@ partial def familyCtorMinorBody
     | [] => do
         let some motive := listGet? motives targetIndex
           | .error s!"internal error: missing motive for target #{targetIndex}"
-        let targetExpr := instantiateTargetSchema paramVars schemaVars target.schema
-        let ctorApp := Expr.mkApps (.const ctor.name []) (targetExpr.getAppArgs ++ fieldVars)
-        pure (Expr.mkApps motive (schemaVars ++ [ctorApp]))
+        let ctorTarget := Expr.instantiateMany (paramVars ++ schemaVars ++ fieldVars) ctor.target
+        let ctorParamArgs := ctorTarget.getAppArgs.take target.paramCount
+        let ctorApp := Expr.mkApps (.const ctor.name []) (ctorParamArgs ++ fieldVars)
+        let motiveArgs :=
+          if target.bindLocalsInMinors then
+            schemaVars
+          else
+            ctorTarget.getAppArgs.drop target.paramCount
+        pure (Expr.mkApps motive (motiveArgs ++ [ctorApp]))
     | field :: rest => do
         let fieldTy :=
           Expr.instantiateMany (paramVars ++ schemaVars ++ fieldVars) field.binder.type
@@ -581,10 +627,15 @@ partial def familyCtorMinorType
     (targetIndex : Nat)
     (target : FamilyTarget)
     (ctor : FamilyCtor) : Result Expr := do
-  Telescope.bindForallM paramVars target.schema.locals fun paramVars localVars => do
+  let minorLocals :=
+    if target.bindLocalsInMinors then
+      target.schema.locals
+    else
+      []
+  Telescope.bindForallM paramVars minorLocals fun paramVars localVars => do
     familyCtorMinorBody
       family
-      (motives.map (Expr.lift target.schema.locals.length))
+      (motives.map (Expr.lift minorLocals.length))
       paramVars
       localVars
       targetIndex
@@ -700,15 +751,23 @@ partial def reduceRecursorApp
     let some ctor := targetInfo.ctors.find? fun ctor => ctor.name = ctorName
       | pure none
     let targetExpr := instantiateTargetSchema split.params split.locals targetInfo.schema
-    if ctorArgs.length != targetExpr.getAppArgs.length + ctor.fields.length then
+    if ctorArgs.length != targetInfo.paramCount + ctor.fields.length then
       pure none
     else
-      let targetArgs := ctorArgs.take targetExpr.getAppArgs.length
-      let _ ← checkRecursorTargetArgs env recName targetArgs targetExpr.getAppArgs
-      let fieldArgs := ctorArgs.drop targetExpr.getAppArgs.length
+      let targetArgs := ctorArgs.take targetInfo.paramCount
+      let fieldArgs := ctorArgs.drop targetInfo.paramCount
+      let minorLocalArgs :=
+        if targetInfo.bindLocalsInMinors then
+          split.locals
+        else
+          []
+      let ctorTarget :=
+        Expr.instantiateMany (split.params ++ minorLocalArgs ++ fieldArgs) ctor.target
+      let _ ← checkRecursorTargetArgs env recName targetArgs (targetExpr.getAppArgs.take targetInfo.paramCount)
+      let _ ← checkRecursorTargetArgs env recName ctorTarget.getAppArgs targetExpr.getAppArgs
       let prefixArgs := split.params ++ split.motives ++ split.minors
       let mut previousFields : List Expr := []
-      let mut minorArgs := split.locals
+      let mut minorArgs := minorLocalArgs
       for pair in List.zip ctor.fields fieldArgs do
         let field := pair.1
         let fieldArg := pair.2
@@ -720,7 +779,7 @@ partial def reduceRecursorApp
               levels
               prefixArgs
               split.params
-              (split.locals ++ previousFields)
+              (minorLocalArgs ++ previousFields)
               field.shape
               fieldArg
           minorArgs := minorArgs ++ [ih]
@@ -954,53 +1013,66 @@ partial def analyzeRecursiveShape
     (locals : Telescope)
     (expr : Expr) : Result RawFieldShape := do
   let expr ← normalizeForInductiveAnalysis env expr
-  let target := Expr.lift locals.length (recursiveTargetExpr root.spec)
-  if expr = target then
-    pure .direct
-  else
-    match expr with
-    | .bvar _ => pure .none
-    | .sort _ => pure .none
-    | .const _ _ => pure .none
-    | .letE _ _ _ _ =>
-        .error s!"unexpected let-expression in positivity check: {repr expr}"
-    | .lam _ _ _ =>
-        .error s!"unexpected lambda in positivity check: {repr expr}"
-    | .forallE name dom body =>
-        let dom ← normalizeForInductiveAnalysis env dom
-        if containsExprAt (recursiveTargetExpr root.spec) locals.length dom then
-          .error s!"non-positive recursive occurrence in {repr expr}"
-        else
-          let binder : Binder := { name, type := dom }
-          let bodyShape ← analyzeRecursiveShape env root (locals ++ [binder]) body
-          match bodyShape with
-          | .none => pure .none
-          | _ => pure (.pi binder bodyShape)
-    | .app _ _ =>
-        match decomposeInductiveApp env expr with
-        | some (headName, info, args) =>
-            if headName = root.spec.name then
-              .error s!"recursive occurrence must be {repr target}"
-            let mut found := false
-            for pair in List.zip args info.positiveParams do
-              let arg := pair.1
-              let isPositive := pair.2
-              let occurs := containsExprAt (recursiveTargetExpr root.spec) locals.length arg
-              if occurs then
-                if !isPositive then
-                  .error s!"recursive occurrence appears in a non-positive argument of {headName}"
-                let shape ← analyzeRecursiveShape env root locals arg
-                if rawShapeHasIH shape then
-                  found := true
-            if found then
-              pure (.nested { locals, target := expr, headName })
-            else
-              pure .none
-        | none =>
-            if containsExprAt (recursiveTargetExpr root.spec) locals.length expr then
-              .error s!"non-positive recursive occurrence in {repr expr}"
-            else
-              pure .none
+  let analyzeInductiveApp (headName : Name) (info : InductiveInfo) (args : List Expr) :
+      Result RawFieldShape := do
+    if headName = root.spec.name then
+      let paramArgs := args.take root.spec.params.length
+      let expectedParams := Expr.bvarArgs root.spec.params.length locals.length
+      if !((List.zip paramArgs expectedParams).all fun pair => pair.1.alphaEq pair.2) then
+        .error s!"recursive occurrence must use the inductive parameters of {root.spec.name}"
+      else if (args.drop root.spec.params.length).any fun arg =>
+          containsExprAt (recursiveTargetExpr root.spec) locals.length arg then
+        .error s!"recursive occurrence appears inside an index of {root.spec.name}"
+      else
+        pure (.nested { locals, target := expr, headName })
+    else
+      let mut found := false
+      for pair in List.zip args info.positiveParams do
+        let arg := pair.1
+        let isPositive := pair.2
+        let occurs := containsExprAt (recursiveTargetExpr root.spec) locals.length arg
+        if occurs then
+          if !isPositive then
+            .error s!"recursive occurrence appears in a non-positive argument of {headName}"
+          let shape ← analyzeRecursiveShape env root locals arg
+          if rawShapeHasIH shape then
+            found := true
+      for arg in args.drop info.spec.params.length do
+        if containsExprAt (recursiveTargetExpr root.spec) locals.length arg then
+          .error s!"recursive occurrence appears in an index argument of {headName}"
+      if found then
+        pure (.nested { locals, target := expr, headName })
+      else
+        pure .none
+  match expr with
+  | .bvar _ => pure .none
+  | .sort _ => pure .none
+  | .const _ _ =>
+      match decomposeInductiveApp env expr with
+      | some (headName, info, args) => analyzeInductiveApp headName info args
+      | none => pure .none
+  | .letE _ _ _ _ =>
+      .error s!"unexpected let-expression in positivity check: {repr expr}"
+  | .lam _ _ _ =>
+      .error s!"unexpected lambda in positivity check: {repr expr}"
+  | .forallE name dom body =>
+      let dom ← normalizeForInductiveAnalysis env dom
+      if containsExprAt (recursiveTargetExpr root.spec) locals.length dom then
+        .error s!"non-positive recursive occurrence in {repr expr}"
+      else
+        let binder : Binder := { name, type := dom }
+        let bodyShape ← analyzeRecursiveShape env root (locals ++ [binder]) body
+        match bodyShape with
+        | .none => pure .none
+        | _ => pure (.pi binder bodyShape)
+  | .app _ _ =>
+      match decomposeInductiveApp env expr with
+      | some (headName, info, args) => analyzeInductiveApp headName info args
+      | none =>
+          if containsExprAt (recursiveTargetExpr root.spec) locals.length expr then
+            .error s!"non-positive recursive occurrence in {repr expr}"
+          else
+            pure .none
 
 partial def internFieldShape
     (schemas : List TargetSchema)
@@ -1020,7 +1092,7 @@ partial def buildRecursorFamily
     (env : Env)
     (root : InductiveInfo) : Result RecursorFamily := do
   let rootTarget ← normalizeForInductiveAnalysis env (recursiveTargetExpr root.spec)
-  let rootSchema : TargetSchema := { locals := [], target := rootTarget, headName := root.spec.name }
+  let rootSchema : TargetSchema := { locals := root.spec.indices, target := rootTarget, headName := root.spec.name }
   let rec loop
       (schemas : List TargetSchema)
       (built : List FamilyTarget) : Result (List FamilyTarget) := do
@@ -1036,6 +1108,13 @@ partial def buildRecursorFamily
       else
         let index := built.length
         let targetName := familyRecName root.spec.name index
+        let targetParamCount := info.spec.params.length
+        let bindLocalsInMinors := index != 0
+        let targetParamArgs :=
+          if bindLocalsInMinors then
+            args.take targetParamCount
+          else
+            Expr.bvarArgs targetParamCount 0
         let rec buildFields
             (currentSchemas : List TargetSchema)
             (fieldLocals : Telescope)
@@ -1054,17 +1133,27 @@ partial def buildRecursorFamily
           match remaining with
           | [] => pure ([], currentSchemas)
           | ctor :: rest => do
-              let instantiated := Telescope.instantiateTypes args ctor.fields
+              let instantiated := Telescope.instantiateTypes targetParamArgs ctor.fields
               let specialized ←
                 instantiated.mapM fun field => do
                   let type ← normalizeForInductiveAnalysis env field.type
                   pure { field with type }
-              let (fields, currentSchemas) ← buildFields currentSchemas schema.locals specialized
+              let ctorTarget ← constructorTargetExpr info.spec ctor
+              let target ←
+                normalizeForInductiveAnalysis
+                  env
+                  (Expr.instantiateManyFrom ctor.fields.length targetParamArgs ctorTarget)
+              let initialFieldLocals :=
+                if bindLocalsInMinors then
+                  schema.locals
+                else
+                  []
+              let (fields, currentSchemas) ← buildFields currentSchemas initialFieldLocals specialized
               let (restCtors, currentSchemas) ← buildCtors currentSchemas rest
-              pure ({ name := ctor.name, fields } :: restCtors, currentSchemas)
+              pure ({ name := ctor.name, target, fields } :: restCtors, currentSchemas)
         let (ctors, currentSchemas) ← buildCtors schemas info.spec.ctors
         let target : FamilyTarget :=
-          { recName := targetName, schema, ctors }
+          { recName := targetName, schema, paramCount := targetParamCount, bindLocalsInMinors, ctors }
         loop currentSchemas (built ++ [target])
   let targets ← loop [rootSchema] []
   pure { rootName := root.spec.name, params := root.spec.params, targets }
@@ -1150,6 +1239,8 @@ def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
     let _ ← checkFreshName env ctor.name
     seenNames := ctor.name :: seenNames
   let _ ← checkTelescope env spec.params
+  let paramCtx := Telescope.toContext spec.params
+  let _ ← checkTelescopeFrom env paramCtx spec.indices
   let indType := inductiveTypeExpr spec
   let provisionalInfo : InductiveInfo :=
     {
@@ -1158,7 +1249,6 @@ def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
       positiveParams := List.replicate spec.params.length true
     }
   let tempEnv := .inductive spec.name [] provisionalInfo :: env
-  let paramCtx := Telescope.toContext spec.params
   if !spec.ctors.isEmpty then
     let rec checkParamLevels (ctx : Context) : Telescope → Result Unit
       | [] => pure ()
@@ -1194,7 +1284,7 @@ def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
     seenNames := target.recName :: seenNames
   let ctorInfos ←
     spec.ctors.mapM fun ctor => do
-      let ctorType := constructorTypeExpr spec ctor
+      let ctorType ← constructorTypeExpr spec ctor
       let _ ←
         validateGeneratedType
           infoEnv

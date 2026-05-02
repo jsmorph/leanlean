@@ -60,6 +60,85 @@ def listSpec : InductiveSpec :=
       ]
   }
 
+def eqSpec : InductiveSpec :=
+  {
+    name := "Eq"
+    params := [{ name := "α", type := .sort 0 }]
+    indices :=
+      [
+        { name := "lhs", type := .bvar 0 },
+        { name := "rhs", type := .bvar 1 }
+      ]
+    level := 0
+    ctors :=
+      [
+        {
+          name := "Eq.refl"
+          fields := [{ name := "value", type := .bvar 0 }]
+          target? := some (Expr.mkApps (const0 "Eq") [.bvar 1, .bvar 0, .bvar 0])
+        }
+      ]
+  }
+
+def vecSpec : InductiveSpec :=
+  {
+    name := "Vec"
+    params := [{ name := "α", type := .sort 0 }]
+    indices := [{ name := "n", type := natType }]
+    level := 0
+    ctors :=
+      [
+        {
+          name := "Vec.nil"
+          fields := []
+          target? := some (Expr.mkApps (const0 "Vec") [.bvar 0, const0 "Nat.zero"])
+        },
+        {
+          name := "Vec.cons"
+          fields :=
+            [
+              { name := "n", type := natType },
+              { name := "head", type := .bvar 1 },
+              { name := "tail", type := Expr.mkApps (const0 "Vec") [.bvar 2, .bvar 1] }
+            ]
+          target? :=
+            some
+              (Expr.mkApps
+                (const0 "Vec")
+                [.bvar 3, Expr.mkApps (const0 "Nat.succ") [.bvar 2]])
+        }
+      ]
+  }
+
+def heightTreeSpec : InductiveSpec :=
+  {
+    name := "HeightTree"
+    params := []
+    indices := [{ name := "height", type := natType }]
+    level := 0
+    ctors :=
+      [
+        {
+          name := "HeightTree.leaf"
+          fields := []
+          target? := some (Expr.mkApps (const0 "HeightTree") [const0 "Nat.zero"])
+        },
+        {
+          name := "HeightTree.node"
+          fields :=
+            [
+              { name := "height", type := natType },
+              { name := "child", type := Expr.mkApps (const0 "HeightTree") [.bvar 0] }
+            ]
+          target? :=
+            some
+              (Expr.mkApps
+                (const0 "HeightTree")
+                [Expr.mkApps (const0 "Nat.succ") [.bvar 1]])
+        }
+      ]
+  }
+
 def sortBoxSpec : InductiveSpec :=
   {
     name := "SortBox"
@@ -353,10 +432,32 @@ def badForwardFieldSpec : InductiveSpec :=
       ]
   }
 
+def badParamTargetSpec : InductiveSpec :=
+  {
+    name := "BadParamTarget"
+    params :=
+      [
+        { name := "α", type := .sort 0 },
+        { name := "β", type := .sort 0 }
+      ]
+    level := 0
+    ctors :=
+      [
+        {
+          name := "BadParamTarget.mk"
+          fields := []
+          target? := some (Expr.mkApps (const0 "BadParamTarget") [.bvar 0, .bvar 0])
+        }
+      ]
+  }
+
 def sampleEnv : Result Env := do
   let env ← addInductive [] boolSpec
   let env ← addInductive env natSpec
   let env ← addInductive env listSpec
+  let env ← addInductive env eqSpec
+  let env ← addInductive env vecSpec
+  let env ← addInductive env heightTreeSpec
   let env ← addInductive env sortBoxSpec
   let env ← addInductive env spuriousSpec
   let env ← addInductive env badParamSpec
@@ -382,6 +483,104 @@ def listNil (elem : Expr) : Expr :=
 
 def listCons (elem head tail : Expr) : Expr :=
   Expr.mkApps (const0 "List.cons") [elem, head, tail]
+
+def eqType (elem lhs rhs : Expr) : Expr :=
+  Expr.mkApps (const0 "Eq") [elem, lhs, rhs]
+
+def eqRefl (elem value : Expr) : Expr :=
+  Expr.mkApps (const0 "Eq.refl") [elem, value]
+
+def vecType (elem index : Expr) : Expr :=
+  Expr.mkApps (const0 "Vec") [elem, index]
+
+def vecNil (elem : Expr) : Expr :=
+  Expr.mkApps (const0 "Vec.nil") [elem]
+
+def vecCons (elem index head tail : Expr) : Expr :=
+  Expr.mkApps (const0 "Vec.cons") [elem, index, head, tail]
+
+def vecOneBool : Expr :=
+  vecCons boolType natZero boolTrue (vecNil boolType)
+
+def vecBoolMotive : Expr :=
+  .lam "n" natType (.lam "xs" (vecType boolType (.bvar 0)) natType)
+
+def vecBoolNilCase : Expr :=
+  natZero
+
+def vecBoolConsCase : Expr :=
+  .lam
+    "n"
+    natType
+    (.lam
+      "head"
+      boolType
+      (.lam
+        "tail"
+        (vecType boolType (.bvar 1))
+        (.lam "ih" natType (natSucc (.bvar 0)))))
+
+def vecRecOnOne : Expr :=
+  Expr.mkApps
+    (recConst "Vec.rec")
+    [
+      boolType,
+      vecBoolMotive,
+      vecBoolNilCase,
+      vecBoolConsCase,
+      natSucc natZero,
+      vecOneBool
+    ]
+
+def vecRecIndexMismatch : Expr :=
+  Expr.mkApps
+    (recConst "Vec.rec")
+    [
+      boolType,
+      vecBoolMotive,
+      vecBoolNilCase,
+      vecBoolConsCase,
+      natZero,
+      vecOneBool
+    ]
+
+def heightTreeType (height : Expr) : Expr :=
+  Expr.mkApps (const0 "HeightTree") [height]
+
+def heightTreeLeaf : Expr :=
+  const0 "HeightTree.leaf"
+
+def heightTreeNode (height child : Expr) : Expr :=
+  Expr.mkApps (const0 "HeightTree.node") [height, child]
+
+def heightTreeOne : Expr :=
+  heightTreeNode natZero heightTreeLeaf
+
+def heightTreeMotive : Expr :=
+  .lam "height" natType (.lam "tree" (heightTreeType (.bvar 0)) natType)
+
+def heightTreeLeafCase : Expr :=
+  natZero
+
+def heightTreeNodeCase : Expr :=
+  .lam
+    "height"
+    natType
+    (.lam
+      "child"
+      (heightTreeType (.bvar 0))
+      (.lam "ih" natType (natSucc (.bvar 0))))
+
+def heightTreeRecOnOne : Expr :=
+  Expr.mkApps
+    (recConst "HeightTree.rec")
+    [
+      heightTreeMotive,
+      heightTreeLeafCase,
+      heightTreeNodeCase,
+      natSucc natZero,
+      heightTreeOne
+    ]
 
 def natToBoolMotive : Expr :=
   .lam "n" natType boolType
@@ -710,6 +909,16 @@ def demoReport : Result (List String) := do
     pure ()
   let singletonTy ← infer env [] singletonTrue
   let _ ← checkDefEq env singletonTy (listType boolType)
+  let reflTy ← infer env [] (eqRefl boolType boolTrue)
+  let _ ← checkDefEq env reflTy (eqType boolType boolTrue boolTrue)
+  let vecRecTy ← infer env [] vecRecOnOne
+  let _ ← checkDefEq env vecRecTy natType
+  let vecRecNf ← normalize env vecRecOnOne
+  let _ ← checkDefEq env vecRecNf (natSucc natZero)
+  let heightTreeTy ← infer env [] heightTreeRecOnOne
+  let _ ← checkDefEq env heightTreeTy natType
+  let heightTreeNf ← normalize env heightTreeRecOnOne
+  let _ ← checkDefEq env heightTreeNf (natSucc natZero)
   let treeRecTy ← infer env [] natListTreeRecOnNode
   let _ ← checkDefEq env treeRecTy natType
   let treeRecNf ← normalize env natListTreeRecOnNode
@@ -726,6 +935,9 @@ def demoReport : Result (List String) := do
   | .error _ => pure ()
   match addInductive env badForwardFieldSpec with
   | .ok _ => .error "BadForwardField should fail field telescope checking"
+  | .error _ => pure ()
+  match addInductive env badParamTargetSpec with
+  | .ok _ => .error "BadParamTarget should fail constructor target checking"
   | .error _ => pure ()
   match addInductive env badWrapSpec with
   | .ok _ => .error "BadWrap should fail the positivity check"
@@ -826,6 +1038,12 @@ def demoReport : Result (List String) := do
   match normalize env listRecParamMismatch with
   | .ok _ => .error "List.rec with mismatched target parameters should not normalize"
   | .error _ => pure ()
+  match infer env [] vecRecIndexMismatch with
+  | .ok _ => .error "Vec.rec with mismatched target indices should not type-check"
+  | .error _ => pure ()
+  match normalize env vecRecIndexMismatch with
+  | .ok _ => .error "Vec.rec with mismatched target indices should not normalize"
+  | .error _ => pure ()
   match infer env [] (const0 "Nat.rec") with
   | .ok _ => .error "Nat.rec should require an explicit universe argument"
   | .error _ => pure ()
@@ -841,6 +1059,9 @@ def demoReport : Result (List String) := do
       "recursor constants type-check and support partial application",
       "Nat.rec on one normalizes to Bool.false",
       "List Bool constructor application checks",
+      "Eq.refl checks as an indexed constructor",
+      "Vec.rec computes through indexed constructor targets",
+      "HeightTree.rec computes through recursive indexed targets",
       "NatListTree.rec uses a nested helper recursor through List",
       "WrapAt.rec respects inductive parameters",
       "let-bound field types are normalized before positivity analysis",
@@ -849,11 +1070,13 @@ def demoReport : Result (List String) := do
       "helper recursors support targets that depend on parameters and local binders",
       "constructor fields may depend on earlier fields",
       "ill-scoped field dependencies are rejected",
+      "constructor targets must use the declared parameters",
       "minor premises insert induction hypotheses at recursive fields",
       "helper recursors support targets that depend on constructor fields",
       "constructorless inductives may sit below parameter universes",
       "constructor and field universes are rejected when they exceed the result universe",
       "recursor reduction rejects targets whose constructor parameters disagree",
+      "recursor reduction rejects targets whose constructor indices disagree",
       "non-positive nested uses of inductive parameters are rejected"
     ]
 
