@@ -423,6 +423,51 @@ def natListTreeRecOnList : Expr :=
       leafList
     ]
 
+def depNestType : Expr :=
+  const0 "DepNest"
+
+def wrapAtType (index elem : Expr) : Expr :=
+  Expr.mkApps (const0 "WrapAt") [index, elem]
+
+def wrapAtMk (index elem value : Expr) : Expr :=
+  Expr.mkApps (const0 "WrapAt.mk") [index, elem, value]
+
+def depNestFieldType : Expr :=
+  .forallE "n" natType (wrapAtType (.bvar 0) depNestType)
+
+def depNestMotive : Expr :=
+  .lam "t" depNestType boolType
+
+def wrapAtDepNestMotive : Expr :=
+  .lam "n" natType (.lam "t" (wrapAtType (.bvar 0) depNestType) boolType)
+
+def depNestRootCase : Expr :=
+  .lam "f" depNestFieldType (.lam "ih" (.forallE "n" natType boolType) boolFalse)
+
+def depNestWrapCase : Expr :=
+  .lam "n" natType (.lam "x" depNestType (.lam "ih" boolType boolTrue))
+
+def depNestSeedName : Name :=
+  "depNestSeed"
+
+def depNestSeed : Expr :=
+  const0 depNestSeedName
+
+def wrapAtSeedZero : Expr :=
+  wrapAtMk natZero depNestType depNestSeed
+
+def depNestHelperRecOnSeed : Expr :=
+  Expr.mkApps
+    (recConst "DepNest.rec_1")
+    [
+      depNestMotive,
+      wrapAtDepNestMotive,
+      depNestRootCase,
+      depNestWrapCase,
+      natZero,
+      wrapAtSeedZero
+    ]
+
 def demoReport : Result (List String) := do
   let env ← sampleEnv
   let oneTy ← infer env [] (const0 "one")
@@ -484,9 +529,30 @@ def demoReport : Result (List String) := do
   | some _ => .error "DupHelper should not generate a duplicate helper recursor"
   | none => pure ()
   let env ← addInductive env wrapAtSpec
-  match addInductive env depNestSpec with
-  | .ok _ => .error "DepNest should be rejected until helper targets carry local binders"
-  | .error _ => pure ()
+  let env ← addInductive env depNestSpec
+  let env ← addAxiom env depNestSeedName depNestType
+  let _ ← infer env [] (recConst "DepNest.rec_1")
+  match env.findRecursor? "DepNest.rec" with
+  | some (_, family) =>
+      if family.targets.length != 2 then
+        .error s!"DepNest should have exactly two family targets, got {family.targets.length}"
+      else
+        match listGet? family.targets 1 with
+        | some target =>
+            if target.schema.locals.length != 1 then
+              .error
+                s!"DepNest helper target should carry one local binder, got {target.schema.locals.length}"
+            else
+              pure ()
+        | none => .error "DepNest should expose a helper recursor target"
+  | none => .error "DepNest.rec should be present in the environment"
+  let depNestHelperTy ← infer env [] depNestHelperRecOnSeed
+  let _ ← checkDefEq env depNestHelperTy boolType
+  let depNestHelperNf ← normalize env depNestHelperRecOnSeed
+  if depNestHelperNf != boolTrue then
+    .error s!"unexpected normal form for DepNest.rec_1 example: {repr depNestHelperNf}"
+  else
+    pure ()
   match normalize env natRecMissingLevel with
   | .ok _ => .error "Nat.rec without a universe argument should not normalize"
   | .error _ => pure ()
@@ -517,7 +583,7 @@ def demoReport : Result (List String) := do
       "NatListTree.rec uses a nested helper recursor through List",
       "let-bound field types are normalized before positivity analysis",
       "helper-recursion targets are deduplicated by canonical form",
-      "binder-dependent nested helper targets remain outside the current subset",
+      "helper recursors support binder-dependent nested targets",
       "constructorless inductives may sit below parameter universes",
       "constructor and field universes are rejected when they exceed the result universe",
       "recursor reduction rejects targets whose constructor parameters disagree",

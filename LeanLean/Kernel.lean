@@ -19,11 +19,24 @@ structure InductiveSpec where
   ctors : List ConstructorSpec
   deriving DecidableEq, Repr, Inhabited
 
+structure TargetSchema where
+  locals : List Binder
+  target : Expr
+  headName : Name
+  deriving DecidableEq, Repr, Inhabited
+
+inductive RawFieldShape where
+  | none : RawFieldShape
+  | direct : RawFieldShape
+  | pi : Binder → RawFieldShape → RawFieldShape
+  | nested : TargetSchema → RawFieldShape
+  deriving DecidableEq, Repr, Inhabited
+
 inductive FieldShape where
   | none : FieldShape
   | direct : FieldShape
-  | pi : String → Expr → FieldShape → FieldShape
-  | nested : Expr → FieldShape
+  | pi : Binder → FieldShape → FieldShape
+  | nested : Nat → FieldShape
   deriving DecidableEq, Repr, Inhabited
 
 structure FamilyField where
@@ -38,8 +51,7 @@ structure FamilyCtor where
 
 structure FamilyTarget where
   recName : Name
-  typeExpr : Expr
-  headName : Name
+  schema : TargetSchema
   ctors : List FamilyCtor
   deriving DecidableEq, Repr, Inhabited
 
@@ -208,17 +220,29 @@ def recursiveTargetExpr (spec : InductiveSpec) : Expr :=
 def helperRecursorName (indName : Name) (index : Nat) : Name :=
   recursorName indName ++ "_" ++ toString index
 
+def rawShapeHasIH : RawFieldShape → Bool
+  | .none => false
+  | .direct => true
+  | .pi _ body => rawShapeHasIH body
+  | .nested _ => true
+
 def shapeHasIH : FieldShape → Bool
   | .none => false
   | .direct => true
-  | .pi _ _ body => shapeHasIH body
+  | .pi _ body => shapeHasIH body
   | .nested _ => true
 
-def shapeNestedTargets : FieldShape → List Expr
+def rawShapeSchemas : RawFieldShape → List TargetSchema
   | .none => []
   | .direct => []
-  | .pi _ _ body => shapeNestedTargets body
-  | .nested expr => [expr]
+  | .pi _ body => rawShapeSchemas body
+  | .nested schema => [schema]
+
+def schemaEq (left right : TargetSchema) : Bool :=
+  left.locals.length = right.locals.length &&
+    ((List.zip left.locals right.locals).all fun pair =>
+      pair.1.type.alphaEq pair.2.type) &&
+    left.target.alphaEq right.target
 
 def containsExprAt (target : Expr) (depth : Nat) (expr : Expr) : Bool :=
   if expr = Expr.lift depth target then
@@ -275,127 +299,25 @@ def decomposeInductiveApp (env : Env) (expr : Expr) :
       | none => none
   | _ => none
 
-structure RecursorSplit where
-  params : List Expr
-  motives : List Expr
-  minors : List Expr
-  target : Expr
-
-def familyMinorCount (family : RecursorFamily) : Nat :=
-  family.targets.foldl (fun count target => count + target.ctors.length) 0
-
-def splitFamilyRecursorArgs
-    (family : RecursorFamily)
-    (args : List Expr) : Option RecursorSplit :=
-  let paramCount := family.params.length
-  let motiveCount := family.targets.length
-  let minorCount := familyMinorCount family
-  if args.length != paramCount + motiveCount + minorCount + 1 then
-    none
-  else
-    let params := args.take paramCount
-    let rest := args.drop paramCount
-    let motives := rest.take motiveCount
-    let rest := rest.drop motiveCount
-    let minors := rest.take minorCount
-    match rest.drop minorCount with
-    | [target] => some { params, motives, minors, target }
-    | _ => none
-
-def lookupFamilyTarget? (family : RecursorFamily) (expr : Expr) : Option FamilyTarget :=
-  family.targets.find? fun target => target.typeExpr.alphaEq expr
-
-def lookupFamilyTargetIndex? (family : RecursorFamily) (expr : Expr) : Option Nat :=
-  let rec loop (index : Nat) : List FamilyTarget → Option Nat
-    | [] => none
-    | target :: rest =>
-        if target.typeExpr.alphaEq expr then
-          some index
-        else
-          loop (index + 1) rest
-  loop 0 family.targets
-
 def listGet? : List α → Nat → Option α
   | [], _ => none
   | value :: _, 0 => some value
   | _ :: rest, index + 1 => listGet? rest index
 
-def familyMinorEntries (family : RecursorFamily) : List (FamilyTarget × FamilyCtor) :=
-  family.targets.foldr
-    (fun target rest => target.ctors.map (fun ctor => (target, ctor)) ++ rest)
-    []
+def findSchemaIndex? (schemas : List TargetSchema) (target : TargetSchema) : Option Nat :=
+  let rec loop (index : Nat) : List TargetSchema → Option Nat
+    | [] => none
+    | schema :: rest =>
+        if schemaEq schema target then
+          some index
+        else
+          loop (index + 1) rest
+  loop 0 schemas
 
-def lookupMinorExpr?
-    (family : RecursorFamily)
-    (minors : List Expr)
-    (targetExpr : Expr)
-    (ctorName : Name) : Option Expr := do
-  let entries := familyMinorEntries family
-  let index ← entries.findIdx? fun entry =>
-    entry.1.typeExpr.alphaEq targetExpr && entry.2.name = ctorName
-  listGet? minors index
-
-def mkCtorApp
-    (target : FamilyTarget)
-    (ctor : FamilyCtor)
-    (fieldVars : List Expr) : Expr :=
-  Expr.mkApps (.const ctor.name []) (target.typeExpr.getAppArgs ++ fieldVars)
-
-def lookupTargetMotive?
-    (family : RecursorFamily)
-    (motives : List Expr)
-    (targetExpr : Expr) : Option Expr := do
-  let index ← lookupFamilyTargetIndex? family targetExpr
-  listGet? motives index
-
-def lookupTargetRecName?
-    (family : RecursorFamily)
-    (targetExpr : Expr) : Option Name := do
-  let target ← lookupFamilyTarget? family targetExpr
-  pure target.recName
-
-partial def ihTypeExpr
-    (family : RecursorFamily)
-    (motives : List Expr)
-    (liftAmount : Nat)
-    (shape : FieldShape)
-    (fieldExpr : Expr) : Result Expr := do
-  match shape with
-  | .none => .error "internal error: missing induction hypothesis"
-  | .direct =>
-      let some motive := listGet? motives 0
-        | .error "internal error: missing root motive"
-      pure (.app (Expr.lift liftAmount motive) fieldExpr)
-  | .nested targetExpr =>
-      let some motive := lookupTargetMotive? family motives targetExpr
-        | .error s!"internal error: unknown nested target {repr targetExpr}"
-      pure (.app (Expr.lift liftAmount motive) fieldExpr)
-  | .pi name dom body => do
-      let bodyField := .app (Expr.lift 1 fieldExpr) (.bvar 0)
-      let bodyTy ← ihTypeExpr family motives (liftAmount + 1) body bodyField
-      pure (.forallE name (Expr.lift liftAmount dom) bodyTy)
-
-partial def ihTerm
-    (family : RecursorFamily)
-    (levels : List Level)
-    (prefixArgs : List Expr)
-    (shape : FieldShape)
-    (fieldExpr : Expr) : Result Expr := do
-  match shape with
-  | .none => .error "internal error: missing induction hypothesis term"
-  | .direct =>
-      let some firstTarget := listGet? family.targets 0
-        | .error "internal error: missing root target"
-      let recName := firstTarget.recName
-      pure (Expr.mkApps (.const recName levels) (prefixArgs ++ [fieldExpr]))
-  | .nested targetExpr =>
-      let some recName := lookupTargetRecName? family targetExpr
-        | .error s!"internal error: unknown nested target {repr targetExpr}"
-      pure (Expr.mkApps (.const recName levels) (prefixArgs ++ [fieldExpr]))
-  | .pi name dom body => do
-      let bodyField := .app (Expr.lift 1 fieldExpr) (.bvar 0)
-      let bodyTerm ← ihTerm family levels prefixArgs body bodyField
-      pure (.lam name dom bodyTerm)
+def internSchema (schemas : List TargetSchema) (target : TargetSchema) : Nat × List TargetSchema :=
+  match findSchemaIndex? schemas target with
+  | some index => (index, schemas)
+  | none => (schemas.length, schemas ++ [target])
 
 def familyRecName (rootName : Name) (index : Nat) : Name :=
   if index = 0 then
@@ -403,46 +325,208 @@ def familyRecName (rootName : Name) (index : Nat) : Name :=
   else
     helperRecursorName rootName index
 
-def instantiateTargetExpr (params : List Expr) (target : FamilyTarget) : Expr :=
-  Expr.instantiateMany params target.typeExpr
+def instantiateTargetSchema
+    (params : List Expr)
+    (locals : List Expr)
+    (schema : TargetSchema) : Expr :=
+  Expr.instantiateMany (params ++ locals) schema.target
+
+partial def bindSchemaLocalsM
+    (paramVars : List Expr)
+    (locals : List Binder)
+    (buildBody : List Expr → List Expr → Result Expr) : Result Expr := do
+  let rec loop
+      (paramVars : List Expr)
+      (localVars : List Expr) : List Binder → Result Expr
+    | [] => buildBody paramVars localVars
+    | binder :: rest => do
+        let ty := Expr.instantiateMany (paramVars ++ localVars) binder.type
+        let body ←
+          loop
+            (paramVars.map (Expr.lift 1))
+            (localVars.map (Expr.lift 1) ++ [.bvar 0])
+            rest
+        pure (.forallE binder.name ty body)
+  loop paramVars [] locals
+
+structure RecursorSplit where
+  params : List Expr
+  motives : List Expr
+  minors : List Expr
+  locals : List Expr
+  target : Expr
+
+structure MinorEntry where
+  targetIndex : Nat
+  target : FamilyTarget
+  ctor : FamilyCtor
+
+def familyMinorEntries (family : RecursorFamily) : List MinorEntry :=
+  (List.zip (List.range family.targets.length) family.targets).foldr
+    (fun pair rest =>
+      pair.2.ctors.map (fun ctor => { targetIndex := pair.1, target := pair.2, ctor }) ++ rest)
+    []
+
+def familyMinorCount (family : RecursorFamily) : Nat :=
+  (familyMinorEntries family).length
+
+def splitFamilyRecursorArgs
+    (family : RecursorFamily)
+    (targetIndex : Nat)
+    (args : List Expr) : Option RecursorSplit := do
+  let targetInfo ← listGet? family.targets targetIndex
+  let paramCount := family.params.length
+  let motiveCount := family.targets.length
+  let minorCount := familyMinorCount family
+  let localCount := targetInfo.schema.locals.length
+  if args.length != paramCount + motiveCount + minorCount + localCount + 1 then
+    none
+  else
+    let params := args.take paramCount
+    let rest := args.drop paramCount
+    let motives := rest.take motiveCount
+    let rest := rest.drop motiveCount
+    let minors := rest.take minorCount
+    let rest := rest.drop minorCount
+    let locals := rest.take localCount
+    match rest.drop localCount with
+    | [target] => some { params, motives, minors, locals, target }
+    | _ => none
+
+def lookupMinorExpr?
+    (family : RecursorFamily)
+    (minors : List Expr)
+    (targetIndex : Nat)
+    (ctorName : Name) : Option Expr := do
+  let entries := familyMinorEntries family
+  let index ← entries.findIdx? fun entry =>
+    entry.targetIndex = targetIndex && entry.ctor.name = ctorName
+  listGet? minors index
+
+partial def ihTypeExpr
+    (family : RecursorFamily)
+    (motives : List Expr)
+    (paramVars : List Expr)
+    (localVars : List Expr)
+    (shape : FieldShape)
+    (fieldExpr : Expr) : Result Expr := do
+  match shape with
+  | .none => .error "internal error: missing induction hypothesis"
+  | .direct =>
+      let some motive := listGet? motives 0
+        | .error "internal error: missing root motive"
+      pure (.app motive fieldExpr)
+  | .nested targetIndex =>
+      let some target := listGet? family.targets targetIndex
+        | .error s!"internal error: unknown nested target index {targetIndex}"
+      if target.schema.locals.length != localVars.length then
+        .error s!"internal error: nested target #{targetIndex} expects {target.schema.locals.length} locals, got {localVars.length}"
+      else
+        let some motive := listGet? motives targetIndex
+          | .error s!"internal error: missing motive for nested target #{targetIndex}"
+        pure (Expr.mkApps motive (localVars ++ [fieldExpr]))
+  | .pi binder body => do
+      let dom := Expr.instantiateMany (paramVars ++ localVars) binder.type
+      let bodyField := .app (Expr.lift 1 fieldExpr) (.bvar 0)
+      let bodyTy ←
+        ihTypeExpr
+          family
+          (motives.map (Expr.lift 1))
+          (paramVars.map (Expr.lift 1))
+          (localVars.map (Expr.lift 1) ++ [.bvar 0])
+          body
+          bodyField
+      pure (.forallE binder.name dom bodyTy)
+
+partial def ihTerm
+    (family : RecursorFamily)
+    (levels : List Level)
+    (prefixArgs : List Expr)
+    (paramVars : List Expr)
+    (localVars : List Expr)
+    (shape : FieldShape)
+    (fieldExpr : Expr) : Result Expr := do
+  match shape with
+  | .none => .error "internal error: missing induction hypothesis term"
+  | .direct =>
+      let some firstTarget := listGet? family.targets 0
+        | .error "internal error: missing root target"
+      pure (Expr.mkApps (.const firstTarget.recName levels) (prefixArgs ++ [fieldExpr]))
+  | .nested targetIndex =>
+      let some target := listGet? family.targets targetIndex
+        | .error s!"internal error: unknown nested target index {targetIndex}"
+      if target.schema.locals.length != localVars.length then
+        .error s!"internal error: nested target #{targetIndex} expects {target.schema.locals.length} locals, got {localVars.length}"
+      else
+        pure (Expr.mkApps (.const target.recName levels) (prefixArgs ++ localVars ++ [fieldExpr]))
+  | .pi binder body => do
+      let dom := Expr.instantiateMany (paramVars ++ localVars) binder.type
+      let bodyField := .app (Expr.lift 1 fieldExpr) (.bvar 0)
+      let bodyTerm ←
+        ihTerm
+          family
+          levels
+          (prefixArgs.map (Expr.lift 1))
+          (paramVars.map (Expr.lift 1))
+          (localVars.map (Expr.lift 1) ++ [.bvar 0])
+          body
+          bodyField
+      pure (.lam binder.name dom bodyTerm)
 
 partial def familyCtorMinorType
     (family : RecursorFamily)
-    (params : List Expr)
+    (paramVars : List Expr)
     (motives : List Expr)
+    (targetIndex : Nat)
     (target : FamilyTarget)
     (ctor : FamilyCtor) : Result Expr := do
-  let some motive := lookupTargetMotive? family motives target.typeExpr
-    | .error s!"internal error: missing motive for {repr target.typeExpr}"
-  let targetExpr := instantiateTargetExpr params target
-  let fieldBinders :=
-    ctor.fields.map fun field =>
-      { field.binder with type := Expr.instantiateMany params field.binder.type }
-  let fieldVarsForIH := Expr.bvarArgs fieldBinders.length 0
-  let fieldLift := fieldBinders.length
-  let mut ihBinders : List Binder := []
-  let mut ihIndex := 0
-  for pair in List.zip ctor.fields fieldVarsForIH do
-    let field := pair.1
-    let fieldVar := pair.2
-    if shapeHasIH field.shape then
-      let ihTy ← ihTypeExpr family motives fieldLift field.shape fieldVar
-      ihBinders := ihBinders ++ [{ name := s!"ih{ihIndex}", type := ihTy }]
-      ihIndex := ihIndex + 1
-  let totalBinders := fieldBinders.length + ihBinders.length
-  let liftedMotive := Expr.lift totalBinders motive
-  let liftedTargetArgs := targetExpr.getAppArgs.map (Expr.lift totalBinders)
-  let fieldVars := Expr.bvarArgs fieldBinders.length ihBinders.length
-  let body :=
-    .app liftedMotive (Expr.mkApps (.const ctor.name []) (liftedTargetArgs ++ fieldVars))
-  let withIhs := bindIndependentForall ihBinders body
-  pure (bindIndependentForall fieldBinders withIhs)
+  bindSchemaLocalsM paramVars target.schema.locals fun paramVars localVars => do
+    let motiveVars := motives.map (Expr.lift target.schema.locals.length)
+    let some motive := listGet? motiveVars targetIndex
+      | .error s!"internal error: missing motive for target #{targetIndex}"
+    let fieldBinders :=
+      ctor.fields.map fun field =>
+        {
+          field.binder with
+            type := Expr.instantiateMany (paramVars ++ localVars) field.binder.type
+        }
+    let fieldVarsForIH := Expr.bvarArgs fieldBinders.length 0
+    let motivesForIH := motiveVars.map (Expr.lift fieldBinders.length)
+    let paramVarsForIH := paramVars.map (Expr.lift fieldBinders.length)
+    let localVarsForIH := localVars.map (Expr.lift fieldBinders.length)
+    let mut ihBinders : List Binder := []
+    let mut ihIndex := 0
+    for pair in List.zip ctor.fields fieldVarsForIH do
+      let field := pair.1
+      let fieldVar := pair.2
+      if shapeHasIH field.shape then
+        let ihTy ←
+          ihTypeExpr
+            family
+            motivesForIH
+            paramVarsForIH
+            localVarsForIH
+            field.shape
+            fieldVar
+        ihBinders := ihBinders ++ [{ name := s!"ih{ihIndex}", type := ihTy }]
+        ihIndex := ihIndex + 1
+    let targetExpr := instantiateTargetSchema paramVars localVars target.schema
+    let totalBinders := fieldBinders.length + ihBinders.length
+    let liftedMotive := Expr.lift totalBinders motive
+    let liftedLocalVars := localVars.map (Expr.lift totalBinders)
+    let liftedTargetArgs := targetExpr.getAppArgs.map (Expr.lift totalBinders)
+    let fieldVars := Expr.bvarArgs fieldBinders.length ihBinders.length
+    let ctorApp := Expr.mkApps (.const ctor.name []) (liftedTargetArgs ++ fieldVars)
+    let body := Expr.mkApps liftedMotive (liftedLocalVars ++ [ctorApp])
+    let withIhs := bindIndependentForall ihBinders body
+    pure (bindIndependentForall fieldBinders withIhs)
 
 def motiveBinderType
-    (params : List Expr)
+    (paramVars : List Expr)
     (motiveLevel : Level)
-    (target : FamilyTarget) : Expr :=
-  .forallE "t" (instantiateTargetExpr params target) (.sort motiveLevel)
+    (target : FamilyTarget) : Result Expr := do
+  bindSchemaLocalsM paramVars target.schema.locals fun paramVars localVars => do
+    pure (.forallE "t" (instantiateTargetSchema paramVars localVars target.schema) (.sort motiveLevel))
 
 partial def buildRecursorType
     (family : RecursorFamily)
@@ -452,34 +536,41 @@ partial def buildRecursorType
   let motiveCount := family.targets.length
   let minorEntries := familyMinorEntries family
   let minorCount := minorEntries.length
-  let motiveBinders :=
-    (List.zip (List.range motiveCount) family.targets).map fun pair =>
+  let motiveBinders ←
+    (List.zip (List.range motiveCount) family.targets).mapM fun pair => do
       let shift := pair.1
       let paramVars := Expr.bvarArgs paramCount shift
-      {
-        name := s!"motive_{pair.1 + 1}"
-        type := motiveBinderType paramVars motiveLevel pair.2
-      }
+      let type ← motiveBinderType paramVars motiveLevel pair.2
+      pure { name := s!"motive_{pair.1 + 1}", type }
   let minorBinders ←
     (List.zip (List.range minorCount) minorEntries).mapM fun pair => do
       let shift := motiveCount + pair.1
       let paramVars := Expr.bvarArgs paramCount shift
       let motiveVars := Expr.bvarArgs motiveCount pair.1
-      let minorTy ← familyCtorMinorType family paramVars motiveVars pair.2.1 pair.2.2
+      let minorTy ←
+        familyCtorMinorType
+          family
+          paramVars
+          motiveVars
+          pair.2.targetIndex
+          pair.2.target
+          pair.2.ctor
       pure { name := s!"minor_{pair.1}", type := minorTy }
   let some targetInfo := listGet? family.targets targetIndex
     | .error s!"internal error: invalid recursor index {targetIndex}"
-  let targetTy :=
-    instantiateTargetExpr
+  let targetType ←
+    bindSchemaLocalsM
       (Expr.bvarArgs paramCount (motiveCount + minorCount))
-      targetInfo
-  let targetBinder := { name := "t", type := targetTy }
-  let some motiveVar := listGet? (Expr.bvarArgs motiveCount (minorCount + 1)) targetIndex
-    | .error s!"internal error: missing motive #{targetIndex}"
-  pure
-    (bindTelescopeForall
-      (family.params ++ motiveBinders ++ minorBinders ++ [targetBinder])
-      (.app motiveVar (.bvar 0)))
+      targetInfo.schema.locals
+      fun paramVars localVars => do
+        let targetExpr := instantiateTargetSchema paramVars localVars targetInfo.schema
+        let motiveVars :=
+          (Expr.bvarArgs motiveCount minorCount).map (Expr.lift targetInfo.schema.locals.length)
+        let some motive := listGet? motiveVars targetIndex
+          | .error s!"internal error: missing motive #{targetIndex}"
+        let body := Expr.mkApps (Expr.lift 1 motive) (localVars.map (Expr.lift 1) ++ [.bvar 0])
+        pure (.forallE "t" targetExpr body)
+  pure (bindTelescopeForall (family.params ++ motiveBinders ++ minorBinders) targetType)
 
 def lookupCtx : Context → Nat → Option Binder
   | [], _ => none
@@ -503,19 +594,19 @@ partial def checkDefEq (env : Env) (left right : Expr) : Result Unit := do
   else
     .error s!"definitional equality failed: {repr leftNf} vs {repr rightNf}"
 
-partial def checkRecursorTargetParams
+partial def checkRecursorTargetArgs
     (env : Env)
     (recName : Name)
     (actual expected : List Expr) : Result Unit := do
   if actual.length != expected.length then
-    .error s!"internal error: mismatched target parameter arity for {recName}"
+    .error s!"internal error: mismatched target argument arity for {recName}"
   else
     for pair in List.zip actual expected do
       try
         let _ ← checkDefEq env pair.1 pair.2
         pure ()
       catch _ =>
-        .error s!"recursor target parameters do not match the explicit parameters for {recName}"
+        .error s!"recursor target does not match its explicit schema arguments for {recName}"
 
 partial def reduceRecursorApp
     (env : Env)
@@ -524,7 +615,7 @@ partial def reduceRecursorApp
     (args : List Expr) : Result (Option Expr) := do
   let some (targetIndex, family) := env.findRecursor? recName
     | .error s!"unknown recursor: {recName}"
-  let some split := splitFamilyRecursorArgs family args
+  let some split := splitFamilyRecursorArgs family targetIndex args
     | pure none
   let some targetInfo := listGet? family.targets targetIndex
     | .error s!"internal error: invalid recursor index for {recName}"
@@ -538,12 +629,12 @@ partial def reduceRecursorApp
   else
     let some ctor := targetInfo.ctors.find? fun ctor => ctor.name = ctorName
       | pure none
-    let targetExpr := instantiateTargetExpr split.params targetInfo
+    let targetExpr := instantiateTargetSchema split.params split.locals targetInfo.schema
     if ctorArgs.length != targetExpr.getAppArgs.length + ctor.fields.length then
       pure none
     else
-      let targetParamArgs := ctorArgs.take targetExpr.getAppArgs.length
-      let _ ← checkRecursorTargetParams env recName targetParamArgs targetExpr.getAppArgs
+      let targetArgs := ctorArgs.take targetExpr.getAppArgs.length
+      let _ ← checkRecursorTargetArgs env recName targetArgs targetExpr.getAppArgs
       let fieldArgs := ctorArgs.drop targetExpr.getAppArgs.length
       let prefixArgs := split.params ++ split.motives ++ split.minors
       let mut ihTerms : List Expr := []
@@ -551,11 +642,11 @@ partial def reduceRecursorApp
         let field := pair.1
         let fieldArg := pair.2
         if shapeHasIH field.shape then
-          let ih ← ihTerm family levels prefixArgs field.shape fieldArg
+          let ih ← ihTerm family levels prefixArgs split.params split.locals field.shape fieldArg
           ihTerms := ihTerms ++ [ih]
-      let some minor := lookupMinorExpr? family split.minors targetInfo.typeExpr ctor.name
+      let some minor := lookupMinorExpr? family split.minors targetIndex ctor.name
         | .error s!"internal error: missing minor premise for {ctor.name}"
-      pure (some (Expr.mkApps minor (fieldArgs ++ ihTerms)))
+      pure (some (Expr.mkApps minor (split.locals ++ fieldArgs ++ ihTerms)))
 
 partial def whnf (env : Env) (expr : Expr) : Result Expr := do
   match expr with
@@ -777,10 +868,10 @@ def computePositiveParams (env : Env) (spec : InductiveSpec) : Result (List Bool
 partial def analyzeRecursiveShape
     (env : Env)
     (root : InductiveInfo)
-    (depth : Nat)
-    (expr : Expr) : Result FieldShape := do
+    (locals : List Binder)
+    (expr : Expr) : Result RawFieldShape := do
   let expr ← normalizeForInductiveAnalysis env expr
-  let target := Expr.lift depth (recursiveTargetExpr root.spec)
+  let target := Expr.lift locals.length (recursiveTargetExpr root.spec)
   if expr = target then
     pure .direct
   else
@@ -793,13 +884,15 @@ partial def analyzeRecursiveShape
     | .lam _ _ _ =>
         .error s!"unexpected lambda in positivity check: {repr expr}"
     | .forallE name dom body =>
-        if containsExprAt (recursiveTargetExpr root.spec) depth dom then
+        let dom ← normalizeForInductiveAnalysis env dom
+        if containsExprAt (recursiveTargetExpr root.spec) locals.length dom then
           .error s!"non-positive recursive occurrence in {repr expr}"
         else
-          let bodyShape ← analyzeRecursiveShape env root (depth + 1) body
+          let binder : Binder := { name, type := dom }
+          let bodyShape ← analyzeRecursiveShape env root (locals ++ [binder]) body
           match bodyShape with
           | .none => pure .none
-          | _ => pure (.pi name dom bodyShape)
+          | _ => pure (.pi binder bodyShape)
     | .app _ _ =>
         match decomposeInductiveApp env expr with
         | some (headName, info, args) =>
@@ -809,72 +902,84 @@ partial def analyzeRecursiveShape
             for pair in List.zip args info.positiveParams do
               let arg := pair.1
               let isPositive := pair.2
-              let occurs := containsExprAt (recursiveTargetExpr root.spec) depth arg
+              let occurs := containsExprAt (recursiveTargetExpr root.spec) locals.length arg
               if occurs then
                 if !isPositive then
                   .error s!"recursive occurrence appears in a non-positive argument of {headName}"
-                let shape ← analyzeRecursiveShape env root depth arg
-                if shapeHasIH shape then
+                let shape ← analyzeRecursiveShape env root locals arg
+                if rawShapeHasIH shape then
                   found := true
             if found then
-              let some lowered := expr.lower depth
-                | .error s!"failed to lower nested target {repr expr}"
-              pure (.nested lowered)
+              pure (.nested { locals, target := expr, headName })
             else
               pure .none
         | none =>
-            if containsExprAt (recursiveTargetExpr root.spec) depth expr then
+            if containsExprAt (recursiveTargetExpr root.spec) locals.length expr then
               .error s!"non-positive recursive occurrence in {repr expr}"
             else
               pure .none
+
+partial def internFieldShape
+    (schemas : List TargetSchema)
+    (shape : RawFieldShape) : Result (FieldShape × List TargetSchema) := do
+  match shape with
+  | .none => pure (.none, schemas)
+  | .direct => pure (.direct, schemas)
+  | .pi binder body => do
+      let (bodyShape, schemas) ← internFieldShape schemas body
+      pure (.pi binder bodyShape, schemas)
+  | .nested schema =>
+      let (index, schemas) := internSchema schemas schema
+      pure (.nested index, schemas)
 
 partial def buildRecursorFamily
     (env : Env)
     (root : InductiveInfo) : Result RecursorFamily := do
   let rootTarget ← normalizeForInductiveAnalysis env (recursiveTargetExpr root.spec)
+  let rootSchema : TargetSchema := { locals := [], target := rootTarget, headName := root.spec.name }
   let rec loop
-      (seen : List Expr)
-      (queue : List Expr)
+      (schemas : List TargetSchema)
       (built : List FamilyTarget) : Result (List FamilyTarget) := do
-    match queue with
-    | [] => pure built
-    | typeExpr :: rest =>
-        let typeExpr ← normalizeForInductiveAnalysis env typeExpr
-        let some (headName, info, args) := decomposeInductiveApp env typeExpr
-          | .error s!"internal error: invalid family target {repr typeExpr}"
+    if built.length = schemas.length then
+      pure built
+    else
+      let some schema := listGet? schemas built.length
+        | .error s!"internal error: missing family target #{built.length}"
+      let some (headName, info, args) := decomposeInductiveApp env schema.target
+        | .error s!"internal error: invalid family target {repr schema.target}"
+      if headName != schema.headName then
+        .error s!"internal error: family target head mismatch for {repr schema.target}"
+      else
         let index := built.length
         let targetName := familyRecName root.spec.name index
-        let ctors ←
-          info.spec.ctors.mapM fun ctor => do
-            let specialized ←
-              ctor.fields.mapM fun field => do
-                let type ← normalizeForInductiveAnalysis env (Expr.instantiateMany args field.type)
-                pure { field with type }
-            let fields ←
-              specialized.mapM fun field => do
-                let shape ← analyzeRecursiveShape env root 0 field.type
-                pure { binder := field, shape }
-            pure { name := ctor.name, fields }
+        let rec buildFields
+            (currentSchemas : List TargetSchema)
+            (remaining : List Binder) : Result (List FamilyField × List TargetSchema) := do
+          match remaining with
+          | [] => pure ([], currentSchemas)
+          | field :: rest =>
+              let rawShape ← analyzeRecursiveShape env root schema.locals field.type
+              let (shape, currentSchemas) ← internFieldShape currentSchemas rawShape
+              let (restFields, currentSchemas) ← buildFields currentSchemas rest
+              pure ({ binder := field, shape } :: restFields, currentSchemas)
+        let rec buildCtors
+            (currentSchemas : List TargetSchema)
+            (remaining : List ConstructorSpec) : Result (List FamilyCtor × List TargetSchema) := do
+          match remaining with
+          | [] => pure ([], currentSchemas)
+          | ctor :: rest => do
+              let specialized ←
+                ctor.fields.mapM fun field => do
+                  let type ← normalizeForInductiveAnalysis env (Expr.instantiateMany args field.type)
+                  pure { field with type }
+              let (fields, currentSchemas) ← buildFields currentSchemas specialized
+              let (restCtors, currentSchemas) ← buildCtors currentSchemas rest
+              pure ({ name := ctor.name, fields } :: restCtors, currentSchemas)
+        let (ctors, currentSchemas) ← buildCtors schemas info.spec.ctors
         let target : FamilyTarget :=
-          { recName := targetName, typeExpr, headName, ctors }
-        let nested :=
-          ctors.foldr
-            (fun ctor rest =>
-              ctor.fields.foldr
-                (fun field inner => shapeNestedTargets field.shape ++ inner)
-                rest)
-            []
-        let mut newSeen := seen
-        let mut newQueue := rest
-        for nestedTarget in nested do
-          let nestedTarget ← normalizeForInductiveAnalysis env nestedTarget
-          let already :=
-            newSeen.any fun seenTarget => seenTarget.alphaEq nestedTarget
-          if !already then
-            newSeen := nestedTarget :: newSeen
-            newQueue := newQueue ++ [nestedTarget]
-        loop newSeen newQueue (built ++ [target])
-  let targets ← loop [rootTarget] [rootTarget] []
+          { recName := targetName, schema, ctors }
+        loop currentSchemas (built ++ [target])
+  let targets ← loop [rootSchema] []
   pure { rootName := root.spec.name, params := root.spec.params, targets }
 
 def checkClosed (what : String) (expr : Expr) : Result Unit :=

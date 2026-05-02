@@ -27,6 +27,14 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Implement the first running kernel model in Lean 4 for that specification.
 - [x] Check that the resulting specification and kernel together constitute a serious proof of concept.
 
+## Next Plan
+
+- [x] Draft [Helper-Target Design](helper-target-design.md) for telescope-aware nested helper targets.
+- [x] Replace closed helper-target expressions with contextual target schemas and indexed field shapes.
+- [x] Rewrite family construction, motive formation, minor-premise generation, and iota reduction around target schemas.
+- [x] Re-admit binder-dependent nested positive examples.
+- [ ] Revisit constructor field dependencies and indexed inductive families on top of the target-schema representation.
+
 ## Current Decisions
 
 The first specification draft lives in `spec.md`.  It now covers the data fragment with single inductive declarations, strictly positive recursive fields, generated recursor families, and beta, delta, zeta, and iota reduction.  It still omits `Prop`, proof irrelevance, quotient types, mutual inductives, indices, and general user-declared universe polymorphism.
@@ -37,4 +45,6 @@ The positivity check is compositional across earlier inductive declarations.  Th
 
 The inductive checker now analyzes canonicalized field types rather than surface syntax.  It normalizes constructor field types and specialized nested targets before testing parameter positivity, before classifying recursive field shapes, and before deduplicating helper-recursion targets.  That change removes three integrity problems from the earlier draft: local `let` bindings no longer change whether a parameter counts as positive, nested arguments no longer fail positivity because of reducible syntax inside a non-positive parameter, and definitionally equal nested targets no longer generate duplicate helper recursors.
 
-Two further boundaries now have explicit treatment.  First, primitive recursor reduction checks that the target constructor's parameter arguments are definitionally equal to the explicit recursor parameters before applying an iota step.  That side condition matters because normalization is available on raw expressions, not only on terms that have already passed inference.  Second, the current subset excludes binder-dependent nested helper targets such as `(n : Nat) → WrapAt n T`.  Supporting those cases requires a different recursor-family representation in which helper targets carry their local telescopes rather than a lowered closed target expression.
+The helper-target redesign is now in place.  Nested helper targets are represented by canonical target schemas with local telescopes, then interned into indexed family targets before motive formation or reduction.  That representation re-admits binder-dependent positive fields such as `(n : Nat) → WrapAt n T`, and it removes the last dependence on lowering nested targets into closed expressions.
+
+Primitive recursor reduction now checks that the constructor target arguments are definitionally equal to the instantiated schema arguments before applying an iota step.  That side condition matters because normalization is available on raw expressions, not only on terms that have already passed inference.  The remaining large omission in the inductive fragment is no longer binder-dependent helper targets.  It is the move from parameter-only inductive families to constructor field dependencies and indexed inductive families built on top of the new target-schema representation.
