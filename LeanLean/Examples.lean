@@ -145,6 +145,27 @@ def natListTreeSpec : InductiveSpec :=
       ]
   }
 
+def letTreeSpec : InductiveSpec :=
+  {
+    name := "LetTree"
+    params := []
+    level := 0
+    ctors :=
+      [
+        { name := "LetTree.leaf", fields := [{ name := "n", type := natType }] },
+        {
+          name := "LetTree.node"
+          fields :=
+            [
+              {
+                name := "children"
+                type := .letE "T" (.sort 0) (const0 "LetTree") (Expr.mkApps (const0 "List") [.bvar 0])
+              }
+            ]
+        }
+      ]
+  }
+
 def sampleEnv : Result Env := do
   let env ← addInductive [] boolSpec
   let env ← addInductive env natSpec
@@ -153,6 +174,7 @@ def sampleEnv : Result Env := do
   let env ← addInductive env spuriousSpec
   let env ← addInductive env badParamSpec
   let env ← addInductive env natListTreeSpec
+  let env ← addInductive env letTreeSpec
   let one := Expr.mkApps (const0 "Nat.succ") [const0 "Nat.zero"]
   addDefinition env "one" natType one
 
@@ -182,6 +204,26 @@ def natRecStepType : Expr :=
 
 def natRecPartial : Expr :=
   Expr.mkApps (recConst "Nat.rec") [natToBoolMotive, boolTrue]
+
+def natRecMissingLevel : Expr :=
+  Expr.mkApps
+    (const0 "Nat.rec")
+    [
+      natToBoolMotive,
+      boolTrue,
+      .lam "n" natType (.lam "ih" boolType boolFalse),
+      const0 "one"
+    ]
+
+def natRecExtraLevels : Expr :=
+  Expr.mkApps
+    (.const "Nat.rec" [0, 1])
+    [
+      natToBoolMotive,
+      boolTrue,
+      .lam "n" natType (.lam "ih" boolType boolFalse),
+      const0 "one"
+    ]
 
 def natIsZeroOnOne : Expr :=
   Expr.mkApps
@@ -269,6 +311,7 @@ def demoReport : Result (List String) := do
       env
       natRecPartialTy
       (.forallE "step" natRecStepType (.forallE "t" natType boolType))
+  let _ ← infer env [] (recConst "LetTree.rec_1")
   let natRecTy ← infer env [] natIsZeroOnOne
   let _ ← checkDefEq env natRecTy boolType
   let natRecNf ← normalize env natIsZeroOnOne
@@ -295,8 +338,20 @@ def demoReport : Result (List String) := do
   match addInductive env badWrapSpec with
   | .ok _ => .error "BadWrap should fail the positivity check"
   | .error _ => pure ()
+  match normalize env natRecMissingLevel with
+  | .ok _ => .error "Nat.rec without a universe argument should not normalize"
+  | .error _ => pure ()
+  match normalize env natRecExtraLevels with
+  | .ok _ => .error "Nat.rec with extra universe arguments should not normalize"
+  | .error _ => pure ()
   match infer env [] (const0 "Nat.rec") with
   | .ok _ => .error "Nat.rec should require an explicit universe argument"
+  | .error _ => pure ()
+  match infer env [] (.const "Nat.rec" [.param "v"]) with
+  | .ok _ => .error "Nat.rec should reject open universe arguments"
+  | .error _ => pure ()
+  match infer env [] (.sort (.param "u")) with
+  | .ok _ => .error "Sort expressions should reject open universe levels"
   | .error _ => pure ()
   pure
     [
@@ -305,6 +360,7 @@ def demoReport : Result (List String) := do
       "Nat.rec on one normalizes to Bool.false",
       "List Bool constructor application checks",
       "NatListTree.rec uses a nested helper recursor through List",
+      "let-bound field types are normalized before positivity analysis",
       "constructorless inductives may sit below parameter universes",
       "constructor and field universes are rejected when they exceed the result universe",
       "non-positive nested uses of inductive parameters are rejected"

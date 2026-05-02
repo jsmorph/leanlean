@@ -76,18 +76,38 @@ def name : ConstantInfo → Name
   | .ctor name _ _ _ => name
   | .recursor name _ _ _ _ => name
 
+def levelParams : ConstantInfo → List Name
+  | .axiom _ params _ => params
+  | .defn _ params _ _ => params
+  | .inductive _ params _ => params
+  | .ctor _ params _ _ => params
+  | .recursor _ params _ _ _ => params
+
+def checkLevels (info : ConstantInfo) (levels : List Level) : Result Unit := do
+  let params := info.levelParams
+  if levels.length != params.length then
+    .error
+      s!"constant {info.name} expects {params.length} universe arguments, \
+         but got {levels.length}"
+  else if !levels.all Level.closed then
+    .error s!"constant {info.name} requires closed universe arguments"
+  else
+    pure ()
+
 def instantiateExpr
     (constName : Name)
     (what : String)
     (params : List Name)
     (levels : List Level)
     (expr : Expr) : Result Expr :=
-  if levels.length = params.length then
-    pure (Expr.instantiateLevels params levels expr)
-  else
+  if levels.length != params.length then
     .error
       s!"constant {constName} expects {params.length} universe arguments in its {what}, \
          but got {levels.length}"
+  else if !levels.all Level.closed then
+    .error s!"constant {constName} requires closed universe arguments in its {what}"
+  else
+    pure (Expr.instantiateLevels params levels expr)
 
 def type (info : ConstantInfo) (levels : List Level) : Result Expr :=
   match info with
@@ -255,12 +275,53 @@ def decomposeInductiveApp (env : Env) (expr : Expr) :
       | none => none
   | _ => none
 
+partial def whnfForAnalysis (env : Env) (expr : Expr) : Result Expr := do
+  match expr with
+  | .app _ _ =>
+      let head := expr.getAppFn
+      let args := expr.getAppArgs
+      let headWhnf ← whnfForAnalysis env head
+      let rebuilt := Expr.mkApps headWhnf args
+      match headWhnf with
+      | .lam _ _ body =>
+          match args with
+          | [] => pure rebuilt
+          | arg :: rest =>
+              whnfForAnalysis env (Expr.mkApps (Expr.instantiate1 arg body) rest)
+      | .const name levels =>
+          match env.find? name with
+          | some info =>
+              let _ ← info.checkLevels levels
+              match ← info.value? levels with
+              | some value => whnfForAnalysis env (Expr.mkApps value args)
+              | none => pure rebuilt
+          | none => .error s!"unknown constant: {name}"
+      | .letE _ _ value body =>
+          whnfForAnalysis env (Expr.mkApps (Expr.instantiate1 value body) args)
+      | _ =>
+          if rebuilt = expr then
+            pure rebuilt
+          else
+            whnfForAnalysis env rebuilt
+  | .letE _ _ value body =>
+      whnfForAnalysis env (Expr.instantiate1 value body)
+  | .const name levels =>
+      match env.find? name with
+      | some info =>
+          let _ ← info.checkLevels levels
+          match ← info.value? levels with
+          | some value => whnfForAnalysis env value
+          | none => pure expr
+      | none => .error s!"unknown constant: {name}"
+  | _ => pure expr
+
 partial def positiveParamOccurrence
     (env : Env)
     (self : InductiveSpec)
     (selfPositive : List Bool)
     (targetIndex depth : Nat)
     (expr : Expr) : Result Bool := do
+  let expr ← whnfForAnalysis env expr
   if expr = Expr.bvar (targetIndex + depth) then
     pure true
   else
@@ -273,6 +334,7 @@ partial def positiveParamOccurrence
     | .lam _ _ _ =>
         .error s!"unexpected lambda in positivity check: {repr expr}"
     | .forallE _ dom body =>
+        let dom ← whnfForAnalysis env dom
         if containsBVarAt targetIndex depth dom then
           .error s!"non-positive parameter occurrence in {repr expr}"
         else
@@ -337,6 +399,7 @@ partial def analyzeRecursiveShape
     (root : InductiveInfo)
     (depth : Nat)
     (expr : Expr) : Result FieldShape := do
+  let expr ← whnfForAnalysis env expr
   let target := Expr.lift depth (recursiveTargetExpr root.spec)
   if expr = target then
     pure .direct
@@ -350,6 +413,7 @@ partial def analyzeRecursiveShape
     | .lam _ _ _ =>
         .error s!"unexpected lambda in positivity check: {repr expr}"
     | .forallE name dom body =>
+        let dom ← whnfForAnalysis env dom
         if containsExprAt (recursiveTargetExpr root.spec) depth dom then
           .error s!"non-positive recursive occurrence in {repr expr}"
         else
@@ -712,6 +776,7 @@ partial def whnf (env : Env) (expr : Expr) : Result Expr := do
       | .const name levels =>
           match env.find? name with
           | some info =>
+              let _ ← info.checkLevels levels
               match ← info.value? levels with
               | some value => whnf env (Expr.mkApps value args)
               | none =>
@@ -721,7 +786,7 @@ partial def whnf (env : Env) (expr : Expr) : Result Expr := do
                       | some reduced => whnf env reduced
                       | none => pure rebuilt
                   | _ => pure rebuilt
-          | none => pure rebuilt
+          | none => .error s!"unknown constant: {name}"
       | .letE _ _ value body =>
           whnf env (Expr.mkApps (Expr.instantiate1 value body) args)
       | _ =>
@@ -733,10 +798,11 @@ partial def whnf (env : Env) (expr : Expr) : Result Expr := do
   | .const name levels =>
       match env.find? name with
       | some info =>
+          let _ ← info.checkLevels levels
           match ← info.value? levels with
           | some value => whnf env value
           | none => pure expr
-      | _ => pure expr
+      | _ => .error s!"unknown constant: {name}"
   | _ => pure expr
 
 partial def normalize (env : Env) (expr : Expr) : Result Expr := do
@@ -805,10 +871,16 @@ partial def infer (env : Env) (ctx : Context) (expr : Expr) : Result Expr := do
       match lookupCtx ctx index with
       | some binder => pure binder.type
       | none => .error s!"unbound variable #{index}"
-  | .sort level => pure (.sort (.succ level))
+  | .sort level =>
+      if level.closed then
+        pure (.sort (.succ level))
+      else
+        .error s!"sort level must be closed: {repr level}"
   | .const name levels =>
       match env.find? name with
-      | some info => info.type levels
+      | some info =>
+          let _ ← info.checkLevels levels
+          info.type levels
       | none => .error s!"unknown constant: {name}"
   | .app _ _ => inferApp env ctx expr
   | .lam name type body => do
