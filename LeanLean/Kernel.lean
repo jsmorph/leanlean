@@ -503,6 +503,20 @@ partial def checkDefEq (env : Env) (left right : Expr) : Result Unit := do
   else
     .error s!"definitional equality failed: {repr leftNf} vs {repr rightNf}"
 
+partial def checkRecursorTargetParams
+    (env : Env)
+    (recName : Name)
+    (actual expected : List Expr) : Result Unit := do
+  if actual.length != expected.length then
+    .error s!"internal error: mismatched target parameter arity for {recName}"
+  else
+    for pair in List.zip actual expected do
+      try
+        let _ ← checkDefEq env pair.1 pair.2
+        pure ()
+      catch _ =>
+        .error s!"recursor target parameters do not match the explicit parameters for {recName}"
+
 partial def reduceRecursorApp
     (env : Env)
     (recName : Name)
@@ -528,6 +542,8 @@ partial def reduceRecursorApp
     if ctorArgs.length != targetExpr.getAppArgs.length + ctor.fields.length then
       pure none
     else
+      let targetParamArgs := ctorArgs.take targetExpr.getAppArgs.length
+      let _ ← checkRecursorTargetParams env recName targetParamArgs targetExpr.getAppArgs
       let fieldArgs := ctorArgs.drop targetExpr.getAppArgs.length
       let prefixArgs := split.params ++ split.motives ++ split.minors
       let mut ihTerms : List Expr := []

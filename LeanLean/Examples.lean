@@ -236,6 +236,48 @@ def dupHelperSpec : InductiveSpec :=
       ]
   }
 
+def wrapAtSpec : InductiveSpec :=
+  {
+    name := "WrapAt"
+    params :=
+      [
+        { name := "n", type := natType },
+        { name := "α", type := .sort 0 }
+      ]
+    level := 0
+    ctors :=
+      [
+        {
+          name := "WrapAt.mk"
+          fields := [{ name := "x", type := .bvar 0 }]
+        }
+      ]
+  }
+
+def depNestSpec : InductiveSpec :=
+  {
+    name := "DepNest"
+    params := []
+    level := 0
+    ctors :=
+      [
+        {
+          name := "DepNest.mk"
+          fields :=
+            [
+              {
+                name := "f"
+                type :=
+                  .forallE
+                    "n"
+                    natType
+                    (Expr.mkApps (const0 "WrapAt") [.bvar 0, const0 "DepNest"])
+              }
+            ]
+        }
+      ]
+  }
+
 def sampleEnv : Result Env := do
   let env ← addInductive [] boolSpec
   let env ← addInductive env natSpec
@@ -303,6 +345,17 @@ def natIsZeroOnOne : Expr :=
       boolTrue,
       .lam "n" natType (.lam "ih" boolType boolFalse),
       const0 "one"
+    ]
+
+def listRecParamMismatch : Expr :=
+  Expr.mkApps
+    (recConst "List.rec")
+    [
+      natType,
+      .lam "xs" (listType natType) boolType,
+      boolFalse,
+      .lam "head" natType (.lam "tail" (listType natType) (.lam "ih" boolType boolTrue)),
+      listNil boolType
     ]
 
 def singletonTrue : Expr :=
@@ -430,11 +483,21 @@ def demoReport : Result (List String) := do
   match env.find? "DupHelper.rec_2" with
   | some _ => .error "DupHelper should not generate a duplicate helper recursor"
   | none => pure ()
+  let env ← addInductive env wrapAtSpec
+  match addInductive env depNestSpec with
+  | .ok _ => .error "DepNest should be rejected until helper targets carry local binders"
+  | .error _ => pure ()
   match normalize env natRecMissingLevel with
   | .ok _ => .error "Nat.rec without a universe argument should not normalize"
   | .error _ => pure ()
   match normalize env natRecExtraLevels with
   | .ok _ => .error "Nat.rec with extra universe arguments should not normalize"
+  | .error _ => pure ()
+  match infer env [] listRecParamMismatch with
+  | .ok _ => .error "List.rec with mismatched target parameters should not type-check"
+  | .error _ => pure ()
+  match normalize env listRecParamMismatch with
+  | .ok _ => .error "List.rec with mismatched target parameters should not normalize"
   | .error _ => pure ()
   match infer env [] (const0 "Nat.rec") with
   | .ok _ => .error "Nat.rec should require an explicit universe argument"
@@ -454,8 +517,10 @@ def demoReport : Result (List String) := do
       "NatListTree.rec uses a nested helper recursor through List",
       "let-bound field types are normalized before positivity analysis",
       "helper-recursion targets are deduplicated by canonical form",
+      "binder-dependent nested helper targets remain outside the current subset",
       "constructorless inductives may sit below parameter universes",
       "constructor and field universes are rejected when they exceed the result universe",
+      "recursor reduction rejects targets whose constructor parameters disagree",
       "non-positive nested uses of inductive parameters are rejected"
     ]
 
