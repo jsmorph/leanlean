@@ -162,4 +162,4 @@ Acceptance criteria:
 
 ## Immediate Next Work
 
-The next implementation work should finish the current stabilization phase before the fragment grows.  The highest-value tasks are focused: add direct tests for simultaneous substitution, add a negative generated-declaration validation test, and write the de Bruijn context invariants into the specification.  After those are in place, the shared telescope core becomes the next major design problem.  Dependent constructor fields and indexed inductive families should follow in that order.
+The stabilization phase is complete, and the shared telescope core is now the active foundation for later work.  The next implementation phase should add constructor field dependencies on top of that core.  This should happen before indexed families, because indexed constructor targets depend on the same field-context machinery and would otherwise duplicate binder arithmetic in a larger setting.

@@ -36,6 +36,9 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Add focused tests for simultaneous substitution and raw malformed-entry rejection.
 - [x] Add generated-declaration validation coverage.
 - [x] Record the de Bruijn context and simultaneous-substitution invariants in the specification.
+- [x] Introduce shared telescope operations for source-order binding, context conversion, and simultaneous type instantiation.
+- [x] Route parameter, helper-local, and field binding through the shared telescope operations.
+- [x] Add regression coverage for telescope context order, dependent binding, independent binding, and simultaneous type instantiation.
 - [ ] Revisit constructor field dependencies and indexed inductive families on top of the target-schema representation.
 
 ## Current Decisions
@@ -57,3 +60,5 @@ The target-schema rewrite required one further correction in the term language i
 Generated declarations now undergo kernel-side validation before admission to the environment.  The earlier draft built constructor and recursor types, then trusted them.  The kernel now rechecks generated constructor types against the extended environment and rechecks generated recursor types against the inductive and constructor declarations they mention.  That validation step exposed a second structural bug in the inferencer: context lookup must lift a stored binder type back into the current context before returning it.  The kernel now does that, which restores dependent typing for generated recursor binders.
 
 The regression suite now has a separate `leanleantest` executable.  It covers simultaneous substitution directly, including nonzero cutoff and lifting of open inserted values.  It also checks that generated-declaration validation rejects an ill-typed generated type, and that raw inference and normalization entry points reject malformed primitive uses.  The demonstration executable remains available as `leanlean`.
+
+The kernel now has a shared telescope core.  Source-level telescopes remain outermost first, runtime contexts remain innermost first, and the checked code routes conversion between those orders through one API.  The API separates dependent binding, independent binding, and simultaneous type instantiation, because later constructor-field dependencies must not inherit the independent-field assumptions used by the current constructor type generator.  The current `Telescope` type is an abbreviation for `List Binder`, so code review still has to reject direct list operations that recreate binder arithmetic; a wrapper remains an option if that discipline proves too weak.

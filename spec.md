@@ -22,6 +22,8 @@ Runtime contexts are stored innermost binder first: de Bruijn index `0` refers t
 
 A binder type stored in a context is relative to the context that existed when the binder was introduced.  When the checker looks up de Bruijn index `i`, it lifts the stored binder type by `i + 1` before returning it, so the type lives in the current context.  This rule is part of the typing specification, not an implementation convenience.
 
+Two telescope-binding operations follow from this convention.  Binding a dependent telescope assumes each binder type is already written in the context of the binders that precede it, so the operation inserts dependent-function binders in source order without rewriting those types.  Binding an independent telescope assumes every binder type was written in the same outer context and therefore lifts each later binder type by the number of earlier binders; the body is supplied in the final context and is not rewritten by that operation.  Type instantiation across a telescope applies the simultaneous-substitution rule below to each binder type, preserving telescope length and source order.
+
 Simultaneous substitution is the primitive multi-substitution operation.  Given values `[v_0, ..., v_n]` ordered outermost to innermost, simultaneous substitution replaces de Bruijn index `0` with `v_n`, index `1` with `v_{n-1}`, and so on, while preserving variables below the active cutoff.  Under a binder, the cutoff increases and inserted values are lifted to avoid capture.  The kernel does not define target-schema or telescope instantiation by repeated one-variable substitution, because that would allow later substitutions to rewrite variables inside earlier inserted values.
 
 ## Inductive Fragment

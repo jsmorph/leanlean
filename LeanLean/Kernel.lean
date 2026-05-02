@@ -7,20 +7,71 @@ structure Binder where
   type : Expr
   deriving DecidableEq, Repr, Inhabited
 
+abbrev Telescope := List Binder
+abbrev Context := List Binder
+abbrev Result := Except String
+
+namespace Telescope
+
+def toContext (tele : Telescope) : Context :=
+  tele.reverse
+
+def withBinder (ctx : Context) (binder : Binder) : Context :=
+  binder :: ctx
+
+def bindForall (tele : Telescope) (body : Expr) : Expr :=
+  let rec loop : Telescope → Expr
+    | [] => body
+    | binder :: rest =>
+        .forallE binder.name binder.type (loop rest)
+  loop tele
+
+def bindIndependentForall (tele : Telescope) (body : Expr) : Expr :=
+  let rec loop (shift : Nat) (remaining : Telescope) : Expr :=
+    match remaining with
+    | [] => body
+    | binder :: rest =>
+        .forallE binder.name (Expr.lift shift binder.type) (loop (shift + 1) rest)
+  loop 0 tele
+
+def instantiateTypes (values : List Expr) (tele : Telescope) : Telescope :=
+  tele.map fun binder =>
+    { binder with type := Expr.instantiateMany values binder.type }
+
+def bindForallM
+    (paramVars : List Expr)
+    (locals : Telescope)
+    (buildBody : List Expr → List Expr → Result Expr) : Result Expr := do
+  let rec loop
+      (paramVars : List Expr)
+      (localVars : List Expr) : Telescope → Result Expr
+    | [] => buildBody paramVars localVars
+    | binder :: rest => do
+        let ty := Expr.instantiateMany (paramVars ++ localVars) binder.type
+        let body ←
+          loop
+            (paramVars.map (Expr.lift 1))
+            (localVars.map (Expr.lift 1) ++ [.bvar 0])
+            rest
+        pure (.forallE binder.name ty body)
+  loop paramVars [] locals
+
+end Telescope
+
 structure ConstructorSpec where
   name : Name
-  fields : List Binder
+  fields : Telescope
   deriving DecidableEq, Repr, Inhabited
 
 structure InductiveSpec where
   name : Name
-  params : List Binder
+  params : Telescope
   level : Level
   ctors : List ConstructorSpec
   deriving DecidableEq, Repr, Inhabited
 
 structure TargetSchema where
-  locals : List Binder
+  locals : Telescope
   target : Expr
   headName : Name
   deriving DecidableEq, Repr, Inhabited
@@ -57,7 +108,7 @@ structure FamilyTarget where
 
 structure RecursorFamily where
   rootName : Name
-  params : List Binder
+  params : Telescope
   targets : List FamilyTarget
   deriving DecidableEq, Repr, Inhabited
 
@@ -75,9 +126,7 @@ inductive ConstantInfo where
   | recursor : Name → List Name → Expr → Nat → RecursorFamily → ConstantInfo
   deriving DecidableEq, Repr, Inhabited
 
-abbrev Context := List Binder
 abbrev Env := List ConstantInfo
-abbrev Result := Except String
 
 namespace ConstantInfo
 
@@ -181,38 +230,20 @@ def recursorLevelParam : Name :=
 def recursorLevelParams : List Name :=
   [recursorLevelParam]
 
-def bindTelescopeForall (tele : List Binder) (body : Expr) : Expr :=
-  let rec loop : List Binder → Expr
-    | [] => body
-    | binder :: rest =>
-        .forallE binder.name binder.type (loop rest)
-  loop tele
-
-def bindIndependentForall (binders : List Binder) (body : Expr) : Expr :=
-  let rec loop (shift : Nat) (remaining : List Binder) : Expr :=
-    match remaining with
-    | [] => body
-    | binder :: rest =>
-        .forallE binder.name (Expr.lift shift binder.type) (loop (shift + 1) rest)
-  loop 0 binders
-
 def inductiveTarget (indName : Name) (params : List Expr) : Expr :=
   Expr.mkApps (.const indName []) params
 
 def inductiveTypeExpr (spec : InductiveSpec) : Expr :=
-  bindTelescopeForall spec.params (.sort spec.level)
+  Telescope.bindForall spec.params (.sort spec.level)
 
 def constructorTypeExpr (spec : InductiveSpec) (ctor : ConstructorSpec) : Expr :=
   let paramArgs := Expr.bvarArgs spec.params.length ctor.fields.length
   let target := inductiveTarget spec.name paramArgs
-  let withFields := bindIndependentForall ctor.fields target
-  bindTelescopeForall spec.params withFields
+  let withFields := Telescope.bindIndependentForall ctor.fields target
+  Telescope.bindForall spec.params withFields
 
 def inferSortOfPi (domain codomain : Level) : Level :=
   Level.normalize (.max domain codomain)
-
-def withBinder (ctx : Context) (binder : Binder) : Context :=
-  binder :: ctx
 
 def recursiveTargetExpr (spec : InductiveSpec) : Expr :=
   inductiveTarget spec.name (Expr.bvarArgs spec.params.length 0)
@@ -330,24 +361,6 @@ def instantiateTargetSchema
     (locals : List Expr)
     (schema : TargetSchema) : Expr :=
   Expr.instantiateMany (params ++ locals) schema.target
-
-partial def bindSchemaLocalsM
-    (paramVars : List Expr)
-    (locals : List Binder)
-    (buildBody : List Expr → List Expr → Result Expr) : Result Expr := do
-  let rec loop
-      (paramVars : List Expr)
-      (localVars : List Expr) : List Binder → Result Expr
-    | [] => buildBody paramVars localVars
-    | binder :: rest => do
-        let ty := Expr.instantiateMany (paramVars ++ localVars) binder.type
-        let body ←
-          loop
-            (paramVars.map (Expr.lift 1))
-            (localVars.map (Expr.lift 1) ++ [.bvar 0])
-            rest
-        pure (.forallE binder.name ty body)
-  loop paramVars [] locals
 
 structure RecursorSplit where
   params : List Expr
@@ -480,21 +493,17 @@ partial def familyCtorMinorType
     (targetIndex : Nat)
     (target : FamilyTarget)
     (ctor : FamilyCtor) : Result Expr := do
-  bindSchemaLocalsM paramVars target.schema.locals fun paramVars localVars => do
+  Telescope.bindForallM paramVars target.schema.locals fun paramVars localVars => do
     let motiveVars := motives.map (Expr.lift target.schema.locals.length)
     let some motive := listGet? motiveVars targetIndex
       | .error s!"internal error: missing motive for target #{targetIndex}"
-    let fieldBinders :=
-      ctor.fields.map fun field =>
-        {
-          field.binder with
-            type := Expr.instantiateMany (paramVars ++ localVars) field.binder.type
-        }
+    let fieldBinders : Telescope :=
+      Telescope.instantiateTypes (paramVars ++ localVars) (ctor.fields.map fun field => field.binder)
     let fieldVarsForIH := Expr.bvarArgs fieldBinders.length 0
     let motivesForIH := motiveVars.map (Expr.lift fieldBinders.length)
     let paramVarsForIH := paramVars.map (Expr.lift fieldBinders.length)
     let localVarsForIH := localVars.map (Expr.lift fieldBinders.length)
-    let mut ihBinders : List Binder := []
+    let mut ihBinders : Telescope := []
     let mut ihIndex := 0
     for pair in List.zip ctor.fields fieldVarsForIH do
       let field := pair.1
@@ -518,14 +527,14 @@ partial def familyCtorMinorType
     let fieldVars := Expr.bvarArgs fieldBinders.length ihBinders.length
     let ctorApp := Expr.mkApps (.const ctor.name []) (liftedTargetArgs ++ fieldVars)
     let body := Expr.mkApps liftedMotive (liftedLocalVars ++ [ctorApp])
-    let withIhs := bindIndependentForall ihBinders body
-    pure (bindIndependentForall fieldBinders withIhs)
+    let withIhs := Telescope.bindIndependentForall ihBinders body
+    pure (Telescope.bindIndependentForall fieldBinders withIhs)
 
 def motiveBinderType
     (paramVars : List Expr)
     (motiveLevel : Level)
     (target : FamilyTarget) : Result Expr := do
-  bindSchemaLocalsM paramVars target.schema.locals fun paramVars localVars => do
+  Telescope.bindForallM paramVars target.schema.locals fun paramVars localVars => do
     pure (.forallE "t" (instantiateTargetSchema paramVars localVars target.schema) (.sort motiveLevel))
 
 partial def buildRecursorType
@@ -559,7 +568,7 @@ partial def buildRecursorType
   let some targetInfo := listGet? family.targets targetIndex
     | .error s!"internal error: invalid recursor index {targetIndex}"
   let targetType ←
-    bindSchemaLocalsM
+    Telescope.bindForallM
       (Expr.bvarArgs paramCount (motiveCount + minorCount))
       targetInfo.schema.locals
       fun paramVars localVars => do
@@ -570,7 +579,7 @@ partial def buildRecursorType
           | .error s!"internal error: missing motive #{targetIndex}"
         let body := Expr.mkApps (Expr.lift 1 motive) (localVars.map (Expr.lift 1) ++ [.bvar 0])
         pure (.forallE "t" targetExpr body)
-  pure (bindTelescopeForall (family.params ++ motiveBinders ++ minorBinders) targetType)
+  pure (Telescope.bindForall (family.params ++ motiveBinders ++ minorBinders) targetType)
 
 def lookupCtx : Context → Nat → Option Binder
   | [], _ => none
@@ -868,7 +877,7 @@ def computePositiveParams (env : Env) (spec : InductiveSpec) : Result (List Bool
 partial def analyzeRecursiveShape
     (env : Env)
     (root : InductiveInfo)
-    (locals : List Binder)
+    (locals : Telescope)
     (expr : Expr) : Result RawFieldShape := do
   let expr ← normalizeForInductiveAnalysis env expr
   let target := Expr.lift locals.length (recursiveTargetExpr root.spec)
@@ -954,7 +963,7 @@ partial def buildRecursorFamily
         let targetName := familyRecName root.spec.name index
         let rec buildFields
             (currentSchemas : List TargetSchema)
-            (remaining : List Binder) : Result (List FamilyField × List TargetSchema) := do
+            (remaining : Telescope) : Result (List FamilyField × List TargetSchema) := do
           match remaining with
           | [] => pure ([], currentSchemas)
           | field :: rest =>
@@ -968,9 +977,10 @@ partial def buildRecursorFamily
           match remaining with
           | [] => pure ([], currentSchemas)
           | ctor :: rest => do
+              let instantiated := Telescope.instantiateTypes args ctor.fields
               let specialized ←
-                ctor.fields.mapM fun field => do
-                  let type ← normalizeForInductiveAnalysis env (Expr.instantiateMany args field.type)
+                instantiated.mapM fun field => do
+                  let type ← normalizeForInductiveAnalysis env field.type
                   pure { field with type }
               let (fields, currentSchemas) ← buildFields currentSchemas specialized
               let (restCtors, currentSchemas) ← buildCtors currentSchemas rest
@@ -1023,13 +1033,13 @@ partial def inferBinderUniverse
   | .sort level => pure level
   | _ => inferSort env ctx type
 
-def checkTelescope (env : Env) (tele : List Binder) : Result Unit := do
-  let rec loop (ctx : Context) (remaining : List Binder) : Result Unit := do
+def checkTelescope (env : Env) (tele : Telescope) : Result Unit := do
+  let rec loop (ctx : Context) (remaining : Telescope) : Result Unit := do
     match remaining with
     | [] => pure ()
     | binder :: rest =>
         let _ ← inferSort env ctx binder.type
-        loop (withBinder ctx binder) rest
+        loop (Telescope.withBinder ctx binder) rest
   loop [] tele
 
 def addAxiom (env : Env) (name : Name) (type : Expr) : Result Env := do
@@ -1067,9 +1077,9 @@ def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
       positiveParams := List.replicate spec.params.length true
     }
   let tempEnv := .inductive spec.name [] provisionalInfo :: env
-  let paramCtx := spec.params.reverse
+  let paramCtx := Telescope.toContext spec.params
   if !spec.ctors.isEmpty then
-    let rec checkParamLevels (ctx : Context) : List Binder → Result Unit
+    let rec checkParamLevels (ctx : Context) : Telescope → Result Unit
       | [] => pure ()
       | binder :: rest => do
           let level ← inferBinderUniverse env ctx binder.type
@@ -1078,7 +1088,7 @@ def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
               s!"parameter {binder.name}"
               level
               spec.level
-          checkParamLevels (withBinder ctx binder) rest
+          checkParamLevels (Telescope.withBinder ctx binder) rest
     let _ ← checkParamLevels [] spec.params
   for ctor in spec.ctors do
     for field in ctor.fields do
