@@ -55,6 +55,9 @@ run_cmd
       ``Subtype,
       ``Sigma,
       ``Prod,
+      ``PEmpty,
+      ``PUnit,
+      ``Unit,
       ``Empty,
       ``Option,
       ``ULift,
@@ -100,11 +103,6 @@ run_cmd
       env
       recursiveRoot
       "recursive definition artifacts are outside the local environment importer:"
-  for sortPolymorphicRoot in #[``Unit, ``PUnit] do
-    expectReplayErrorPrefix
-      env
-      sortPolymorphicRoot
-      "inductive result universe is neither Prop nor a data universe:"
   for recursiveCoreRoot in #[``Nat.add, ``List.map] do
     expectReplayErrorPrefix
       env

@@ -87,6 +87,12 @@ example :
 example :
     (@Eq.rec Bool true (fun _ _ => Bool) false true rfl) = false := rfl
 
+example :
+    PUnit.rec (motive := fun _ => Bool) true PUnit.unit = true := rfl
+
+example (x : PEmpty) : Bool :=
+  PEmpty.elim x
+
 def rel (a b : Bool) : Prop :=
   a = b
 

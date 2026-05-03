@@ -320,7 +320,27 @@ def universeTests : Result Unit := do
       levelParams := ["u"]
       params := []
       level := .param "u"
+      ctors :=
+        [
+          { name := "BadAmbiguousInductive.left", fields := [] },
+          { name := "BadAmbiguousInductive.right", fields := [] }
+        ]
+    }
+  let sortPolymorphicEmptyInductive : InductiveSpec :=
+    {
+      name := "SortPolymorphicEmpty"
+      levelParams := ["u"]
+      params := []
+      level := .param "u"
       ctors := []
+    }
+  let sortPolymorphicUnitInductive : InductiveSpec :=
+    {
+      name := "SortPolymorphicUnit"
+      levelParams := ["u"]
+      params := []
+      level := .param "u"
+      ctors := [{ name := "SortPolymorphicUnit.unit", fields := [] }]
     }
   let dependentFamilyParamInductive : InductiveSpec :=
     {
@@ -372,6 +392,18 @@ def universeTests : Result Unit := do
       (addInductive [] badAmbiguousInductive)
   let _ ←
     addInductive [] dependentFamilyParamInductive
+  let sortEnv ← addInductive [] sortPolymorphicEmptyInductive
+  match sortEnv.find? "SortPolymorphicEmpty.rec" with
+  | some info =>
+      let _ ← expect "sort-polymorphic empty recursors bind motive and result universes" (info.levelParams = ["u'", "u"])
+      pure ()
+  | none => .error "SortPolymorphicEmpty.rec should be present"
+  let sortEnv ← addInductive [] sortPolymorphicUnitInductive
+  match sortEnv.find? "SortPolymorphicUnit.rec" with
+  | some info =>
+      let _ ← expect "sort-polymorphic unit recursors bind motive and result universes" (info.levelParams = ["u'", "u"])
+      pure ()
+  | none => .error "SortPolymorphicUnit.rec should be present"
   expectError
     "recursor reduction rejects mismatched constructor universe arguments"
     (normalize env polyBoxRecCtorLevelMismatch)
@@ -1482,7 +1514,10 @@ def faithfulnessBridgeTests : Result Unit := do
       levelParams := ["u"]
       params := [{ name := "α", type := .sort (.param "u") }]
       level := .param "u"
-      ctors := []
+      ctors :=
+        [
+          { name := "BadPolyBox.mk", fields := [{ name := "value", type := .bvar 0 }] }
+        ]
     }
   let _ ←
     expectError

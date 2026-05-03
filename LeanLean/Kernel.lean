@@ -473,6 +473,17 @@ def recursorLevelParamsForFamily (family : RecursorFamily) : List Name :=
 def inductiveIsProp (spec : InductiveSpec) : Bool :=
   Level.defEq spec.level .zero
 
+def inductiveIsData (spec : InductiveSpec) : Bool :=
+  spec.level.definitelyPositive
+
+def inductiveIsSortPolymorphicSubsingleton (spec : InductiveSpec) : Bool :=
+  !inductiveIsProp spec &&
+    !inductiveIsData spec &&
+    match spec.ctors with
+    | [] => true
+    | [ctor] => ctor.fields.isEmpty
+    | _ => false
+
 def inductiveLevelArgs (spec : InductiveSpec) : List Level :=
   spec.levelParams.map Level.param
 
@@ -2531,8 +2542,10 @@ def checkInductiveHeader
     .error s!"inductive {spec.name} must use the block parameter telescope"
   if !spec.level.closedIn block.levelParams then
     .error s!"inductive result universe must be closed under its universe parameters: {repr spec.level}"
-  if !inductiveIsProp spec && !spec.level.definitelyPositive then
-    .error s!"inductive result universe is neither Prop nor a data universe: {repr spec.level}"
+  if !inductiveIsProp spec && !inductiveIsData spec && !inductiveIsSortPolymorphicSubsingleton spec then
+    .error
+      s!"inductive result universe is neither Prop, data, nor a supported \
+         sort-polymorphic subsingleton: {repr spec.level}"
   let _ ← checkTelescope env spec.params (levelParams := block.levelParams)
   let paramCtx := Telescope.toContext spec.params
   let _ ← checkTelescopeFrom env paramCtx spec.indices (levelParams := block.levelParams)

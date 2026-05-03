@@ -69,6 +69,10 @@ run_cmd
     (← `(
       @Eq.rec Bool true (fun _ _ => Bool) false true rfl))
   compareTerm
+    "sort-polymorphic unit recursor value"
+    (← `(
+      @PUnit.rec.{1, 0} (fun _ => Bool) true PUnit.unit))
+  compareTerm
     "dependent projection value"
     (← `(
       LeanLeanFaithfulness.Accepted.SigmaBox.value
