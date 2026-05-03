@@ -1,4 +1,4 @@
-import Faithfulness.Accepted
+import Faithfulness.Fragments
 import LeanLean.Import
 
 open Lean Elab Command Term Meta
@@ -27,6 +27,60 @@ def termRoots (term type value : Expr) : List Name :=
       (LeanLean.Import.leanExprConstants term)
       (LeanLean.Import.leanExprConstants type))
     (LeanLean.Import.leanExprConstants value)
+
+def zeroLevelInstantiation (info : Lean.ConstantInfo) : List Lean.Level :=
+  info.levelParams.map fun _ => .zero
+
+def translateLevels (levels : List Lean.Level) : LeanLean.Result (List LeanLean.Level) :=
+  levels.mapM LeanLean.Import.translateLevel
+
+def compareConstantType
+    (label : String)
+    (localEnv : LeanLean.Env)
+    (info : Lean.ConstantInfo) : CommandElabM Unit := do
+  let levels := zeroLevelInstantiation info
+  let localLevels ← liftResult label <| translateLevels levels
+  let localConst := LeanLean.Expr.const (LeanLean.Import.translateName info.name) localLevels
+  let leanType := info.instantiateTypeLevelParams levels
+  let localType ← liftResult label <| LeanLean.Import.translateExpr leanType
+  let inferred ← liftResult label <| LeanLean.infer localEnv [] localConst
+  liftResult label <| LeanLean.checkDefEq localEnv inferred localType
+
+def compareDefinitionReduction
+    (label : String)
+    (localEnv : LeanLean.Env)
+    (info : Lean.ConstantInfo) : CommandElabM Unit := do
+  match info with
+  | .defnInfo _ =>
+      let levels := zeroLevelInstantiation info
+      let localLevels ← liftResult label <| translateLevels levels
+      let leanConst := Lean.Expr.const info.name levels
+      let leanValue ← liftTermElabM do
+        instantiateMVars (← reduce leanConst)
+      let localExpected ← liftResult label <| LeanLean.Import.translateExpr leanValue
+      let localConst := LeanLean.Expr.const (LeanLean.Import.translateName info.name) localLevels
+      let normalized ← liftResult label <| LeanLean.normalize localEnv localConst
+      liftResult label <| LeanLean.checkDefEq localEnv normalized localExpected
+  | _ => pure ()
+
+def compareImportedConstant
+    (fragmentLabel : String)
+    (localEnv : LeanLean.Env)
+    (info : Lean.ConstantInfo) : CommandElabM Unit := do
+  let label := s!"{fragmentLabel}: {info.name}"
+  compareConstantType label localEnv info
+  compareDefinitionReduction label localEnv info
+
+def compareFragment (fragment : LeanLeanFaithfulness.Fragments.Fragment) : CommandElabM Unit := do
+  let leanEnv ← Lean.getEnv
+  let infos ←
+    liftResult fragment.label <|
+      LeanLean.Import.collectEnvironmentClosure leanEnv fragment.roots
+  let localEnv ←
+    liftResult fragment.label <|
+      LeanLean.Import.replayEnvironmentClosure [] leanEnv fragment.roots
+  for info in infos do
+    compareImportedConstant fragment.label localEnv info
 
 def compareTerm (label : String) (stx : Syntax) : CommandElabM Unit := do
   let term ← elabClosedTerm stx
@@ -94,6 +148,8 @@ run_cmd
         (fun _ => false)
         (fun _ => true)
         (Decidable.isTrue True.intro)))
+  for fragment in LeanLeanFaithfulness.Fragments.broadReplayFragments do
+    compareFragment fragment
 
 end LeanLeanFaithfulness.Differential
 

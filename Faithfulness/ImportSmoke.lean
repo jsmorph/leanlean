@@ -1,4 +1,4 @@
-import Faithfulness.Accepted
+import Faithfulness.Fragments
 import LeanLean.Import
 
 namespace LeanLeanFaithfulness.ImportSmoke
@@ -16,65 +16,14 @@ def expectReplayErrorPrefix
 
 run_cmd
   let env ← Lean.getEnv
-  let acceptedRoots :=
-    [
-      `LeanLeanFaithfulness.Accepted.transparentId,
-      `LeanLeanFaithfulness.Accepted.abbrevTrue,
-      `LeanLeanFaithfulness.Accepted.opaqueTrue,
-      `LeanLeanFaithfulness.Accepted.LocalNat,
-      `LeanLeanFaithfulness.Accepted.two,
-      `LeanLeanFaithfulness.Accepted.literalNat,
-      `LeanLeanFaithfulness.Accepted.PolyBox,
-      `LeanLeanFaithfulness.Accepted.PTrue,
-      `LeanLeanFaithfulness.Accepted.POr,
-      `LeanLeanFaithfulness.Accepted.MutEven,
-      `LeanLeanFaithfulness.Accepted.MutNestA,
-      `LeanLeanFaithfulness.Accepted.MutNestB,
-      `LeanLeanFaithfulness.Accepted.ProofBox,
-      `LeanLeanFaithfulness.Accepted.rel,
-      `LeanLeanFaithfulness.Accepted.q,
-      `LeanLeanFaithfulness.Accepted.liftedBool,
-      `LeanLeanFaithfulness.Accepted.liftedTrue,
-      `LeanLeanFaithfulness.Accepted.sigmaPair,
-      `LeanLeanFaithfulness.Accepted.subtypeTrue,
-      `LeanLeanFaithfulness.Accepted.SigmaBox,
-      `LeanLeanFaithfulness.Accepted.trueTheorem,
-      ``Eq,
-      ``Quot,
-      ``Nat,
-      ``Bool,
-      ``List,
-      `LeanLeanFaithfulness.Accepted.IndexSingleton,
-      `LeanLeanFaithfulness.Accepted.Vec1,
-      `LeanLeanFaithfulness.Accepted.Pair,
-      `LeanLeanFaithfulness.Accepted.Parent,
-      `LeanLeanFaithfulness.Accepted.Child
-    ]
-  let broadCoreRoots :=
-    [
-      ``True,
-      ``False,
-      ``And,
-      ``Or,
-      ``Exists,
-      ``Subtype,
-      ``Sigma,
-      ``Prod,
-      ``PEmpty,
-      ``PUnit,
-      ``Unit,
-      ``Empty,
-      ``Option,
-      ``ULift,
-      ``PLift,
-      ``PSigma,
-      ``Decidable
-    ]
-  let roots := acceptedRoots ++ broadCoreRoots
   let localEnv ←
-    match LeanLean.Import.replayEnvironmentClosure [] env roots with
+    match LeanLean.Import.replayEnvironmentClosure [] env Fragments.replayRoots with
     | .ok localEnv => pure localEnv
     | .error err => Lean.throwError err
+  let boundaryName := LeanLean.Import.translateName `LeanLeanFaithfulness.ModuleA.Boundary
+  let importedValue := LeanLean.Import.translateName `LeanLeanFaithfulness.ModuleB.importedValue
+  unless localEnv.contains boundaryName && localEnv.contains importedValue do
+    Lean.throwError "module-boundary import did not collect imported declarations"
   let childName := LeanLean.Import.translateName `LeanLeanFaithfulness.Accepted.Child
   let childB := LeanLean.Import.translateName `LeanLeanFaithfulness.Accepted.Child.b
   let childParent := LeanLean.Import.translateName `LeanLeanFaithfulness.Accepted.Child.toParent
