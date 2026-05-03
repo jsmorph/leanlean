@@ -1400,6 +1400,8 @@ def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
   let _ ← checkLevelParamsUnique spec.levelParams
   if !spec.level.closedIn spec.levelParams then
     .error s!"inductive result universe must be closed under its universe parameters: {repr spec.level}"
+  if !spec.level.definitelyPositive then
+    .error s!"Prop-valued inductives are not supported yet: {repr spec.level}"
   let _ ← checkFreshName env spec.name
   let _ ← checkFreshName env (recursorName spec.name)
   let mut seenNames := [spec.name, recursorName spec.name]

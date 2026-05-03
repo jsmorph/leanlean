@@ -5,8 +5,38 @@ namespace LeanLean
 def const0 (name : Name) : Expr :=
   .const name []
 
+def propLevel : Level :=
+  0
+
+def type0Level : Level :=
+  1
+
+def type1Level : Level :=
+  2
+
+def type2Level : Level :=
+  3
+
+def type0Param : Level :=
+  0
+
+def type1Param : Level :=
+  1
+
+def typeLevel (level : Level) : Level :=
+  .succ level
+
+def type0Sort : Expr :=
+  .sort type0Level
+
+def type1Sort : Expr :=
+  .sort type1Level
+
+def recConstAt (level : Level) (name : Name) : Expr :=
+  .const name [level]
+
 def recConst (name : Name) : Expr :=
-  .const name [0]
+  recConstAt type0Level name
 
 def boolType : Expr :=
   const0 "Bool"
@@ -21,7 +51,7 @@ def boolSpec : InductiveSpec :=
   {
     name := "Bool"
     params := []
-    level := 0
+    level := type0Level
     ctors :=
       [
         { name := "Bool.false", fields := [] },
@@ -33,7 +63,7 @@ def natSpec : InductiveSpec :=
   {
     name := "Nat"
     params := []
-    level := 0
+    level := type0Level
     ctors :=
       [
         { name := "Nat.zero", fields := [] },
@@ -44,8 +74,8 @@ def natSpec : InductiveSpec :=
 def listSpec : InductiveSpec :=
   {
     name := "List"
-    params := [{ name := "α", type := .sort 0 }]
-    level := 0
+    params := [{ name := "α", type := type0Sort }]
+    level := type0Level
     ctors :=
       [
         { name := "List.nil", fields := [] },
@@ -63,13 +93,13 @@ def listSpec : InductiveSpec :=
 def eqSpec : InductiveSpec :=
   {
     name := "Eq"
-    params := [{ name := "α", type := .sort 0 }]
+    params := [{ name := "α", type := type0Sort }]
     indices :=
       [
         { name := "lhs", type := .bvar 0 },
         { name := "rhs", type := .bvar 1 }
       ]
-    level := 0
+    level := type0Level
     ctors :=
       [
         {
@@ -83,9 +113,9 @@ def eqSpec : InductiveSpec :=
 def vecSpec : InductiveSpec :=
   {
     name := "Vec"
-    params := [{ name := "α", type := .sort 0 }]
+    params := [{ name := "α", type := type0Sort }]
     indices := [{ name := "n", type := natType }]
-    level := 0
+    level := type0Level
     ctors :=
       [
         {
@@ -115,7 +145,7 @@ def heightTreeSpec : InductiveSpec :=
     name := "HeightTree"
     params := []
     indices := [{ name := "height", type := natType }]
-    level := 0
+    level := type0Level
     ctors :=
       [
         {
@@ -143,26 +173,26 @@ def sortBoxSpec : InductiveSpec :=
   {
     name := "SortBox"
     params := []
-    level := 1
+    level := type1Level
     ctors :=
       [
-        { name := "SortBox.mk", fields := [{ name := "α", type := .sort 0 }] }
+        { name := "SortBox.mk", fields := [{ name := "α", type := type0Sort }] }
       ]
   }
 
 def spuriousSpec : InductiveSpec :=
   {
     name := "Spurious"
-    params := [{ name := "α", type := .sort 3 }]
-    level := 0
+    params := [{ name := "α", type := .sort type2Level }]
+    level := type0Level
     ctors := []
   }
 
 def badSpuriousSpec : InductiveSpec :=
   {
     name := "BadSpurious"
-    params := [{ name := "α", type := .sort 3 }]
-    level := 0
+    params := [{ name := "α", type := .sort type2Level }]
+    level := type0Level
     ctors :=
       [
         { name := "BadSpurious.mk", fields := [{ name := "x", type := .bvar 0 }] }
@@ -173,18 +203,18 @@ def lowSortBoxSpec : InductiveSpec :=
   {
     name := "LowSortBox"
     params := []
-    level := 0
+    level := type0Level
     ctors :=
       [
-        { name := "LowSortBox.mk", fields := [{ name := "α", type := .sort 0 }] }
+        { name := "LowSortBox.mk", fields := [{ name := "α", type := type0Sort }] }
       ]
   }
 
 def badParamSpec : InductiveSpec :=
   {
     name := "BadParam"
-    params := [{ name := "α", type := .sort 0 }]
-    level := 0
+    params := [{ name := "α", type := type0Sort }]
+    level := type0Level
     ctors :=
       [
         {
@@ -198,7 +228,7 @@ def badWrapSpec : InductiveSpec :=
   {
     name := "BadWrap"
     params := []
-    level := 0
+    level := type0Level
     ctors :=
       [
         {
@@ -212,7 +242,7 @@ def natListTreeSpec : InductiveSpec :=
   {
     name := "NatListTree"
     params := []
-    level := 0
+    level := type0Level
     ctors :=
       [
         { name := "NatListTree.leaf", fields := [{ name := "n", type := natType }] },
@@ -228,7 +258,7 @@ def letTreeSpec : InductiveSpec :=
   {
     name := "LetTree"
     params := []
-    level := 0
+    level := type0Level
     ctors :=
       [
         { name := "LetTree.leaf", fields := [{ name := "n", type := natType }] },
@@ -238,7 +268,7 @@ def letTreeSpec : InductiveSpec :=
             [
               {
                 name := "children"
-                type := .letE "T" (.sort 0) (const0 "LetTree") (Expr.mkApps (const0 "List") [.bvar 0])
+                type := .letE "T" type0Sort (const0 "LetTree") (Expr.mkApps (const0 "List") [.bvar 0])
               }
             ]
         }
@@ -248,13 +278,13 @@ def letTreeSpec : InductiveSpec :=
 def harmlessWrapSpec : InductiveSpec :=
   {
     name := "HarmlessWrap"
-    params := [{ name := "α", type := .sort 0 }]
-    level := 0
+    params := [{ name := "α", type := type0Sort }]
+    level := type0Level
     ctors :=
       [
         {
           name := "HarmlessWrap.mk"
-          fields := [{ name := "x", type := .letE "y" (.sort 0) (.bvar 0) natType }]
+          fields := [{ name := "x", type := .letE "y" type0Sort (.bvar 0) natType }]
         }
       ]
   }
@@ -263,7 +293,7 @@ def nestThroughHarmlessWrapSpec : InductiveSpec :=
   {
     name := "NestThroughHarmlessWrap"
     params := []
-    level := 0
+    level := type0Level
     ctors :=
       [
         {
@@ -278,7 +308,7 @@ def harmlessBadParamSpec : InductiveSpec :=
   {
     name := "HarmlessBadParam"
     params := []
-    level := 0
+    level := type0Level
     ctors :=
       [
         {
@@ -287,7 +317,7 @@ def harmlessBadParamSpec : InductiveSpec :=
             [
               {
                 name := "x"
-                type := Expr.mkApps (const0 "BadParam") [.letE "y" (.sort 0) (const0 "HarmlessBadParam") natType]
+                type := Expr.mkApps (const0 "BadParam") [.letE "y" type0Sort (const0 "HarmlessBadParam") natType]
               }
             ]
         }
@@ -298,7 +328,7 @@ def dupHelperSpec : InductiveSpec :=
   {
     name := "DupHelper"
     params := []
-    level := 0
+    level := type0Level
     ctors :=
       [
         {
@@ -308,7 +338,7 @@ def dupHelperSpec : InductiveSpec :=
               { name := "a", type := Expr.mkApps (const0 "List") [const0 "DupHelper"] },
               {
                 name := "b"
-                type := Expr.mkApps (const0 "List") [.letE "T" (.sort 0) (const0 "DupHelper") (.bvar 0)]
+                type := Expr.mkApps (const0 "List") [.letE "T" type0Sort (const0 "DupHelper") (.bvar 0)]
               }
             ]
         }
@@ -321,9 +351,9 @@ def wrapAtSpec : InductiveSpec :=
     params :=
       [
         { name := "n", type := natType },
-        { name := "α", type := .sort 0 }
+        { name := "α", type := type0Sort }
       ]
-    level := 0
+    level := type0Level
     ctors :=
       [
         {
@@ -337,7 +367,7 @@ def depNestSpec : InductiveSpec :=
   {
     name := "DepNest"
     params := []
-    level := 0
+    level := type0Level
     ctors :=
       [
         {
@@ -360,8 +390,8 @@ def depNestSpec : InductiveSpec :=
 def depNestPSpec : InductiveSpec :=
   {
     name := "DepNestP"
-    params := [{ name := "β", type := .sort 0 }]
-    level := 0
+    params := [{ name := "β", type := type0Sort }]
+    level := type0Level
     ctors :=
       [
         {
@@ -385,7 +415,7 @@ def depAfterRecSpec : InductiveSpec :=
   {
     name := "DepAfterRec"
     params := []
-    level := 0
+    level := type0Level
     ctors :=
       [
         {
@@ -404,7 +434,7 @@ def depFieldTreeSpec : InductiveSpec :=
   {
     name := "DepFieldTree"
     params := []
-    level := 0
+    level := type0Level
     ctors :=
       [
         {
@@ -422,7 +452,7 @@ def badForwardFieldSpec : InductiveSpec :=
   {
     name := "BadForwardField"
     params := []
-    level := 0
+    level := type0Level
     ctors :=
       [
         {
@@ -437,10 +467,10 @@ def badParamTargetSpec : InductiveSpec :=
     name := "BadParamTarget"
     params :=
       [
-        { name := "α", type := .sort 0 },
-        { name := "β", type := .sort 0 }
+        { name := "α", type := type0Sort },
+        { name := "β", type := type0Sort }
       ]
-    level := 0
+    level := type0Level
     ctors :=
       [
         {
@@ -467,8 +497,8 @@ def polyBoxSpec : InductiveSpec :=
   {
     name := "PolyBox"
     levelParams := ["u"]
-    params := [{ name := "α", type := .sort (.param "u") }]
-    level := .param "u"
+    params := [{ name := "α", type := .sort (typeLevel (.param "u")) }]
+    level := typeLevel (.param "u")
     ctors :=
       [
         { name := "PolyBox.mk", fields := [{ name := "value", type := .bvar 0 }] }
@@ -514,10 +544,10 @@ def polyId (level : Level) (type value : Expr) : Expr :=
   Expr.mkApps (.const "polyId" [level]) [type, value]
 
 def polyIdBool : Expr :=
-  polyId 0 boolType boolTrue
+  polyId type0Level boolType boolTrue
 
 def polyIdTypeArg : Expr :=
-  polyId 1 (.sort 0) boolType
+  polyId type1Level type0Sort boolType
 
 def polyBoxType (level : Level) (elem : Expr) : Expr :=
   Expr.mkApps (.const "PolyBox" [level]) [elem]
@@ -526,17 +556,17 @@ def polyBoxMk (level : Level) (elem value : Expr) : Expr :=
   Expr.mkApps (.const "PolyBox.mk" [level]) [elem, value]
 
 def polyBoxBool : Expr :=
-  polyBoxMk 0 boolType boolTrue
+  polyBoxMk type0Param boolType boolTrue
 
 def polyBoxBoolMotive : Expr :=
-  .lam "box" (polyBoxType 0 boolType) boolType
+  .lam "box" (polyBoxType type0Param boolType) boolType
 
 def polyBoxBoolCase : Expr :=
   .lam "value" boolType (.bvar 0)
 
 def polyBoxRecOnTrue : Expr :=
   Expr.mkApps
-    (.const "PolyBox.rec" [0, 0])
+    (.const "PolyBox.rec" [type0Param, type0Level])
     [
       boolType,
       polyBoxBoolMotive,
@@ -545,19 +575,19 @@ def polyBoxRecOnTrue : Expr :=
     ]
 
 def polyBoxTypeBox : Expr :=
-  polyBoxMk 1 (.sort 0) boolType
+  polyBoxMk type1Param type0Sort boolType
 
 def polyBoxTypeMotive : Expr :=
-  .lam "box" (polyBoxType 1 (.sort 0)) (.sort 0)
+  .lam "box" (polyBoxType type1Param type0Sort) type0Sort
 
 def polyBoxTypeCase : Expr :=
-  .lam "value" (.sort 0) (.bvar 0)
+  .lam "value" type0Sort (.bvar 0)
 
 def polyBoxRecOnBoolType : Expr :=
   Expr.mkApps
-    (.const "PolyBox.rec" [1, 1])
+    (.const "PolyBox.rec" [type1Param, type1Level])
     [
-      .sort 0,
+      type0Sort,
       polyBoxTypeMotive,
       polyBoxTypeCase,
       polyBoxTypeBox
@@ -565,7 +595,7 @@ def polyBoxRecOnBoolType : Expr :=
 
 def polyBoxRecCtorLevelMismatch : Expr :=
   Expr.mkApps
-    (.const "PolyBox.rec" [0, 0])
+    (.const "PolyBox.rec" [type0Param, type0Level])
     [
       boolType,
       polyBoxBoolMotive,
@@ -692,7 +722,7 @@ def natRecMissingLevel : Expr :=
 
 def natRecExtraLevels : Expr :=
   Expr.mkApps
-    (.const "Nat.rec" [0, 1])
+    (.const "Nat.rec" [type0Level, type1Level])
     [
       natToBoolMotive,
       boolTrue,
@@ -986,19 +1016,19 @@ def demoReport : Result (List String) := do
   let polyIdBoolNf ← normalize env polyIdBool
   let _ ← checkDefEq env polyIdBoolNf boolTrue
   let polyIdTypeTy ← infer env [] polyIdTypeArg
-  let _ ← checkDefEq env polyIdTypeTy (.sort 0)
+  let _ ← checkDefEq env polyIdTypeTy type0Sort
   let polyIdTypeNf ← normalize env polyIdTypeArg
   let _ ← checkDefEq env polyIdTypeNf boolType
   let polyBoxBoolTy ← infer env [] polyBoxBool
-  let _ ← checkDefEq env polyBoxBoolTy (polyBoxType 0 boolType)
+  let _ ← checkDefEq env polyBoxBoolTy (polyBoxType type0Param boolType)
   let polyBoxBoolRecTy ← infer env [] polyBoxRecOnTrue
   let _ ← checkDefEq env polyBoxBoolRecTy boolType
   let polyBoxBoolRecNf ← normalize env polyBoxRecOnTrue
   let _ ← checkDefEq env polyBoxBoolRecNf boolTrue
   let polyBoxTypeBoxTy ← infer env [] polyBoxTypeBox
-  let _ ← checkDefEq env polyBoxTypeBoxTy (polyBoxType 1 (.sort 0))
+  let _ ← checkDefEq env polyBoxTypeBoxTy (polyBoxType type1Param type0Sort)
   let polyBoxTypeRecTy ← infer env [] polyBoxRecOnBoolType
-  let _ ← checkDefEq env polyBoxTypeRecTy (.sort 0)
+  let _ ← checkDefEq env polyBoxTypeRecTy type0Sort
   let polyBoxTypeRecNf ← normalize env polyBoxRecOnBoolType
   let _ ← checkDefEq env polyBoxTypeRecNf boolType
   let _ ← infer env [] (recConst "Nat.rec")

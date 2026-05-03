@@ -76,6 +76,9 @@ def closedEval? (level : Level) : Option Nat :=
   else
     none
 
+def definitelyPositive (level : Level) : Bool :=
+  (normalizeSummands level).any fun summand => 0 < summand.offset
+
 def eval (level : Level) : Nat :=
   match closedEval? level with
   | some value => value

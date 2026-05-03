@@ -20,13 +20,13 @@ def expectError (label : String) (result : Result α) : Result Unit :=
   | .error _ => pure ()
 
 def telescopeTests : Result Unit := do
-  let a : Binder := { name := "A", type := .sort 0 }
+  let a : Binder := { name := "A", type := type0Sort }
   let x : Binder := { name := "x", type := .bvar 0 }
   let y : Binder := { name := "y", type := .bvar 0 }
   let _ ← expect "telescope context order is innermost first" (Telescope.toContext [a, x] = [x, a])
 
   let dependentActual := Telescope.bindForall [a, x] (.bvar 0)
-  let dependentExpected := .forallE "A" (.sort 0) (.forallE "x" (.bvar 0) (.bvar 0))
+  let dependentExpected := .forallE "A" type0Sort (.forallE "x" (.bvar 0) (.bvar 0))
   let _ ← expectExprEq "dependent telescope binding preserves scoped binder types" dependentActual dependentExpected
 
   let independentActual := Telescope.bindIndependentForall [x, y] (.bvar 2)
@@ -67,18 +67,25 @@ def universeTests : Result Unit := do
     expect
       "symbolic universe ordering rejects unrelated parameters"
       (!(Level.le (.param "u") (.param "v")))
+  let _ ← expect "Sort 0 is not a data universe" (!propLevel.definitelyPositive)
+  let _ ← expect "Type 0 is a data universe" type0Level.definitelyPositive
+  let _ ← expect "Type u is always above Prop" ((typeLevel (.param "u")).definitelyPositive)
 
   let env ← sampleEnv
+  let propTy ← infer env [] (.sort propLevel)
+  let _ ← expectExprEq "Prop has type Type 0" propTy type0Sort
+  let boolSort ← infer env [] boolType
+  let _ ← expectExprEq "Bool lives in Type 0" boolSort type0Sort
   let polyIdBoolTy ← infer env [] polyIdBool
   let _ ← expectExprEq "polymorphic definition instantiates at Type 0" polyIdBoolTy boolType
   let polyIdTypeTy ← infer env [] polyIdTypeArg
-  let _ ← expectExprEq "polymorphic definition instantiates at Type 1" polyIdTypeTy (.sort 0)
+  let _ ← expectExprEq "polymorphic definition instantiates at Type 1" polyIdTypeTy type0Sort
   let polyBoxBoolTy ← infer env [] polyBoxBool
   let _ ←
     expectExprEq
       "polymorphic inductive constructor instantiates at Type 0"
       polyBoxBoolTy
-      (polyBoxType 0 boolType)
+      (polyBoxType type0Param boolType)
   let polyBoxBoolNf ← normalize env polyBoxRecOnTrue
   let _ ←
     expectExprEq
@@ -90,7 +97,7 @@ def universeTests : Result Unit := do
     expectExprEq
       "polymorphic inductive constructor instantiates at Type 1"
       polyBoxTypeBoxTy
-      (polyBoxType 1 (.sort 0))
+      (polyBoxType type1Param type0Sort)
   let polyBoxTypeNf ← normalize env polyBoxRecOnBoolType
   let _ ←
     expectExprEq
@@ -125,8 +132,8 @@ def universeTests : Result Unit := do
     {
       name := "BadTargetLevelInductive"
       levelParams := ["u"]
-      params := [{ name := "α", type := .sort (.param "u") }]
-      level := .param "u"
+      params := [{ name := "α", type := .sort (typeLevel (.param "u")) }]
+      level := typeLevel (.param "u")
       ctors :=
         [
           {
@@ -135,6 +142,13 @@ def universeTests : Result Unit := do
             target? := some (Expr.mkApps (.const "BadTargetLevelInductive" [0]) [.bvar 0])
           }
         ]
+    }
+  let badPropInductive : InductiveSpec :=
+    {
+      name := "BadPropInductive"
+      params := []
+      level := propLevel
+      ctors := []
     }
   let _ ←
     expectError
@@ -155,6 +169,10 @@ def universeTests : Result Unit := do
     expectError
       "constructor targets must use inductive universe parameters"
       (addInductive [] badTargetLevelInductive)
+  let _ ←
+    expectError
+      "data fragment rejects Prop-valued inductives"
+      (addInductive [] badPropInductive)
   expectError
     "recursor reduction rejects mismatched constructor universe arguments"
     (normalize env polyBoxRecCtorLevelMismatch)
