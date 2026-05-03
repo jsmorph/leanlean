@@ -2273,6 +2273,125 @@ def addProjection (env : Env) (name structName : Name) (index : Nat) : Result En
   let _ ← checkDefEq env valueTy type (levelParams := levelParams)
   pure (ConstantInfo.mkProjection name levelParams type value projection :: env)
 
+def projectionBodyAfterLambdas? : Nat → Expr → Option Expr
+  | 0, body => some body
+  | count + 1, .lam _ _ body => projectionBodyAfterLambdas? count body
+  | _, _ => none
+
+def forallDomainsAndBody? : Nat → Expr → Option (List Expr × Expr)
+  | 0, body => some ([], body)
+  | count + 1, .forallE _ domain body => do
+      let (domains, result) ← forallDomainsAndBody? count body
+      some (domain :: domains, result)
+  | _, _ => none
+
+def projectionValueIndex? (structName : Name) (paramCount : Nat) (value : Expr) : Option Nat := do
+  match (← projectionBodyAfterLambdas? (paramCount + 1) value) with
+  | .proj projectedName index (.bvar 0) =>
+      if projectedName = structName then
+        some index
+      else
+        none
+  | _ => none
+
+def constantProjectionIndex?
+    (env : Env)
+    (structName projFn : Name)
+    (paramCount : Nat) : Option Nat :=
+  match env.find? projFn with
+  | some { kind := .projection projection, .. } =>
+      if projection.structName = structName then
+        some projection.index
+      else
+        none
+  | some { valueExpr? := some value, .. } => projectionValueIndex? structName paramCount value
+  | _ => none
+
+def checkStructureFieldProjection
+    (env : Env)
+    (structName projFn : Name)
+    (paramCount expectedIndex : Nat) : Result Unit := do
+  let some index := constantProjectionIndex? env structName projFn paramCount
+    | .error s!"structure field projection is not a checked projection for {structName}: {projFn}"
+  if index = expectedIndex then
+    pure ()
+  else
+    .error
+      s!"structure field projection {projFn} points to field {index}, \
+         but metadata lists it at field {expectedIndex}"
+
+def checkStructureParentSubobject
+    (info : StructureInfo)
+    (parentInfo : StructureParentInfo) : Result Unit := do
+  if parentInfo.subobject then
+    let hasMatch :=
+      info.fieldInfo.any fun field =>
+        field.projFn = parentInfo.projFn && (field.subobject? = some parentInfo.structName)
+    if hasMatch then
+      pure ()
+    else
+      .error
+        s!"structure parent {parentInfo.structName} is marked as a subobject, \
+           but no matching subobject field uses {parentInfo.projFn}"
+  else
+    pure ()
+
+def checkStructureParentProjection
+    (env : Env)
+    (childName : Name)
+    (paramCount : Nat)
+    (parentInfo : StructureParentInfo) : Result Unit := do
+  let some projectionInfo := env.find? parentInfo.projFn
+    | .error s!"structure parent projection is unknown: {parentInfo.projFn}"
+  if projectionInfo.valueExpr?.isNone then
+    .error s!"structure parent projection has no checked value: {parentInfo.projFn}"
+  let some (domains, resultType) := forallDomainsAndBody? (paramCount + 1) projectionInfo.typeExpr
+    | .error
+        s!"structure parent projection {parentInfo.projFn} is not a function \
+           from {childName} to {parentInfo.structName}"
+  let some selfType := listGet? domains paramCount
+    | .error s!"structure parent projection {parentInfo.projFn} has no structure argument"
+  match selfType.getAppFn with
+  | .const sourceName _ =>
+      if sourceName = childName then
+        pure ()
+      else
+        .error
+          s!"structure parent projection {parentInfo.projFn} takes {sourceName}, \
+             not {childName}"
+  | _ =>
+      .error
+        s!"structure parent projection {parentInfo.projFn} does not take \
+           {childName}"
+  match resultType.getAppFn with
+  | .const resultName _ =>
+      if resultName = parentInfo.structName then
+        pure ()
+      else
+        .error
+          s!"structure parent projection {parentInfo.projFn} returns {resultName}, \
+             not {parentInfo.structName}"
+  | _ =>
+      .error
+        s!"structure parent projection {parentInfo.projFn} does not return \
+           {parentInfo.structName}"
+
+def checkStructureFields
+    (env : Env)
+    (info : StructureInfo)
+    (paramCount : Nat) : Nat → List Name → Result Unit
+  | _, [] => pure ()
+  | index, fieldName :: rest => do
+      let some fieldInfo := info.fieldInfoFor? fieldName
+        | .error s!"structure {info.structName} has no field info for {fieldName}"
+      checkStructureFieldProjection env info.structName fieldInfo.projFn paramCount index
+      match fieldInfo.subobject? with
+      | some parentName =>
+          if (env.findStructure? parentName).isNone then
+            .error s!"structure field parent is unknown: {parentName}"
+      | none => pure ()
+      checkStructureFields env info paramCount (index + 1) rest
+
 def registerStructure (env : Env) (info : StructureInfo) : Result Env := do
   let some indInfo := env.findInductive? info.structName
     | .error s!"unknown structure inductive: {info.structName}"
@@ -2282,24 +2401,15 @@ def registerStructure (env : Env) (info : StructureInfo) : Result Env := do
   let _ ← checkNameListUnique s!"structure {info.structName} fields" info.fieldNames
   let _ ← checkNameListUnique s!"structure {info.structName} field info" (info.fieldInfo.map (·.fieldName))
   let _ ← checkNameListUnique s!"structure {info.structName} parents" (info.parentInfo.map (·.structName))
-  for fieldName in info.fieldNames do
-    let some fieldInfo := info.fieldInfoFor? fieldName
-      | .error s!"structure {info.structName} has no field info for {fieldName}"
-    if !env.contains fieldInfo.projFn then
-      .error s!"structure field projection is unknown: {fieldInfo.projFn}"
-    match fieldInfo.subobject? with
-    | some parentName =>
-        if (env.findStructure? parentName).isNone then
-          .error s!"structure field parent is unknown: {parentName}"
-    | none => pure ()
+  let _ ← checkStructureFields env info indInfo.spec.params.length 0 info.fieldNames
   for fieldInfo in info.fieldInfo do
     if !info.fieldNames.contains fieldInfo.fieldName then
       .error s!"structure field info is not listed as a field: {fieldInfo.fieldName}"
   for parentInfo in info.parentInfo do
     if (env.findStructure? parentInfo.structName).isNone then
       .error s!"structure parent is unknown: {parentInfo.structName}"
-    if !env.contains parentInfo.projFn then
-      .error s!"structure parent projection is unknown: {parentInfo.projFn}"
+    checkStructureParentProjection env info.structName indInfo.spec.params.length parentInfo
+    checkStructureParentSubobject info parentInfo
   Env.updateInductiveInfo env info.structName fun indInfo =>
     { indInfo with structureInfo? := some info }
 
@@ -2983,13 +3093,34 @@ def usedConstants : Declaration → List Name
 
 end Declaration
 
+def declarationReplayNames : Declaration → List Name
+  | .structureInfo info => [info.structName]
+  | declaration => declaration.definedNames
+
+def structureFieldReady (env : Env) (field : StructureFieldInfo) : Bool :=
+  env.contains field.projFn &&
+    match field.subobject? with
+    | some parentName => (env.findStructure? parentName).isSome
+    | none => true
+
+def structureParentReady (env : Env) (parent : StructureParentInfo) : Bool :=
+  (env.findStructure? parent.structName).isSome && env.contains parent.projFn
+
+def structureInfoReady (env : Env) (info : StructureInfo) : Bool :=
+  env.contains info.structName &&
+    info.fieldInfo.all (structureFieldReady env) &&
+    info.parentInfo.all (structureParentReady env)
+
 def declarationReady (env : Env) (decl : Declaration) : Bool :=
-  let localNames := decl.definedNames
-  decl.usedConstants.all fun name => env.contains name || localNames.contains name
+  match decl with
+  | .structureInfo info => structureInfoReady env info
+  | _ =>
+      let localNames := decl.definedNames
+      decl.usedConstants.all fun name => env.contains name || localNames.contains name
 
 def declarationsDefinedNames (declarations : List Declaration) : List Name :=
   declarations.foldl
-    (fun names declaration => appendNewNames names declaration.definedNames)
+    (fun names declaration => appendNewNames names (declarationReplayNames declaration))
     []
 
 partial def replayDeclarationsWithFuel

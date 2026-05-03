@@ -22,8 +22,6 @@ run_cmd
       `LeanLeanFaithfulness.Accepted.rel,
       `LeanLeanFaithfulness.Accepted.q,
       `LeanLeanFaithfulness.Accepted.SigmaBox,
-      `LeanLeanFaithfulness.Accepted.SigmaBox.α,
-      `LeanLeanFaithfulness.Accepted.SigmaBox.value,
       `LeanLeanFaithfulness.Accepted.trueTheorem,
       ``Eq,
       ``Quot,
@@ -33,17 +31,35 @@ run_cmd
       `LeanLeanFaithfulness.Accepted.IndexSingleton,
       `LeanLeanFaithfulness.Accepted.Vec1,
       `LeanLeanFaithfulness.Accepted.Pair,
-      `LeanLeanFaithfulness.Accepted.Pair.fst,
-      `LeanLeanFaithfulness.Accepted.Pair.snd,
       `LeanLeanFaithfulness.Accepted.Parent,
-      `LeanLeanFaithfulness.Accepted.Parent.a,
-      `LeanLeanFaithfulness.Accepted.Child,
-      `LeanLeanFaithfulness.Accepted.Child.toParent,
-      `LeanLeanFaithfulness.Accepted.Child.b
+      `LeanLeanFaithfulness.Accepted.Child
     ]
-  match LeanLean.Import.replayEnvironmentClosure [] env roots with
-  | .ok _ => pure ()
-  | .error err => Lean.throwError err
+  let localEnv ←
+    match LeanLean.Import.replayEnvironmentClosure [] env roots with
+    | .ok localEnv => pure localEnv
+    | .error err => Lean.throwError err
+  let childName := LeanLean.Import.translateName `LeanLeanFaithfulness.Accepted.Child
+  let childB := LeanLean.Import.translateName `LeanLeanFaithfulness.Accepted.Child.b
+  let childParent := LeanLean.Import.translateName `LeanLeanFaithfulness.Accepted.Child.toParent
+  unless localEnv.contains childB && localEnv.contains childParent do
+    Lean.throwError "structure metadata import did not collect child projection declarations"
+  match localEnv.findStructure? childName with
+  | some _ => pure ()
+  | none => Lean.throwError "structure metadata import did not register Child"
+  let childFields ←
+    match localEnv.structureFieldsFlattened childName false with
+    | .ok fields => pure fields
+    | .error err => Lean.throwError err
+  unless childFields = ["a", "b"] do
+    Lean.throwError "structure metadata import produced wrong inherited fields for Child"
+  let pairFst := LeanLean.Import.translateName `LeanLeanFaithfulness.Accepted.Pair.fst
+  let pairSnd := LeanLean.Import.translateName `LeanLeanFaithfulness.Accepted.Pair.snd
+  unless localEnv.contains pairFst && localEnv.contains pairSnd do
+    Lean.throwError "structure metadata import did not collect Pair projection declarations"
+  let sigmaType := LeanLean.Import.translateName `LeanLeanFaithfulness.Accepted.SigmaBox.α
+  let sigmaValue := LeanLean.Import.translateName `LeanLeanFaithfulness.Accepted.SigmaBox.value
+  unless localEnv.contains sigmaType && localEnv.contains sigmaValue do
+    Lean.throwError "structure metadata import did not collect SigmaBox projection declarations"
 
 end LeanLeanFaithfulness.ImportSmoke
 

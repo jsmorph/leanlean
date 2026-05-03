@@ -415,6 +415,66 @@ def declarationReplayTests : Result Unit := do
   expectError
     "dependency replay rejects unresolved constants"
     (replayDeclarations [] [.axiom "badReplay" [] (const0 "MissingReplayType")])
+  let replayParentSpec : InductiveSpec :=
+    {
+      name := "ReplayParentS"
+      params := []
+      level := type0Level
+      ctors := [{ name := "ReplayParentS.mk", fields := [{ name := "a", type := natType }] }]
+    }
+  let replayChildSpec : InductiveSpec :=
+    {
+      name := "ReplayChildS"
+      params := []
+      level := type0Level
+      ctors :=
+        [
+          {
+            name := "ReplayChildS.mk"
+            fields :=
+              [
+                { name := "toParent", type := const0 "ReplayParentS" },
+                { name := "b", type := boolType }
+              ]
+          }
+        ]
+    }
+  let parentStructureInfo : StructureInfo :=
+    {
+      structName := "ReplayParentS"
+      fieldNames := ["a"]
+      fieldInfo := [{ fieldName := "a", projFn := "ReplayParentS.a" }]
+    }
+  let childStructureInfo : StructureInfo :=
+    {
+      structName := "ReplayChildS"
+      fieldNames := ["toParent", "b"]
+      fieldInfo :=
+        [
+          { fieldName := "toParent", projFn := "ReplayChildS.toParent", subobject? := some "ReplayParentS" },
+          { fieldName := "b", projFn := "ReplayChildS.b" }
+        ]
+      parentInfo := [{ structName := "ReplayParentS", subobject := true, projFn := "ReplayChildS.toParent" }]
+    }
+  let structureEnv ←
+    replayDeclarations
+      []
+      [
+        .structureInfo childStructureInfo,
+        .structureInfo parentStructureInfo,
+        .projection "ReplayChildS.b" "ReplayChildS" 1,
+        .projection "ReplayChildS.toParent" "ReplayChildS" 0,
+        .inductive replayChildSpec,
+        .projection "ReplayParentS.a" "ReplayParentS" 0,
+        .inductive replayParentSpec,
+        .inductive boolSpec,
+        .inductive natSpec
+      ]
+  let flattenedFields ← structureEnv.structureFieldsFlattened "ReplayChildS" false
+  let _ ←
+    expect
+      "dependency replay waits for parent structure metadata"
+      (flattenedFields = ["a", "b"])
 
 def kernelInductiveDeclTests : Result Unit := do
   let kernelBoolDecl : KernelInductiveDecl :=
@@ -852,6 +912,33 @@ def importBridgeTests : Result Unit := do
     expectError
       "importer rejects free variables"
       (Import.translateExpr (.fvar { name := Lean.Name.mkSimple "x" }))
+  let leanStructureName := Lean.Name.mkSimple "LeanStruct"
+  let leanStructureField := Lean.Name.mkSimple "field"
+  let leanStructureProjection := Lean.Name.mkStr leanStructureName "field"
+  let leanStructureInfo : Lean.StructureInfo :=
+    {
+      structName := leanStructureName
+      fieldNames := #[leanStructureField]
+      fieldInfo :=
+        #[
+          {
+            fieldName := leanStructureField
+            projFn := leanStructureProjection
+            subobject? := none
+            binderInfo := .default
+          }
+        ]
+      parentInfo := #[]
+    }
+  match Import.translateStructureInfo leanStructureInfo with
+  | .structureInfo info =>
+      let _ ← expect "Lean structure metadata translation preserves field order" (info.fieldNames = ["field"])
+      let _ ←
+        expect
+          "Lean structure metadata translation preserves projection names"
+          (info.fieldInfo.any fun field => field.projFn = "LeanStruct.field")
+      pure ()
+  | _ => .error "Lean structure metadata should translate to a structureInfo declaration"
   let unsafeRecInfo : Lean.ConstantInfo :=
     .recInfo
       {
@@ -1026,6 +1113,68 @@ def structureMetadataTests : Result Unit := do
         structName := "ChildS"
         fieldNames := ["badParent"]
         fieldInfo := [{ fieldName := "badParent", projFn := "ChildS.toParent", subobject? := some "MissingParentS" }]
+      })
+  let envWithFakeProjection ← addAxiom env "fakeParentProjection" (.forallE "self" (const0 "ParentS") natType)
+  expectError
+    "structure metadata rejects field names without projection bodies"
+    (registerStructure
+      envWithFakeProjection
+      {
+        structName := "ParentS"
+        fieldNames := ["a"]
+        fieldInfo := [{ fieldName := "a", projFn := "fakeParentProjection" }]
+      })
+  let envWithFakeParentProjection ←
+    addAxiom env "fakeChildParentProjection" (.forallE "self" (const0 "ChildS") (const0 "ParentS"))
+  expectError
+    "structure metadata rejects parent projections without checked values"
+    (registerStructure
+      envWithFakeParentProjection
+      {
+        structName := "ChildS"
+        fieldNames := ["toParent", "b"]
+        fieldInfo :=
+          [
+            { fieldName := "toParent", projFn := "ChildS.toParent", subobject? := some "ParentS" },
+            { fieldName := "b", projFn := "ChildS.b" }
+          ]
+        parentInfo := [{ structName := "ParentS", subobject := false, projFn := "fakeChildParentProjection" }]
+      })
+  let wrongSourceParentValue :=
+    .lam "self" (const0 "ParentS") (Expr.mkApps (const0 "ParentS.mk") [natZero])
+  let envWithWrongSourceParentProjection ←
+    addDefinition
+      env
+      "wrongSourceParentProjection"
+      (.forallE "self" (const0 "ParentS") (const0 "ParentS"))
+      wrongSourceParentValue
+  expectError
+    "structure metadata rejects parent projections from the wrong source"
+    (registerStructure
+      envWithWrongSourceParentProjection
+      {
+        structName := "ChildS"
+        fieldNames := ["toParent", "b"]
+        fieldInfo :=
+          [
+            { fieldName := "toParent", projFn := "ChildS.toParent", subobject? := some "ParentS" },
+            { fieldName := "b", projFn := "ChildS.b" }
+          ]
+        parentInfo := [{ structName := "ParentS", subobject := false, projFn := "wrongSourceParentProjection" }]
+      })
+  expectError
+    "structure metadata rejects mismatched subobject parent projections"
+    (registerStructure
+      env
+      {
+        structName := "ChildS"
+        fieldNames := ["toParent", "b"]
+        fieldInfo :=
+          [
+            { fieldName := "toParent", projFn := "ChildS.toParent", subobject? := some "ParentS" },
+            { fieldName := "b", projFn := "ChildS.b" }
+          ]
+        parentInfo := [{ structName := "ParentS", subobject := true, projFn := "ChildS.b" }]
       })
   expectError
     "structure metadata rejects duplicate fields"

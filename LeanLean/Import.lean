@@ -164,6 +164,119 @@ def translateGeneratedConstantInfo : Lean.ConstantInfo → Result Declaration
           })
   | info => .error s!"constant is not a generated constructor or recursor: {info.name}"
 
+def translateStructureFieldInfo (info : Lean.StructureFieldInfo) : StructureFieldInfo :=
+  {
+    fieldName := translateName info.fieldName
+    projFn := translateName info.projFn
+    subobject? := info.subobject?.map translateName
+  }
+
+def translateStructureParentInfo (info : Lean.StructureParentInfo) : StructureParentInfo :=
+  {
+    structName := translateName info.structName
+    subobject := info.subobject
+    projFn := translateName info.projFn
+  }
+
+def translateStructureInfo (info : Lean.StructureInfo) : Declaration :=
+  .structureInfo
+    {
+      structName := translateName info.structName
+      fieldNames := info.fieldNames.toList.map translateName
+      fieldInfo := info.fieldInfo.toList.map translateStructureFieldInfo
+      parentInfo := info.parentInfo.toList.map translateStructureParentInfo
+    }
+
+def leanStructureFieldInfoFor?
+    (info : Lean.StructureInfo)
+    (fieldName : Lean.Name) : Option Lean.StructureFieldInfo :=
+  info.fieldInfo.toList.find? fun field => field.fieldName == fieldName
+
+def leanStructureCtorAndParamCount
+    (leanEnv : Lean.Environment)
+    (info : Lean.StructureInfo) : Result (Lean.Name × Nat) := do
+  match leanEnv.find? info.structName with
+  | some (.inductInfo value) =>
+      match value.ctors with
+      | [ctorName] => pure (ctorName, value.numParams)
+      | _ => .error s!"Lean structure extension entry is not a one-constructor inductive: {info.structName}"
+  | some _ => .error s!"Lean structure extension entry is not an inductive: {info.structName}"
+  | none => .error s!"Lean structure extension entry has no constant: {info.structName}"
+
+def validateLeanStructureField
+    (leanEnv : Lean.Environment)
+    (info : Lean.StructureInfo)
+    (ctorName : Lean.Name)
+    (numParams index : Nat)
+    (fieldName : Lean.Name) : Result Unit := do
+  let some field := leanStructureFieldInfoFor? info fieldName
+    | .error s!"Lean structure extension entry has no field info for {fieldName}"
+  match field.subobject? with
+  | some parentName =>
+      if (Lean.getStructureInfo? leanEnv parentName).isNone then
+        .error s!"Lean structure field refers to an unknown parent structure: {parentName}"
+  | none => pure ()
+  let some projection := leanEnv.getProjectionFnInfo? field.projFn
+    | .error s!"Lean structure field has no projection metadata: {field.projFn}"
+  if !(projection.ctorName == ctorName) then
+    .error
+      s!"Lean structure field projection {field.projFn} targets constructor \
+         {projection.ctorName}, not {ctorName}"
+  if projection.numParams != numParams then
+    .error
+      s!"Lean structure field projection {field.projFn} has parameter count \
+         {projection.numParams}, expected {numParams}"
+  if projection.i != index then
+    .error
+      s!"Lean structure field projection {field.projFn} has field index \
+         {projection.i}, expected {index}"
+
+def validateLeanStructureFields
+    (leanEnv : Lean.Environment)
+    (info : Lean.StructureInfo)
+    (ctorName : Lean.Name)
+    (numParams : Nat) : Nat → List Lean.Name → Result Unit
+  | _, [] => pure ()
+  | index, fieldName :: rest => do
+      validateLeanStructureField leanEnv info ctorName numParams index fieldName
+      validateLeanStructureFields leanEnv info ctorName numParams (index + 1) rest
+
+def leanSubobjectParentMatches
+    (info : Lean.StructureInfo)
+    (parent : Lean.StructureParentInfo) : Bool :=
+  info.fieldInfo.toList.any fun field =>
+    field.projFn == parent.projFn &&
+      match field.subobject? with
+      | some parentName => parentName == parent.structName
+      | none => false
+
+def validateLeanStructureParent
+    (leanEnv : Lean.Environment)
+    (info : Lean.StructureInfo)
+    (parent : Lean.StructureParentInfo) : Result Unit := do
+  if (Lean.getStructureInfo? leanEnv parent.structName).isNone then
+    .error s!"Lean structure parent is unknown: {parent.structName}"
+  if (leanEnv.find? parent.projFn).isNone then
+    .error s!"Lean structure parent projection is unknown: {parent.projFn}"
+  if parent.subobject && !leanSubobjectParentMatches info parent then
+    .error
+      s!"Lean structure parent {parent.structName} is marked as a subobject, \
+         but no matching field uses {parent.projFn}"
+
+def validateLeanStructureInfo
+    (leanEnv : Lean.Environment)
+    (info : Lean.StructureInfo) : Result Unit := do
+  let (ctorName, numParams) ← leanStructureCtorAndParamCount leanEnv info
+  validateLeanStructureFields leanEnv info ctorName numParams 0 info.fieldNames.toList
+  for parent in info.parentInfo do
+    validateLeanStructureParent leanEnv info parent
+
+def translateCheckedStructureInfo
+    (leanEnv : Lean.Environment)
+    (info : Lean.StructureInfo) : Result Declaration := do
+  validateLeanStructureInfo leanEnv info
+  pure (translateStructureInfo info)
+
 def findInductiveInfo? : List Lean.ConstantInfo → Lean.Name → Option Lean.InductiveVal
   | [], _ => none
   | .inductInfo value :: rest, name =>
@@ -412,10 +525,42 @@ def constantInfoMetadataConstants : Lean.ConstantInfo → List Lean.Name
   | .quotInfo _ => ``Eq :: quotientPrimitiveNames
   | _ => []
 
+def leanStructureInfoConstants (info : Lean.StructureInfo) : List Lean.Name :=
+  let fieldConstants :=
+    info.fieldInfo.toList.foldl
+      (fun names field =>
+        appendLeanNames
+          names
+          (field.projFn ::
+            match field.subobject? with
+            | some parentName => [parentName]
+            | none => []))
+      []
+  let parentConstants :=
+    info.parentInfo.toList.foldl
+      (fun names parent => appendLeanNames names [parent.structName, parent.projFn])
+      []
+  appendLeanNames (info.structName :: fieldConstants) parentConstants
+
+def constantInfoEnvironmentMetadataConstants
+    (leanEnv : Lean.Environment) : Lean.ConstantInfo → List Lean.Name
+  | .inductInfo value =>
+      match Lean.getStructureInfo? leanEnv value.name with
+      | some info => leanStructureInfoConstants info
+      | none => []
+  | _ => []
+
 def constantInfoDependencyNames (info : Lean.ConstantInfo) : List Lean.Name :=
   appendLeanNames
     (appendLeanNames (leanExprConstants info.type) (constantInfoValueConstants info))
     (constantInfoMetadataConstants info)
+
+def environmentConstantInfoDependencyNames
+    (leanEnv : Lean.Environment)
+    (info : Lean.ConstantInfo) : List Lean.Name :=
+  appendLeanNames
+    (constantInfoDependencyNames info)
+    (constantInfoEnvironmentMetadataConstants leanEnv info)
 
 partial def collectConstantInfoClosureWith?
     (lookup : Lean.Name → Option Lean.ConstantInfo)
@@ -436,16 +581,60 @@ partial def collectConstantInfoClosureWith?
           loop pending (name :: seen) (info :: infos)
   loop roots [] []
 
-def collectEnvironmentClosure
+partial def collectEnvironmentClosure
     (env : Lean.Environment)
-    (roots : List Lean.Name) : Result (List Lean.ConstantInfo) :=
-  collectConstantInfoClosureWith? (fun name => env.find? name) roots
+    (roots : List Lean.Name) : Result (List Lean.ConstantInfo) := do
+  let rec loop
+      (pending seen : List Lean.Name)
+      (infos : List Lean.ConstantInfo) : Result (List Lean.ConstantInfo) := do
+    match pending with
+    | [] => pure infos.reverse
+    | name :: rest =>
+        if seen.any fun existing => existing == name then
+          loop rest seen infos
+        else
+          let some info := env.find? name
+            | .error s!"unknown Lean environment constant in import closure: {name}"
+          let dependencies := environmentConstantInfoDependencyNames env info
+          let pending := appendLeanNames rest dependencies
+          loop pending (name :: seen) (info :: infos)
+  loop roots [] []
+
+def appendLeanStructureInfo
+    (infos : List Lean.StructureInfo)
+    (info : Lean.StructureInfo) : List Lean.StructureInfo :=
+  if infos.any fun existing => existing.structName == info.structName then
+    infos
+  else
+    infos ++ [info]
+
+def collectEnvironmentStructureInfos
+    (leanEnv : Lean.Environment)
+    (infos : List Lean.ConstantInfo) : Result (List Lean.StructureInfo) :=
+  infos.foldlM
+    (fun structureInfos info => do
+      match info with
+      | .inductInfo value =>
+          match Lean.getStructureInfo? leanEnv value.name with
+          | some structureInfo => pure (appendLeanStructureInfo structureInfos structureInfo)
+          | none => pure structureInfos
+      | _ => pure structureInfos)
+    []
+
+def translateEnvironmentClosure
+    (leanEnv : Lean.Environment)
+    (roots : List Lean.Name) : Result (List Declaration) := do
+  let infos ← collectEnvironmentClosure leanEnv roots
+  let declarations ← translateConstantInfoSnapshot infos
+  let structureInfos ← collectEnvironmentStructureInfos leanEnv infos
+  let structureDeclarations ← structureInfos.mapM (translateCheckedStructureInfo leanEnv)
+  pure (declarations ++ structureDeclarations)
 
 def replayEnvironmentClosure
     (env : Env)
     (leanEnv : Lean.Environment)
     (roots : List Lean.Name) : Result Env := do
-  replayConstantInfoSnapshot env (← collectEnvironmentClosure leanEnv roots)
+  replayDeclarations env (← translateEnvironmentClosure leanEnv roots)
 
 end Import
 end LeanLean
