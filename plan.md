@@ -40,6 +40,20 @@
   - [x] Review the specification to the level needed for an independent implementation.
   - [x] Draft the paper claim structure around specification, implementation, and Lean 4 faithfulness.
   - [x] State remaining Lean 4 divergences and unsupported features in paper-ready form.
+- [ ] Phase 12: External checker interfaces.
+  - [ ] Add typed checker outcomes for acceptance, supported-fragment rejection, unsupported input, and internal checker failure.
+  - [ ] Add `leanlean-check-module`, which loads compiled Lean modules with `Lean.importModules`, takes explicit root declarations, and replays the root-name closure through the local checker.
+  - [ ] Add module-checker tests for accepted declarations, unsupported declarations, and rejected declarations inside the supported fragment.
+  - [ ] Specify the accepted `lean4export` NDJSON fragment before implementing the reader.
+  - [ ] Add `leanlean-check-export`, which reads the Arena input, translates exported declarations into local replay scripts, and reports Arena outcomes.
+  - [ ] Add local Arena smoke tests and a sample checker configuration.
+  - [ ] Record the checker interfaces in `spec.md`, `faithfulness.md`, and `devnotes.md`.
+
+## Top Priorities
+
+The next priority is to make the kernel runnable as an external checker.  The first executable path uses the importer that already exists: load a compiled Lean module, take explicit root declarations, compute the finite environment closure, and replay that closure locally.  That path gives immediate feedback on Lean programs while leaving export parsing as a separate task.
+
+The Arena path follows only after the checker has typed outcomes.  An unsupported Lean feature, a supported-fragment rejection, and an internal checker error have different meanings.  The executable interface preserves those distinctions before it supports `lean-kernel-arena` exit behavior.
 
 This plan describes a path from the current specification-driven proof of concept to a complete Lean 4 kernel.  The project has two operating standards.  Every trusted feature needs a written local specification before implementation work builds around it.  Every object admitted to the environment needs the same well-formedness discipline, whether the object came from user input or from kernel generation.
 
@@ -216,6 +230,24 @@ Acceptance criteria:
 - The repository maps specification clauses to implementation functions, accepted tests, rejected tests, and Lean comparison cases.
 - The paper states the remaining divergences from Lean 4.
 
+## Phase 12: External Checker Interfaces
+
+This phase makes the checker usable on Lean artifacts.  It starts from the current in-process importer because that code already translates Lean `ConstantInfo` snapshots and root-name environment closures into local replay scripts.  The first public tool is therefore `leanlean-check-module`: it loads compiled modules with Lean's environment loader, takes explicit declaration roots, and checks the local replay closure.
+
+The Arena-compatible tool is separate.  `leanlean-check-export` reads the input form used by `lean-kernel-arena`, parses the accepted `lean4export` NDJSON fragment, translates declarations into the same replay script representation, and runs the local checker without Lean's environment loader.  The specification must state the accepted export fragment before implementation, including names, universe levels, expressions, declarations, generated constructors, generated recursors, quotient primitives, projection metadata, and structure-extension metadata.
+
+Typed outcomes are part of the checker API.  Acceptance means the artifact replays in the local kernel.  Rejection means the artifact lies inside the specified fragment and violates a kernel rule.  Unsupported input means the artifact uses a Lean feature outside the specified fragment.  Internal failure means the checker failed to classify the input, and the executable behavior for that case must be documented separately from Arena's accepted, rejected, and declined outcomes.
+
+Acceptance criteria:
+
+- The code has a typed result for accepted, rejected, unsupported, and internal-failure outcomes.
+- `leanlean-check-module` checks explicit root declarations from compiled Lean modules through `replayEnvironmentClosure`.
+- Module-checker tests cover accepted roots, unsupported roots, and roots rejected inside the supported fragment.
+- The specification states the accepted `lean4export` NDJSON fragment.
+- `leanlean-check-export` supports the Arena input convention, translates accepted export records into declaration replay scripts, and returns `0` for accepted inputs, `1` for supported-fragment rejections, and `2` for unsupported inputs.
+- Local smoke tests include an accepted exported artifact, a rejected supported-fragment artifact, and an unsupported artifact.
+- The repository includes a sample `lean-kernel-arena` checker configuration.
+
 ## Immediate Next Work
 
-Ordinary universe polymorphism now covers inference, conversion, axioms, transparent and opaque definitions, theorem declarations, inductive blocks, generated constructors, generated recursors, low-level quotient primitives, core projections for one-constructor inductives, raw literal expressions, and the `PEmpty`/`PUnit` sort-polymorphic subsingleton shapes.  The kernel reserves `Sort 0` for `Prop`, uses symbolic `imax` for dependent function sorts, applies proof irrelevance to terms with the same normalized proposition type, supports proposition-valued inductives with the indexed syntactic subsingleton-elimination rule, admits mutual inductive blocks atomically, records primitive, theorem, projection, reducibility, and structure metadata in the environment, and has ordered and dependency-aware declaration replay paths plus a first executable faithfulness corpus.  The Lean importer now feeds safe declaration data, finite `ConstantInfo` snapshots, root-name environment closures, and kernel-relevant structure-extension metadata into that replay path, with a smoke executable over accepted-corpus roots, module-boundary roots, and a broader named core set including dependent family parameters and `Decidable`.  The differential executable compares selected Lean-inferred types and reduced values against the local checker, compares imported constant types and transparent-definition reductions over named finite fragments, and the specification now lists the remaining Lean 4 divergence boundaries with reasons.  The current plan is complete.  The next substantive work should be a critical review before choosing the next kernel-extension phase.
+Ordinary universe polymorphism now covers inference, conversion, axioms, transparent and opaque definitions, theorem declarations, inductive blocks, generated constructors, generated recursors, low-level quotient primitives, core projections for one-constructor inductives, raw literal expressions, and the `PEmpty`/`PUnit` sort-polymorphic subsingleton shapes.  The kernel reserves `Sort 0` for `Prop`, uses symbolic `imax` for dependent function sorts, applies proof irrelevance to terms with the same normalized proposition type, supports proposition-valued inductives with the indexed syntactic subsingleton-elimination rule, admits mutual inductive blocks atomically, records primitive, theorem, projection, reducibility, and structure metadata in the environment, and has ordered and dependency-aware declaration replay paths plus a first executable faithfulness corpus.  The Lean importer now feeds safe declaration data, finite `ConstantInfo` snapshots, root-name environment closures, and kernel-relevant structure-extension metadata into that replay path, with a smoke executable over accepted-corpus roots, module-boundary roots, and a broader named core set including dependent family parameters and `Decidable`.  The differential executable compares selected Lean-inferred types and reduced values against the local checker, compares imported constant types and transparent-definition reductions over named finite fragments, and the specification now lists the remaining Lean 4 divergence boundaries with reasons.  The next work is Phase 12: typed checker outcomes, a module checker, and then an Arena-compatible `lean4export` checker.
