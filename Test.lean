@@ -377,9 +377,19 @@ def environmentTests : Result Unit := do
           let _ ← expect "projection metadata records the structure" (projection.structName = "Pair")
           let _ ← expect "projection metadata records the constructor" (projection.ctorName = "Pair.mk")
           let _ ← expect "projection metadata records the field index" (projection.index = 0)
+          let _ ← expect "projection metadata records the constructor field index" (projection.fieldIndex = 0)
           pure ()
       | _ => .error "Pair.fst should be recorded as a projection"
   | none => .error "Pair.fst should be present in the environment"
+  match env.find? "Vec1.value" with
+  | some info =>
+      match info.kind with
+      | .projection projection =>
+          let _ ← expect "indexed projection metadata records the visible index" (projection.index = 0)
+          let _ ← expect "indexed projection metadata skips index fields" (projection.fieldIndex = 1)
+          pure ()
+      | _ => .error "Vec1.value should be recorded as a projection"
+  | none => .error "Vec1.value should be present in the environment"
 
 def projectionTests : Result Unit := do
   let env ← sampleEnv
@@ -395,6 +405,23 @@ def projectionTests : Result Unit := do
   let sigmaValueNf ← normalize env (sigmaValueProj sigmaBoolTrue)
   let _ ← expectExprEq "dependent projection result types substitute earlier projections" sigmaValueNf boolTrue
   let _ ← checkDefEq env sigmaEtaExpansion sigmaSeed
+  let vec1ValueTy ← infer env [] (vec1ValueProj vec1BoolZeroTrue)
+  let _ ← checkDefEq env vec1ValueTy boolType
+  let vec1ValueNf ← normalize env (vec1ValueProj vec1BoolZeroTrue)
+  let _ ← expectExprEq "indexed projections skip fields forced by whole indices" vec1ValueNf boolTrue
+  let vec1ValueFnNf ← normalize env (vec1ValueFn vec1BoolZeroTrue)
+  let _ ← expectExprEq "indexed projection functions use target indices as arguments" vec1ValueFnNf boolTrue
+  let _ ← checkDefEq env vec1EtaExpansion vec1Seed
+  let shiftedPredTy ← infer env [] (shiftedPredProj shiftedBoolOneTrue)
+  let _ ← checkDefEq env shiftedPredTy natType
+  let shiftedPredNf ← normalize env (shiftedPredProj shiftedBoolOneTrue)
+  let _ ← expectExprEq "computed-index fields remain projectable" shiftedPredNf natZero
+  let shiftedValueNf ← normalize env (shiftedValueProj shiftedBoolOneTrue)
+  let _ ← expectExprEq "later computed-index projections reduce" shiftedValueNf boolTrue
+  let _ ←
+    expectError
+      "computed-index structures do not eta-reduce without matching target indices"
+      (checkDefEq env shiftedEtaExpansion shiftedSeed)
   let proofProjectionTy ← infer env [] proofBoxProjection
   let _ ← checkDefEq env proofProjectionTy pProp
   let proofProjectionNf ← normalize env proofBoxProjection

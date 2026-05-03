@@ -143,6 +143,8 @@ structure InductiveInfo where
   spec : InductiveSpec
   positiveParams : List Bool
   allowsLargeElim : Bool := true
+  projectionFields : List Nat := []
+  indexFields : List (Nat × Nat) := []
   deriving DecidableEq, Repr, Inhabited
 
 structure ProjectionInfo where
@@ -150,6 +152,7 @@ structure ProjectionInfo where
   ctorName : Name
   numParams : Nat
   index : Nat
+  fieldIndex : Nat
   deriving DecidableEq, Repr, Inhabited
 
 inductive PrimitiveInfo where
@@ -524,19 +527,34 @@ def listGet? : List α → Nat → Option α
 
 structure ProjectionTarget where
   ctor : ConstructorSpec
+  fieldIndex : Nat
   field : Binder
   deriving DecidableEq, Repr, Inhabited
 
 def projectionTarget (info : InductiveInfo) (index : Nat) : Result ProjectionTarget := do
-  if !info.spec.indices.isEmpty then
-    .error s!"projection on indexed inductive {info.spec.name} is not in the current subset"
-  else
-    match info.spec.ctors with
-    | [ctor] =>
-        match listGet? ctor.fields index with
-        | some field => pure { ctor, field }
-        | none => .error s!"projection index {index} is out of bounds for {info.spec.name}"
-    | _ => .error s!"projection target {info.spec.name} must have exactly one constructor"
+  match info.spec.ctors with
+  | [ctor] =>
+      let some fieldIndex := listGet? info.projectionFields index
+        | .error s!"projection index {index} is out of bounds for {info.spec.name}"
+      match listGet? ctor.fields fieldIndex with
+      | some field => pure { ctor, fieldIndex, field }
+      | none => .error s!"projection field map for {info.spec.name} points outside the constructor"
+  | _ => .error s!"projection target {info.spec.name} must have exactly one constructor"
+
+def projectionIndexForField? (projectionFields : List Nat) (fieldIndex : Nat) : Option Nat :=
+  let rec loop (projectionIndex : Nat) : List Nat → Option Nat
+    | [] => none
+    | field :: rest =>
+        if field = fieldIndex then
+          some projectionIndex
+        else
+          loop (projectionIndex + 1) rest
+  loop 0 projectionFields
+
+def indexPositionForField? (indexFields : List (Nat × Nat)) (fieldIndex : Nat) : Option Nat :=
+  match indexFields.find? (fun pair => pair.1 = fieldIndex) with
+  | some pair => some pair.2
+  | none => none
 
 def projectionInfo (info : InductiveInfo) (index : Nat) : Result ProjectionInfo := do
   let target ← projectionTarget info index
@@ -546,46 +564,67 @@ def projectionInfo (info : InductiveInfo) (index : Nat) : Result ProjectionInfo 
       ctorName := target.ctor.name
       numParams := info.spec.params.length
       index
+      fieldIndex := target.fieldIndex
     }
 
 def projectionFieldTypeExpr
     (spec : InductiveSpec)
     (ctor : ConstructorSpec)
-    (index : Nat)
+    (projectionFields : List Nat)
+    (indexFields : List (Nat × Nat))
+    (fieldIndex : Nat)
     (levels : List Level)
     (params : List Expr)
+    (indices : List Expr)
     (struct : Expr) : Result Expr := do
-  let some field := listGet? ctor.fields index
-    | .error s!"projection index {index} is out of bounds for {spec.name}"
+  let some field := listGet? ctor.fields fieldIndex
+    | .error s!"projection field index {fieldIndex} is out of bounds for {spec.name}"
   let fieldType := Expr.instantiateLevels spec.levelParams levels field.type
-  let previousFields := (List.range index).map fun idx => Expr.proj spec.name idx struct
+  let mut previousFields : List Expr := []
+  for previousFieldIndex in List.range fieldIndex do
+    match projectionIndexForField? projectionFields previousFieldIndex with
+    | some projectionIndex =>
+        previousFields := previousFields ++ [.proj spec.name projectionIndex struct]
+    | none =>
+        match indexPositionForField? indexFields previousFieldIndex with
+        | some indexPosition =>
+            match listGet? indices indexPosition with
+            | some indexValue => previousFields := previousFields ++ [indexValue]
+            | none => .error s!"projection index-field map for {spec.name} points outside the indices"
+        | none => .error s!"constructor field {previousFieldIndex} for {spec.name} is neither projected nor index-forced"
   pure (Expr.instantiateMany (params ++ previousFields) fieldType)
 
 def projectionFunctionType (info : InductiveInfo) (index : Nat) : Result Expr := do
   let target ← projectionTarget info index
   let spec := info.spec
-  let params := Expr.bvarArgs spec.params.length 0
-  let selfType := inductiveSelfTarget spec params
+  let tele := spec.params ++ spec.indices
+  let vars := Expr.bvarArgs tele.length 0
+  let params := vars.take spec.params.length
+  let indices := vars.drop spec.params.length
+  let selfType := inductiveTargetWithLevels spec.name (inductiveLevelArgs spec) (params ++ indices)
   let resultType ←
     projectionFieldTypeExpr
       spec
       target.ctor
-      index
+      info.projectionFields
+      info.indexFields
+      target.fieldIndex
       (inductiveLevelArgs spec)
       (params.map (Expr.lift 1))
+      (indices.map (Expr.lift 1))
       (.bvar 0)
-  pure (Telescope.bindForall spec.params (.forallE "self" selfType resultType))
+  pure (Telescope.bindForall tele (.forallE "self" selfType resultType))
 
 def projectionFunctionValue (info : InductiveInfo) (index : Nat) : Result Expr := do
   let _ ← projectionTarget info index
   let spec := info.spec
-  let params := Expr.bvarArgs spec.params.length 0
-  let selfType := inductiveSelfTarget spec params
-  pure (Telescope.bindLambda spec.params (.lam "self" selfType (.proj spec.name index (.bvar 0))))
+  let tele := spec.params ++ spec.indices
+  let vars := Expr.bvarArgs tele.length 0
+  let selfType := inductiveTargetWithLevels spec.name (inductiveLevelArgs spec) vars
+  pure (Telescope.bindLambda tele (.lam "self" selfType (.proj spec.name index (.bvar 0))))
 
 def structureSupportsEta (info : InductiveInfo) : Bool :=
   !inductiveIsProp info.spec &&
-    info.spec.indices.isEmpty &&
     match info.spec.ctors with
     | [ctor] => !ctor.fields.any fun field => field.type.occursConst info.spec.name
     | _ => false
@@ -916,7 +955,19 @@ partial def inferProjection
     .error s!"projection expected {typeName}, got {headName}"
   else
     let target ← projectionTarget info index
-    let resultType ← projectionFieldTypeExpr info.spec target.ctor index levels args struct
+    let params := args.take info.spec.params.length
+    let indices := args.drop info.spec.params.length
+    let resultType ←
+      projectionFieldTypeExpr
+        info.spec
+        target.ctor
+        info.projectionFields
+        info.indexFields
+        target.fieldIndex
+        levels
+        params
+        indices
+        struct
     if inductiveIsProp info.spec then
       let resultLevel ← inferSort env ctx resultType (levelParams := levelParams)
       if Level.defEq resultLevel .zero then
@@ -948,7 +999,7 @@ partial def reduceProjection
     if args.length != expectedArity then
       .error s!"projection target constructor has wrong arity for {typeName}"
     else
-      match listGet? (args.drop info.spec.params.length) index with
+      match listGet? (args.drop info.spec.params.length) target.fieldIndex with
       | some value => pure (some value)
       | none => .error s!"projection index {index} is out of bounds for {typeName}"
 
@@ -987,25 +1038,46 @@ partial def isStructureEtaExpansion
             else
               let ctorParams := args.take paramCount
               let fields := args.drop paramCount
+              let ctorTarget ← constructorTargetExpr info.spec ctor
+              let ctorTarget := Expr.instantiateLevels info.spec.levelParams ctorLevels ctorTarget
+              let instantiatedTarget := Expr.instantiateMany (ctorParams ++ fields) ctorTarget
+              let targetArgs := instantiatedTarget.getAppArgs
+              let otherIndices := otherArgs.drop paramCount
               let mut ok := true
-              for pair in List.zip ctorParams otherArgs do
+              if targetArgs.length != otherArgs.length then
+                ok := false
+              for pair in List.zip targetArgs otherArgs do
                 try
                   let _ ← checkDefEqIn env ctx pair.1 pair.2 (levelParams := levelParams)
                   pure ()
                 catch _ =>
                   ok := false
               for pair in List.zip (List.range fieldCount) fields do
-                try
-                  let _ ←
-                    checkDefEqIn
-                      env
-                      ctx
-                      pair.2
-                      (.proj indName pair.1 other)
-                      (levelParams := levelParams)
-                  pure ()
-                catch _ =>
-                  ok := false
+                match projectionIndexForField? info.projectionFields pair.1 with
+                | some projectionIndex =>
+                    try
+                      let _ ←
+                        checkDefEqIn
+                          env
+                          ctx
+                          pair.2
+                          (.proj indName projectionIndex other)
+                          (levelParams := levelParams)
+                      pure ()
+                    catch _ =>
+                      ok := false
+                | none =>
+                    match indexPositionForField? info.indexFields pair.1 with
+                    | some indexPosition =>
+                        match listGet? otherIndices indexPosition with
+                        | some indexValue =>
+                            try
+                              let _ ← checkDefEqIn env ctx pair.2 indexValue (levelParams := levelParams)
+                              pure ()
+                            catch _ =>
+                              ok := false
+                        | none => ok := false
+                    | none => ok := false
               pure ok
         | none => pure false
     | _ => pure false
@@ -1772,17 +1844,26 @@ partial def constructorFieldIsTargetIndex
     (spec : InductiveSpec)
     (ctor : ConstructorSpec)
     (target : Expr)
-    (fieldIndex : Nat) : Result Bool := do
+    (fieldIndex : Nat) : Result (Option Nat) := do
   let some fieldVar := constructorFieldVar? ctor.fields.length fieldIndex
     | .error s!"internal error: invalid constructor field index {fieldIndex}"
-  let mut found := false
-  for indexArg in constructorIndexArgs spec target do
+  let mut found : Option Nat := none
+  for pair in List.zip (List.range spec.indices.length) (constructorIndexArgs spec target) do
     try
-      let _ ← checkDefEqIn env ctx fieldVar indexArg (levelParams := spec.levelParams)
-      found := true
+      let _ ← checkDefEqIn env ctx fieldVar pair.2 (levelParams := spec.levelParams)
+      found := some pair.1
     catch _ =>
       pure ()
   pure found
+
+partial def constructorFieldIsTargetIndexBool
+    (env : Env)
+    (ctx : Context)
+    (spec : InductiveSpec)
+    (ctor : ConstructorSpec)
+    (target : Expr)
+    (fieldIndex : Nat) : Result Bool := do
+  pure (← constructorFieldIsTargetIndex env ctx spec ctor target fieldIndex).isSome
 
 partial def inferBinderUniverse
     (env : Env)
@@ -2061,7 +2142,7 @@ def computeAllowsLargeElim
           | field :: rest => do
               let fieldSort ← inferSort tempEnv ctx field.type (levelParams := spec.levelParams)
               let isIndex ←
-                constructorFieldIsTargetIndex
+                constructorFieldIsTargetIndexBool
                   tempEnv
                   allFieldCtx
                   spec
@@ -2074,6 +2155,23 @@ def computeAllowsLargeElim
                 pure false
         checkFields paramCtx 0 ctor.fields
     | _ => pure false
+
+def computeProjectionFields
+    (tempEnv : Env)
+    (spec : InductiveSpec) : Result (List Nat × List (Nat × Nat)) := do
+  match spec.ctors with
+  | [ctor] =>
+      let paramCtx := Telescope.toContext spec.params
+      let target ← constructorTargetExpr spec ctor
+      let allFieldCtx ← checkTelescopeFrom tempEnv paramCtx ctor.fields (levelParams := spec.levelParams)
+      let mut projectionFields : List Nat := []
+      let mut indexFields : List (Nat × Nat) := []
+      for fieldIndex in List.range ctor.fields.length do
+        match ← constructorFieldIsTargetIndex tempEnv allFieldCtx spec ctor target fieldIndex with
+        | some indexPosition => indexFields := indexFields ++ [(fieldIndex, indexPosition)]
+        | none => projectionFields := projectionFields ++ [fieldIndex]
+      pure (projectionFields, indexFields)
+  | _ => pure ([], [])
 
 def addInductiveBlock (env : Env) (block : InductiveBlockSpec) : Result Env := do
   let _ ← checkLevelParamsUnique block.levelParams
@@ -2103,12 +2201,15 @@ def addInductiveBlock (env : Env) (block : InductiveBlockSpec) : Result Env := d
     block.specs.mapM fun spec => do
       let positiveParams ← positiveFlagsFor positiveFacts spec.name
       let allowsLargeElim ← computeAllowsLargeElim provisionalEnv spec
+      let (projectionFields, indexFields) ← computeProjectionFields provisionalEnv spec
       pure
         {
           type := inductiveTypeExpr spec
           spec
           positiveParams
           allowsLargeElim
+          projectionFields
+          indexFields
         }
   let infoEnv :=
     (List.zip block.specs finalInfos).map

@@ -46,13 +46,13 @@ The subset includes the low-level quotient constants `Quot`, `Quot.mk`, `Quot.li
 
 ## Projections
 
-A core projection expression has the form `proj S i s`, where `S` is an inductive type name, `i` is a zero-based projection index, and `s` is the structure value.  In this subset, `S` must name a non-indexed inductive declaration with exactly one constructor, and `i` must select one of that constructor's fields.  The inferred type of `s` must reduce to an application of `S` to its declared parameters.  The projection result type is the selected constructor-field type after substituting the structure parameters and, for dependent fields, substituting earlier fields with their projections from `s`.
+A core projection expression has the form `proj S i s`, where `S` is an inductive type name, `i` is a zero-based projection index, and `s` is the structure value.  In this subset, `S` must name an inductive declaration with exactly one constructor.  The inferred type of `s` must reduce to an application of `S` to its declared parameters and indices.  Projection indices range over constructor fields after removing fields whose values are forced by whole target indices.  A constructor field that appears inside a computed index, rather than as the whole index argument, remains projectable.  The projection result type is the selected constructor-field type after substituting the structure parameters and, for dependent fields, substituting earlier constructor fields either with their projections from `s` or with the target index that forces them.
 
 Projection reduction is a kernel rule on the core projection expression.  If `s` reduces to the unique constructor of `S`, `proj S i s` reduces to the selected constructor field after the constructor parameters.  The rule checks that the projection name, field index, and constructor shape match before reducing.  Projection functions are ordinary checked declarations with projection metadata; their bodies reduce by delta to the core projection expression and then by projection reduction.
 
 Projections from proposition-valued one-constructor inductives are allowed only when the selected field type is itself a proposition after the structure parameters and earlier projections have been substituted.  This matches the same integrity boundary as large elimination from `Prop`: a projection may not extract computational data from an irrelevant proof.
 
-Structure eta is a conversion rule for non-recursive, data-valued, one-constructor inductives in the supported projection fragment.  A constructor application whose fields are exactly the projections of a value `s` is definitionally equal to `s` when the constructor parameters match the inferred type of `s`.  Recursive one-constructor inductives may use projections, but this subset does not apply eta to them.
+Structure eta is a conversion rule for non-recursive, data-valued, one-constructor inductives in the supported projection fragment.  A constructor application whose projectable fields are exactly the projections of a value `s`, and whose index-forced fields match the corresponding target indices, is definitionally equal to `s` when the constructor target matches the inferred type of `s`.  Recursive one-constructor inductives may use projections, but this subset does not apply eta to them.
 
 ## Conversion and Typing
 
@@ -66,6 +66,6 @@ The conversion relation includes beta, delta, zeta, iota reduction, projection r
 | --- | --- | --- |
 | Full Lean declaration model | Partial | Projection metadata is present for the first structure fragment, while theorem metadata and reducibility hints beyond transparent versus opaque definitions remain omitted. |
 | Higher-level quotient API | Omitted | `Quotient`, setoids, and derived quotient recursors can be specified on top of the low-level `Quot` primitives. |
-| Indexed structure projections | Omitted | Lean's projection index can skip constructor arguments that are fixed by indices.  The current subset supports the non-indexed case before adding that mapping. |
+| Structure inheritance and parent projections | Omitted | The core projection rule now supports indexed one-constructor inductives, but inherited structure fields and parent projection generation require more declaration metadata. |
 
 These omissions are not placeholders for undocumented behavior.  The kernel either implements a feature or rejects it.  Later versions can enlarge the specification once the current fragment has stable examples, tests, and a clearer path toward universes and propositions.

@@ -129,6 +129,50 @@ def sigmaBoxSpec : InductiveSpec :=
       ]
   }
 
+def vec1Spec : InductiveSpec :=
+  {
+    name := "Vec1"
+    params := [{ name := "α", type := type0Sort }]
+    indices := [{ name := "n", type := natType }]
+    level := type0Level
+    ctors :=
+      [
+        {
+          name := "Vec1.mk"
+          fields :=
+            [
+              { name := "n", type := natType },
+              { name := "value", type := .bvar 1 }
+            ]
+          target? := some (Expr.mkApps (const0 "Vec1") [.bvar 2, .bvar 1])
+        }
+      ]
+  }
+
+def shiftedStructSpec : InductiveSpec :=
+  {
+    name := "ShiftedStruct"
+    params := [{ name := "α", type := type0Sort }]
+    indices := [{ name := "n", type := natType }]
+    level := type0Level
+    ctors :=
+      [
+        {
+          name := "ShiftedStruct.mk"
+          fields :=
+            [
+              { name := "n", type := natType },
+              { name := "value", type := .bvar 1 }
+            ]
+          target? :=
+            some
+              (Expr.mkApps
+                (const0 "ShiftedStruct")
+                [.bvar 2, Expr.mkApps (const0 "Nat.succ") [.bvar 1]])
+        }
+      ]
+  }
+
 def eqSpec : InductiveSpec :=
   {
     name := "Eq"
@@ -910,6 +954,11 @@ def sampleEnv : Result Env := do
   let env ← addInductive env sigmaBoxSpec
   let env ← addProjection env "SigmaBox.type" "SigmaBox" 0
   let env ← addProjection env "SigmaBox.value" "SigmaBox" 1
+  let env ← addInductive env vec1Spec
+  let env ← addProjection env "Vec1.value" "Vec1" 0
+  let env ← addInductive env shiftedStructSpec
+  let env ← addProjection env "ShiftedStruct.pred" "ShiftedStruct" 0
+  let env ← addProjection env "ShiftedStruct.value" "ShiftedStruct" 1
   let env ← addInductive env eqSpec
   let env ← addQuotPrimitives env
   let env ← addInductive env vecSpec
@@ -936,6 +985,12 @@ def sampleEnv : Result Env := do
   let env ← addDefinitionWithLevels env "polyId" ["u"] polyIdType polyIdValue
   let env ← addAxiom env "pairSeed" (const0 "Pair")
   let env ← addAxiom env "sigmaSeed" (const0 "SigmaBox")
+  let env ← addAxiom env "vec1Seed" (Expr.mkApps (const0 "Vec1") [boolType, const0 "Nat.zero"])
+  let env ←
+    addAxiom
+      env
+      "shiftedSeed"
+      (Expr.mkApps (const0 "ShiftedStruct") [boolType, Expr.mkApps (const0 "Nat.succ") [const0 "Nat.zero"]])
   let env ← addAxiom env "P" propSort
   let env ← addAxiom env "pProof" pProp
   addAxiom env "qProof" pProp
@@ -1008,6 +1063,57 @@ def sigmaValueFn (box : Expr) : Expr :=
 
 def sigmaEtaExpansion : Expr :=
   sigmaBoxMk (sigmaTypeProj sigmaSeed) (sigmaValueProj sigmaSeed)
+
+def vec1Type (elem index : Expr) : Expr :=
+  Expr.mkApps (const0 "Vec1") [elem, index]
+
+def vec1Mk (elem index value : Expr) : Expr :=
+  Expr.mkApps (const0 "Vec1.mk") [elem, index, value]
+
+def vec1SeedName : Name :=
+  "vec1Seed"
+
+def vec1Seed : Expr :=
+  const0 vec1SeedName
+
+def vec1BoolZeroTrue : Expr :=
+  vec1Mk boolType natZero boolTrue
+
+def vec1ValueProj (box : Expr) : Expr :=
+  .proj "Vec1" 0 box
+
+def vec1ValueFn (box : Expr) : Expr :=
+  Expr.mkApps (const0 "Vec1.value") [boolType, natZero, box]
+
+def vec1EtaExpansion : Expr :=
+  vec1Mk boolType natZero (vec1ValueProj vec1Seed)
+
+def shiftedStructType (elem index : Expr) : Expr :=
+  Expr.mkApps (const0 "ShiftedStruct") [elem, index]
+
+def shiftedStructMk (elem pred value : Expr) : Expr :=
+  Expr.mkApps (const0 "ShiftedStruct.mk") [elem, pred, value]
+
+def shiftedSeedName : Name :=
+  "shiftedSeed"
+
+def shiftedSeed : Expr :=
+  const0 shiftedSeedName
+
+def shiftedBoolOneTrue : Expr :=
+  shiftedStructMk boolType natZero boolTrue
+
+def shiftedPredProj (box : Expr) : Expr :=
+  .proj "ShiftedStruct" 0 box
+
+def shiftedValueProj (box : Expr) : Expr :=
+  .proj "ShiftedStruct" 1 box
+
+def shiftedValueFn (box : Expr) : Expr :=
+  Expr.mkApps (const0 "ShiftedStruct.value") [boolType, natSucc natZero, box]
+
+def shiftedEtaExpansion : Expr :=
+  shiftedStructMk boolType (shiftedPredProj shiftedSeed) (shiftedValueProj shiftedSeed)
 
 def mutEvenType : Expr :=
   const0 "MutEven"
@@ -1710,7 +1816,7 @@ def demoReportLines : List String :=
     "Eq.refl checks as an indexed constructor",
     "Eq.rec eliminates into data and reduces on refl",
     "Quot.lift computes on Quot.mk and Quot.sound checks",
-    "core projections type-check, reduce, and support structure eta",
+    "core and indexed projections type-check, reduce, and support structure eta",
     "mutual inductive recursors compute across block members",
     "nested mutual recursors compute through positive containers",
     "Vec.rec computes through indexed constructor targets",
@@ -1754,6 +1860,26 @@ def projectionDemoChecks (env : Env) : Result Unit := do
   let sigmaValueFnNf ← normalize env (sigmaValueFn sigmaBoolTrue)
   let _ ← checkDefEq env sigmaValueFnNf boolTrue
   let _ ← checkDefEq env sigmaEtaExpansion sigmaSeed
+  let vec1ValueTy ← infer env [] (vec1ValueProj vec1BoolZeroTrue)
+  let _ ← checkDefEq env vec1ValueTy boolType
+  let vec1ValueNf ← normalize env (vec1ValueProj vec1BoolZeroTrue)
+  let _ ← checkDefEq env vec1ValueNf boolTrue
+  let vec1ValueFnNf ← normalize env (vec1ValueFn vec1BoolZeroTrue)
+  let _ ← checkDefEq env vec1ValueFnNf boolTrue
+  let _ ← checkDefEq env vec1EtaExpansion vec1Seed
+  let shiftedPredTy ← infer env [] (shiftedPredProj shiftedBoolOneTrue)
+  let _ ← checkDefEq env shiftedPredTy natType
+  let shiftedPredNf ← normalize env (shiftedPredProj shiftedBoolOneTrue)
+  let _ ← checkDefEq env shiftedPredNf natZero
+  let shiftedValueTy ← infer env [] (shiftedValueProj shiftedBoolOneTrue)
+  let _ ← checkDefEq env shiftedValueTy boolType
+  let shiftedValueNf ← normalize env (shiftedValueProj shiftedBoolOneTrue)
+  let _ ← checkDefEq env shiftedValueNf boolTrue
+  let shiftedValueFnNf ← normalize env (shiftedValueFn shiftedBoolOneTrue)
+  let _ ← checkDefEq env shiftedValueFnNf boolTrue
+  match checkDefEq env shiftedEtaExpansion shiftedSeed with
+  | .ok _ => .error "ShiftedStruct should not eta-reduce across a computed index"
+  | .error _ => pure ()
   let proofBoxProjectionTy ← infer env [] proofBoxProjection
   let _ ← checkDefEq env proofBoxProjectionTy pProp
   let proofBoxProjectionNf ← normalize env proofBoxProjection

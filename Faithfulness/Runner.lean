@@ -34,6 +34,11 @@ def cases : List Case :=
       expectation := .rejects ["expected to have type", "Prop"]
     },
     {
+      label := "computed-index eta rejection"
+      path := "Faithfulness/Rejected/ComputedIndexEta.lean"
+      expectation := .rejects ["has type", "is expected to have type"]
+    },
+    {
       label := "opaque rfl rejection"
       path := "Faithfulness/Rejected/OpaqueRfl.lean"
       expectation := .rejects ["opaqueTrue = true"]

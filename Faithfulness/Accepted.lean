@@ -122,4 +122,22 @@ inductive RecStruct : Type
 example (x : RecStruct) :
     x.1 = x.1 := rfl
 
+inductive Vec1 (α : Type) : Nat → Type
+| mk (n : Nat) : α → Vec1 α n
+
+example :
+    (Vec1.mk 0 true).1 = true := rfl
+
+example (x : Vec1 Bool 0) :
+    Vec1.mk 0 x.1 = x := rfl
+
+inductive ShiftedStruct (α : Type) : Nat → Type
+| mk (n : Nat) : α → ShiftedStruct α (Nat.succ n)
+
+example :
+    (ShiftedStruct.mk 0 true).1 = 0 := rfl
+
+example :
+    (ShiftedStruct.mk 0 true).2 = true := rfl
+
 end LeanLeanFaithfulness.Accepted
