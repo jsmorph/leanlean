@@ -17,6 +17,9 @@ name = "Faithfulness.ModuleB"
 [[lean_lib]]
 name = "Faithfulness.Fragments"
 
+[[lean_lib]]
+name = "Faithfulness.ExportSmoke"
+
 [[lean_exe]]
 name = "leanlean"
 root = "Main"

@@ -43,13 +43,14 @@
 - [ ] Phase 12: External checker interfaces.
   - [x] Add typed checker outcomes for acceptance, supported-fragment rejection, unsupported input, and internal checker failure.
   - [x] Add `leanlean-check-module`, which loads compiled Lean modules with `Lean.importModules`, takes explicit root declarations, and replays the root-name closure through the local checker.
-  - [ ] Specify the accepted `lean4export` NDJSON fragment before implementing the reader.
-  - [ ] Add `leanlean-check-export`, which reads the Arena input, translates exported declarations into local replay scripts, and reports Arena outcomes.
-  - [ ] Add export-checker tests generated from small Lean source files through `lean4export`.
+  - [x] Specify the first accepted `lean4export` NDJSON fragment.
+  - [x] Add `leanlean-check-export`, which reads the Arena input, translates exported declarations into local replay scripts, and reports Arena outcomes.
+  - [x] Add a first export-checker smoke test generated from a small Lean source file through `lean4export`.
+  - [ ] Expand export-checker tests generated from small Lean source files through `lean4export`.
   - [ ] Add hand-edited export-checker tests for supported-fragment rejection and unsupported input.
   - [ ] Add local Arena smoke tests and a sample checker configuration.
   - [ ] Add module-checker tests for accepted declarations, unsupported declarations, and rejected declarations inside the supported fragment.
-  - [ ] Record the checker interfaces in `spec.md`, `faithfulness.md`, and `devnotes.md`.
+  - [x] Record the checker interfaces in `spec.md`, `faithfulness.md`, and `devnotes.md`.
 
 ## Top Priorities
 
@@ -252,7 +253,7 @@ This register separates checker expressiveness from interface work.  NDJSON pars
 
 This phase makes the checker usable on Lean artifacts.  The module-loader bridge already exists as `leanlean-check-module`; it remains useful for diagnosis because it can compare local replay against Lean's loaded environment.  The main implementation target is now `leanlean-check-export`, because that executable checks the kernel-level artifact used by external checkers.
 
-`leanlean-check-export` reads the input form used by `lean-kernel-arena`, parses the accepted `lean4export` NDJSON fragment, translates declarations into the same replay script representation, and runs the local checker without Lean's environment loader.  The specification must state the accepted export fragment before implementation, including names, universe levels, expressions, declarations, generated constructors, generated recursors, quotient primitives, projection metadata, and structure-extension metadata.  The first implementation should accept a file path for local use and the Arena `$IN` path for harness use.
+`leanlean-check-export` reads the input form used by `lean-kernel-arena`, parses the accepted `lean4export` NDJSON fragment, translates declarations into the same replay script representation, and runs the local checker without Lean's environment loader.  The first accepted fragment covers `lean4export` format 3.1.0 records for names, universe levels, expressions, axioms, definitions, theorem declarations, opaque declarations, quotient primitives, inductive groups, generated constructors, generated recursors, and recursor rule right-hand sides.  The executable accepts either a file path for local use or the Arena `$IN` path.
 
 Typed outcomes are part of the checker API.  Acceptance means the artifact replays in the local kernel.  Rejection means the artifact lies inside the specified fragment and violates a kernel rule.  Unsupported input means the artifact uses a Lean feature outside the specified fragment.  Internal failure means the checker failed to classify the input, and the executable behavior for that case must be documented separately from Arena's accepted, rejected, and declined outcomes.
 
@@ -263,7 +264,8 @@ Acceptance criteria:
 - The code has a typed result for accepted, rejected, unsupported, and internal-failure outcomes.
 - `leanlean-check-module` checks explicit root declarations from compiled Lean modules through `replayEnvironmentClosure`.
 - The specification states the accepted `lean4export` NDJSON fragment.
-- Export-checker tests generate accepted NDJSON artifacts from small Lean source files and run `leanlean-check-export` on those artifacts.
+- The repository has a first accepted NDJSON smoke test generated from `Faithfulness.ExportSmoke` by `lean4export` and checked by `leanlean-check-export`.
+- Export-checker tests grow from the first smoke case to cover several accepted NDJSON artifacts generated from small Lean source files.
 - Static export-checker tests cover supported-fragment rejection and unsupported input with readable source companions.
 - `leanlean-check-export` supports the Arena input convention, translates accepted export records into declaration replay scripts, and returns `0` for accepted inputs, `1` for supported-fragment rejections, and `2` for unsupported inputs.
 - Local smoke tests include an accepted exported artifact, a rejected supported-fragment artifact, and an unsupported artifact.
