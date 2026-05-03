@@ -85,6 +85,7 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] List the known Lean 4 divergence boundaries in the specification with reasons.
 - [x] Add broad differential replay over named finite Lean environment fragments.
 - [x] Add a traceability map from specification clauses to implementation functions and tests.
+- [x] Add a metatheoretic account and proof-obligation table.
 
 ## Current Decisions
 
