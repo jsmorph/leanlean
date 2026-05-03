@@ -478,6 +478,106 @@ def kernelInductiveDeclTests : Result Unit := do
     "kernel-style constructors must repeat the block parameters"
     (addDeclaration env (.kernelInductive badCtorDecl))
 
+def importBridgeTests : Result Unit := do
+  let importedPropName := Lean.Name.mkSimple "ImportedP"
+  let importedProofName := Lean.Name.mkSimple "importedProof"
+  let importedTheoremName := Lean.Name.mkSimple "importedTheorem"
+  let importedPropDecl : Lean.Declaration :=
+    .axiomDecl
+      {
+        name := importedPropName
+        levelParams := []
+        type := .sort .zero
+        isUnsafe := false
+      }
+  let importedProofDecl : Lean.Declaration :=
+    .axiomDecl
+      {
+        name := importedProofName
+        levelParams := []
+        type := .const importedPropName []
+        isUnsafe := false
+      }
+  let importedTheoremDecl : Lean.Declaration :=
+    .thmDecl
+      {
+        name := importedTheoremName
+        levelParams := []
+        type := .const importedPropName []
+        value := .const importedProofName []
+      }
+  let propDecl ← Import.translateDeclaration importedPropDecl
+  let proofDecl ← Import.translateDeclaration importedProofDecl
+  let theoremDecl ← Import.translateDeclaration importedTheoremDecl
+  let env ← replayDeclarations [] [theoremDecl, proofDecl, propDecl]
+  let theoremTy ← infer env [] (const0 "importedTheorem")
+  let _ ← checkDefEq env theoremTy (const0 "ImportedP")
+  let theoremNf ← normalize env (const0 "importedTheorem")
+  let _ ←
+    expectExprEq
+      "imported theorems remain opaque"
+      theoremNf
+      (const0 "importedTheorem")
+
+  let importedBoolName := Lean.Name.mkSimple "ImportedBool"
+  let importedFalseName := Lean.Name.mkStr importedBoolName "false"
+  let importedTrueName := Lean.Name.mkStr importedBoolName "true"
+  let importedBoolDecl : Lean.Declaration :=
+    .inductDecl
+      []
+      0
+      [
+        {
+          name := importedBoolName
+          type := .sort (.succ .zero)
+          ctors :=
+            [
+              { name := importedFalseName, type := .const importedBoolName [] },
+              { name := importedTrueName, type := .const importedBoolName [] }
+            ]
+        }
+      ]
+      false
+  let importedBoolEntry ← Import.translateDeclaration importedBoolDecl
+  let env ← addDeclaration [] importedBoolEntry
+  let falseTy ← infer env [] (const0 "ImportedBool.false")
+  let _ ← checkDefEq env falseTy (const0 "ImportedBool")
+  let leanFalseInfo : Lean.ConstantInfo :=
+    .ctorInfo
+      {
+        name := importedFalseName
+        levelParams := []
+        type := .const importedBoolName []
+        induct := importedBoolName
+        cidx := 0
+        numParams := 0
+        numFields := 0
+        isUnsafe := false
+      }
+  let falseReplay ← Import.translateGeneratedConstantInfo leanFalseInfo
+  let _ ← addDeclaration env falseReplay
+
+  let metadataExpr : Lean.Expr := .mdata Lean.MData.empty (.sort .zero)
+  let translatedMetadata ← Import.translateExpr metadataExpr
+  let _ ← expectExprEq "importer erases Lean expression metadata" translatedMetadata propSort
+  let _ ←
+    expectError
+      "importer rejects free variables"
+      (Import.translateExpr (.fvar { name := Lean.Name.mkSimple "x" }))
+  let unsafeDecl : Lean.Declaration :=
+    .defnDecl
+      {
+        name := Lean.Name.mkSimple "unsafeImported"
+        levelParams := []
+        type := .sort .zero
+        value := .sort .zero
+        hints := .regular 0
+        safety := .«unsafe»
+      }
+  expectError
+    "importer rejects unsafe definitions"
+    (Import.translateDeclaration unsafeDecl)
+
 def reducibilityHintTests : Result Unit := do
   let env ← addInductive [] boolSpec
   let env ← addAbbrev env "abbrevTrue" boolType boolTrue
@@ -845,6 +945,7 @@ def kernelRegressionTests : Result Unit := do
   let _ ← declarationScriptTests
   let _ ← declarationReplayTests
   let _ ← kernelInductiveDeclTests
+  let _ ← importBridgeTests
   let _ ← reducibilityHintTests
   let _ ← structureMetadataTests
   let _ ← environmentTests
@@ -862,6 +963,7 @@ def testReport : Result (List String) := do
   let _ ← declarationScriptTests
   let _ ← declarationReplayTests
   let _ ← kernelInductiveDeclTests
+  let _ ← importBridgeTests
   let _ ← reducibilityHintTests
   let _ ← structureMetadataTests
   let _ ← environmentTests
@@ -878,6 +980,7 @@ def testReport : Result (List String) := do
       "declaration scripts use the checked admission path",
       "dependency replay orders declaration scripts",
       "kernel-style inductive declarations and generated replay checks pass",
+      "Lean declaration importer feeds the checked replay path",
       "reducibility hints are recorded as definition metadata",
       "structure metadata records inherited fields",
       "environment declaration metadata checks",
