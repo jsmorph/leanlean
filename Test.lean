@@ -999,6 +999,19 @@ def importBridgeTests : Result Unit := do
   expectError
     "trusted importer rejects unsafe definitions"
     (Import.translateDeclaration unsafeDecl)
+  let partialDecl : Lean.Declaration :=
+    .defnDecl
+      {
+        name := Lean.Name.mkSimple "partialImported"
+        levelParams := []
+        type := .sort .zero
+        value := .sort .zero
+        hints := .regular 0
+        safety := .«partial»
+      }
+  expectError
+    "trusted importer rejects partial definitions"
+    (Import.translateDeclaration partialDecl)
 
 def reducibilityHintTests : Result Unit := do
   let env ← addInductive [] boolSpec

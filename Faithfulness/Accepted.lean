@@ -29,6 +29,33 @@ def two : LocalNat :=
 example :
     LocalNat.rec LocalNat.zero (fun _ ih => LocalNat.succ ih) two = two := rfl
 
+def natDouble : Nat → Nat
+  | 0 => 0
+  | n + 1 => Nat.succ (Nat.succ (natDouble n))
+
+example :
+    natDouble 2 = 4 := rfl
+
+def listLength : List Nat → Nat
+  | [] => 0
+  | _ :: xs => Nat.succ (listLength xs)
+
+example :
+    listLength [0, 1, 2] = 3 := rfl
+
+mutual
+  def evenFlag : Nat → Bool
+    | 0 => true
+    | n + 1 => oddFlag n
+
+  def oddFlag : Nat → Bool
+    | 0 => false
+    | n + 1 => evenFlag n
+end
+
+example :
+    evenFlag 2 = true := rfl
+
 inductive PolyBox (α : Sort u) : Type u
 | mk : α → PolyBox α
 

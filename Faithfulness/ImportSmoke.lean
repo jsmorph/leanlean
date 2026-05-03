@@ -60,6 +60,16 @@ run_cmd
   let sigmaValue := LeanLean.Import.translateName `LeanLeanFaithfulness.Accepted.SigmaBox.value
   unless localEnv.contains sigmaType && localEnv.contains sigmaValue do
     Lean.throwError "structure metadata import did not collect SigmaBox projection declarations"
+  for recursiveRoot in
+      #[
+        `LeanLeanFaithfulness.Accepted.natDouble,
+        `LeanLeanFaithfulness.Accepted.listLength,
+        `LeanLeanFaithfulness.Accepted.evenFlag,
+        `LeanLeanFaithfulness.Accepted.oddFlag
+      ] do
+    match LeanLean.Import.replayEnvironmentClosure [] env [recursiveRoot] with
+    | .ok _ => Lean.throwError m!"recursive definition import unexpectedly succeeded: {recursiveRoot}"
+    | .error _ => pure ()
 
 end LeanLeanFaithfulness.ImportSmoke
 
