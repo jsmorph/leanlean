@@ -1252,12 +1252,12 @@ def mutNestARecOnOne : Expr :=
     (recConst "MutNestA.rec")
     [
       mutNestAMotive,
-      mutNestListMotive,
       mutNestBMotive,
+      mutNestListMotive,
       mutNestACase,
+      mutNestBCase,
       mutNestNilCase,
       mutNestConsCase,
-      mutNestBCase,
       mutNestAOne
     ]
 
@@ -1287,7 +1287,7 @@ def polyBoxBoolCase : Expr :=
 
 def polyBoxRecOnTrue : Expr :=
   Expr.mkApps
-    (.const "PolyBox.rec" [type0Param, type0Level])
+    (.const "PolyBox.rec" [type0Level, type0Param])
     [
       boolType,
       polyBoxBoolMotive,
@@ -1306,7 +1306,7 @@ def polyBoxTypeCase : Expr :=
 
 def polyBoxRecOnBoolType : Expr :=
   Expr.mkApps
-    (.const "PolyBox.rec" [type1Param, type1Level])
+    (.const "PolyBox.rec" [type1Level, type1Param])
     [
       type0Sort,
       polyBoxTypeMotive,
@@ -1316,7 +1316,7 @@ def polyBoxRecOnBoolType : Expr :=
 
 def polyBoxRecCtorLevelMismatch : Expr :=
   Expr.mkApps
-    (.const "PolyBox.rec" [type0Param, type0Level])
+    (.const "PolyBox.rec" [type0Level, type0Param])
     [
       boolType,
       polyBoxBoolMotive,

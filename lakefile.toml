@@ -5,6 +5,9 @@ defaultTargets = ["leanlean"]
 [[lean_lib]]
 name = "LeanLean"
 
+[[lean_lib]]
+name = "Faithfulness.Accepted"
+
 [[lean_exe]]
 name = "leanlean"
 root = "Main"
@@ -16,3 +19,7 @@ root = "Test"
 [[lean_exe]]
 name = "leanleanfaith"
 root = "Faithfulness.Runner"
+
+[[lean_exe]]
+name = "leanleanimport"
+root = "Faithfulness.ImportSmoke"

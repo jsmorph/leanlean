@@ -238,8 +238,8 @@ def universeTests : Result Unit := do
   | some info =>
       let _ ←
         expect
-          "polymorphic recursor keeps inductive levels before the motive level"
-          (info.levelParams = ["u", "u'"])
+          "polymorphic recursor keeps the motive level before inductive levels"
+          (info.levelParams = ["u'", "u"])
       pure ()
   | none => .error "PolyBox.rec should be present in the environment"
   let badOpenInductive : InductiveSpec :=
@@ -443,6 +443,14 @@ def kernelInductiveDeclTests : Result Unit := do
   let kernelBoxTrue := Expr.mkApps (.const "KernelBox.mk" [type0Level]) [const0 "KernelBool", const0 "KernelBool.true"]
   let kernelBoxTrueTy ← infer env [] kernelBoxTrue
   let _ ← checkDefEq env kernelBoxTrueTy (Expr.mkApps (.const "KernelBox" [type0Level]) [const0 "KernelBool"])
+  let _ ←
+    match env.find? "KernelBox.rec" with
+    | some info =>
+        let exportedParams := ["v", "u"]
+        let exportedType :=
+          Expr.instantiateLevels info.levelParams (exportedParams.map Level.param) info.typeExpr
+        addDeclaration env (.generatedRecursor "KernelBox.rec" exportedParams exportedType)
+    | none => .error "KernelBox.rec should be present in the environment"
   let badTypeDecl : KernelInductiveDecl :=
     {
       numParams := 0

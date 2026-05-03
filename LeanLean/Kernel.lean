@@ -443,7 +443,7 @@ def recursorMotiveLevelParam (spec : InductiveSpec) : Name :=
 
 def recursorLevelParamsForFamily (family : RecursorFamily) : List Name :=
   match family.motiveLevelParam? with
-  | some motiveLevelParam => family.levelParams ++ [motiveLevelParam]
+  | some motiveLevelParam => motiveLevelParam :: family.levelParams
   | none => family.levelParams
 
 def inductiveIsProp (spec : InductiveSpec) : Bool :=
@@ -791,6 +791,29 @@ def familyRecName (rootName : Name) (index : Nat) : Name :=
   else
     helperRecursorName rootName index
 
+def familyTargetName (rootName : Name) (schemas : List TargetSchema) (index : Nat) : Name :=
+  match listGet? schemas index with
+  | none => recursorName rootName
+  | some schema =>
+      if schema.headName = rootName then
+        recursorName rootName
+      else
+        let helperIndex :=
+          (schemas.take (index + 1)).foldl
+            (fun count schema => if schema.headName = rootName then count else count + 1)
+            0
+        helperRecursorName rootName helperIndex
+
+def familyRootTargetIndex? (family : RecursorFamily) : Option Nat :=
+  let rec loop : Nat → List FamilyTarget → Option Nat
+    | _, [] => none
+    | index, target :: rest =>
+        if target.schema.headName = family.rootName then
+          some index
+        else
+          loop (index + 1) rest
+  loop 0 family.targets
+
 def instantiateTargetSchema
     (params : List Expr)
     (locals : List Expr)
@@ -861,8 +884,10 @@ partial def ihTypeExpr
   match shape with
   | .none => .error "internal error: missing induction hypothesis"
   | .direct =>
-      let some motive := listGet? motives 0
-        | .error "internal error: missing root motive"
+      let some targetIndex := familyRootTargetIndex? family
+        | .error "internal error: missing root target"
+      let some motive := listGet? motives targetIndex
+        | .error s!"internal error: missing root motive #{targetIndex}"
       pure (.app motive fieldExpr)
   | .nested targetIndex =>
       let some target := listGet? family.targets targetIndex
@@ -897,7 +922,9 @@ partial def ihTerm
   match shape with
   | .none => .error "internal error: missing induction hypothesis term"
   | .direct =>
-      let some firstTarget := listGet? family.targets 0
+      let some targetIndex := familyRootTargetIndex? family
+        | .error "internal error: missing root target"
+      let some firstTarget := listGet? family.targets targetIndex
         | .error "internal error: missing root target"
       pure (Expr.mkApps (.const firstTarget.recName levels) (prefixArgs ++ [fieldExpr]))
   | .nested targetIndex =>
@@ -1822,12 +1849,14 @@ partial def buildRecursorFamily
     (root : InductiveInfo)
     (recursiveInfos : List InductiveInfo) : Result RecursorFamily := do
   let rootLevelParams := root.spec.levelParams
-  let rootTarget ←
-    normalizeForInductiveAnalysis
-      env
-      (recursiveTargetExpr root.spec)
-      (levelParams := rootLevelParams)
-  let rootSchema : TargetSchema := { locals := root.spec.indices, target := rootTarget, headName := root.spec.name }
+  let initialSchemas ←
+    recursiveInfos.mapM fun info => do
+      let target ←
+        normalizeForInductiveAnalysis
+          env
+          (recursiveTargetExpr info.spec)
+          (levelParams := rootLevelParams)
+      pure { locals := info.spec.indices, target, headName := info.spec.name }
   let rec loop
       (schemas : List TargetSchema)
       (built : List FamilyTarget) : Result (List FamilyTarget) := do
@@ -1842,9 +1871,9 @@ partial def buildRecursorFamily
         .error s!"internal error: family target head mismatch for {repr schema.target}"
       else
         let index := built.length
-        let targetName := familyRecName root.spec.name index
+        let targetName := familyTargetName root.spec.name schemas index
         let targetParamCount := info.spec.params.length
-        let bindLocalsInMinors := index != 0
+        let bindLocalsInMinors := schema.headName != root.spec.name
         let targetParamArgs :=
           if bindLocalsInMinors then
             args.take targetParamCount
@@ -1911,7 +1940,7 @@ partial def buildRecursorFamily
             ctors
           }
         loop currentSchemas (built ++ [target])
-  let targets ← loop [rootSchema] []
+  let targets ← loop initialSchemas []
   pure
     {
       rootName := root.spec.name
@@ -2439,11 +2468,12 @@ def addInductiveBlock (env : Env) (block : InductiveBlockSpec) : Result Env := d
       (fun pair => ConstantInfo.mkInductive pair.1.name block.levelParams pair.2) ++ env
   let families ← finalInfos.mapM fun info => buildRecursorFamily infoEnv info finalInfos
   for family in families do
-    for target in family.targets.drop 1 do
-      if seenNames.contains target.recName then
-        .error s!"duplicate name in inductive block: {target.recName}"
-      let _ ← checkFreshName env target.recName
-      seenNames := target.recName :: seenNames
+    for target in family.targets do
+      if target.recName != recursorName family.rootName then
+        if seenNames.contains target.recName then
+          .error s!"duplicate name in inductive block: {target.recName}"
+        let _ ← checkFreshName env target.recName
+        seenNames := target.recName :: seenNames
   let mut ctorInfos : List ConstantInfo := []
   for spec in block.specs do
     for ctor in spec.ctors do
@@ -2539,6 +2569,16 @@ def addKernelInductive (env : Env) (decl : KernelInductiveDecl) : Result Env := 
   let block ← kernelInductiveDeclToBlock decl
   addInductiveBlock env block
 
+def exportedGeneratedTypeMatches
+    (actualParams exportedParams : LevelContext)
+    (actualType exportedType : Expr) : Result Bool := do
+  if actualParams.length != exportedParams.length then
+    pure false
+  else
+    let renamedExportedType :=
+      Expr.instantiateLevels exportedParams (actualParams.map Level.param) exportedType
+    pure (actualType.alphaEq renamedExportedType)
+
 def checkGeneratedConstructor
     (env : Env)
     (name : Name)
@@ -2551,9 +2591,7 @@ def checkGeneratedConstructor
   | .ctor actualIndName =>
       if actualIndName != indName then
         .error s!"generated constructor {name} belongs to {actualIndName}, not {indName}"
-      if info.levelParams != levelParams then
-        .error s!"generated constructor {name} has unexpected universe parameters"
-      if !info.typeExpr.alphaEq type then
+      if !(← exportedGeneratedTypeMatches info.levelParams levelParams info.typeExpr type) then
         .error s!"generated constructor {name} type does not match"
       pure env
   | _ => .error s!"constant is not a generated constructor: {name}"
@@ -2567,9 +2605,7 @@ def checkGeneratedRecursor
     | .error s!"generated recursor is missing: {name}"
   match info.kind with
   | .primitive (.recursor _ _) =>
-      if info.levelParams != levelParams then
-        .error s!"generated recursor {name} has unexpected universe parameters"
-      if !info.typeExpr.alphaEq type then
+      if !(← exportedGeneratedTypeMatches info.levelParams levelParams info.typeExpr type) then
         .error s!"generated recursor {name} type does not match"
       pure env
   | _ => .error s!"constant is not a generated recursor: {name}"
