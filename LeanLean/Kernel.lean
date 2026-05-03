@@ -35,6 +35,13 @@ def bindIndependentForall (tele : Telescope) (body : Expr) : Expr :=
         .forallE binder.name (Expr.lift shift binder.type) (loop (shift + 1) rest)
   loop 0 tele
 
+def bindLambda (tele : Telescope) (body : Expr) : Expr :=
+  let rec loop : Telescope → Expr
+    | [] => body
+    | binder :: rest =>
+        .lam binder.name binder.type (loop rest)
+  loop tele
+
 def instantiateTypes (values : List Expr) (tele : Telescope) : Telescope :=
   let rec loop (cutoff : Nat) : Telescope → Telescope
     | [] => []
@@ -138,6 +145,13 @@ structure InductiveInfo where
   allowsLargeElim : Bool := true
   deriving DecidableEq, Repr, Inhabited
 
+structure ProjectionInfo where
+  structName : Name
+  ctorName : Name
+  numParams : Nat
+  index : Nat
+  deriving DecidableEq, Repr, Inhabited
+
 inductive PrimitiveInfo where
   | recursor : Nat → RecursorFamily → PrimitiveInfo
   | quotType : PrimitiveInfo
@@ -157,6 +171,7 @@ inductive ConstantKind where
   | defn : DefinitionTransparency → ConstantKind
   | inductive : InductiveInfo → ConstantKind
   | ctor : Name → ConstantKind
+  | projection : ProjectionInfo → ConstantKind
   | primitive : PrimitiveInfo → ConstantKind
   deriving DecidableEq, Repr, Inhabited
 
@@ -187,6 +202,13 @@ def mkInductive (name : Name) (levelParams : List Name) (info : InductiveInfo) :
 def mkCtor (name : Name) (levelParams : List Name) (type : Expr) (indName : Name) :
     ConstantInfo :=
   { name, levelParams, typeExpr := type, kind := .ctor indName }
+
+def mkProjection
+    (name : Name)
+    (levelParams : List Name)
+    (type value : Expr)
+    (projection : ProjectionInfo) : ConstantInfo :=
+  { name, levelParams, typeExpr := type, valueExpr? := some value, kind := .projection projection }
 
 def mkRecursor
     (name : Name)
@@ -241,6 +263,8 @@ def value? (info : ConstantInfo) (levels : List Level) (levelParams : LevelConte
   match info.kind, info.valueExpr? with
   | .defn .transparent, some value =>
       some <$> instantiateExpr info.name "value" info.levelParams levelParams levels value
+  | .projection _, some value =>
+      some <$> instantiateExpr info.name "value" info.levelParams levelParams levels value
   | _, _ => pure none
 
 end ConstantInfo
@@ -271,6 +295,11 @@ def findCtor? (env : Env) (target : Name) : Option Name :=
 def findRecursor? (env : Env) (target : Name) : Option (Nat × RecursorFamily) :=
   match find? env target with
   | some { kind := .primitive (.recursor index family), .. } => some (index, family)
+  | _ => none
+
+def findProjection? (env : Env) (target : Name) : Option ProjectionInfo :=
+  match find? env target with
+  | some { kind := .projection info, .. } => some info
   | _ => none
 
 end Env
@@ -418,6 +447,7 @@ def containsExprAt (target : Expr) (depth : Nat) (expr : Expr) : Bool :=
         containsExprAt target depth ty || containsExprAt target (depth + 1) body
     | .forallE _ ty body =>
         containsExprAt target depth ty || containsExprAt target (depth + 1) body
+    | .proj _ _ struct => containsExprAt target depth struct
     | .letE _ ty val body =>
         containsExprAt target depth ty ||
         containsExprAt target depth val ||
@@ -437,6 +467,7 @@ def containsBVarAt (targetIndex depth : Nat) (expr : Expr) : Bool :=
       containsBVarAt targetIndex depth ty || containsBVarAt targetIndex (depth + 1) body
   | .forallE _ ty body =>
       containsBVarAt targetIndex depth ty || containsBVarAt targetIndex (depth + 1) body
+  | .proj _ _ struct => containsBVarAt targetIndex depth struct
   | .letE _ ty val body =>
       containsBVarAt targetIndex depth ty ||
       containsBVarAt targetIndex depth val ||
@@ -490,6 +521,74 @@ def listGet? : List α → Nat → Option α
   | [], _ => none
   | value :: _, 0 => some value
   | _ :: rest, index + 1 => listGet? rest index
+
+structure ProjectionTarget where
+  ctor : ConstructorSpec
+  field : Binder
+  deriving DecidableEq, Repr, Inhabited
+
+def projectionTarget (info : InductiveInfo) (index : Nat) : Result ProjectionTarget := do
+  if !info.spec.indices.isEmpty then
+    .error s!"projection on indexed inductive {info.spec.name} is not in the current subset"
+  else
+    match info.spec.ctors with
+    | [ctor] =>
+        match listGet? ctor.fields index with
+        | some field => pure { ctor, field }
+        | none => .error s!"projection index {index} is out of bounds for {info.spec.name}"
+    | _ => .error s!"projection target {info.spec.name} must have exactly one constructor"
+
+def projectionInfo (info : InductiveInfo) (index : Nat) : Result ProjectionInfo := do
+  let target ← projectionTarget info index
+  pure
+    {
+      structName := info.spec.name
+      ctorName := target.ctor.name
+      numParams := info.spec.params.length
+      index
+    }
+
+def projectionFieldTypeExpr
+    (spec : InductiveSpec)
+    (ctor : ConstructorSpec)
+    (index : Nat)
+    (levels : List Level)
+    (params : List Expr)
+    (struct : Expr) : Result Expr := do
+  let some field := listGet? ctor.fields index
+    | .error s!"projection index {index} is out of bounds for {spec.name}"
+  let fieldType := Expr.instantiateLevels spec.levelParams levels field.type
+  let previousFields := (List.range index).map fun idx => Expr.proj spec.name idx struct
+  pure (Expr.instantiateMany (params ++ previousFields) fieldType)
+
+def projectionFunctionType (info : InductiveInfo) (index : Nat) : Result Expr := do
+  let target ← projectionTarget info index
+  let spec := info.spec
+  let params := Expr.bvarArgs spec.params.length 0
+  let selfType := inductiveSelfTarget spec params
+  let resultType ←
+    projectionFieldTypeExpr
+      spec
+      target.ctor
+      index
+      (inductiveLevelArgs spec)
+      (params.map (Expr.lift 1))
+      (.bvar 0)
+  pure (Telescope.bindForall spec.params (.forallE "self" selfType resultType))
+
+def projectionFunctionValue (info : InductiveInfo) (index : Nat) : Result Expr := do
+  let _ ← projectionTarget info index
+  let spec := info.spec
+  let params := Expr.bvarArgs spec.params.length 0
+  let selfType := inductiveSelfTarget spec params
+  pure (Telescope.bindLambda spec.params (.lam "self" selfType (.proj spec.name index (.bvar 0))))
+
+def structureSupportsEta (info : InductiveInfo) : Bool :=
+  !inductiveIsProp info.spec &&
+    info.spec.indices.isEmpty &&
+    match info.spec.ctors with
+    | [ctor] => !ctor.fields.any fun field => field.type.occursConst info.spec.name
+    | _ => false
 
 def findSchemaIndex? (schemas : List TargetSchema) (target : TargetSchema) : Option Nat :=
   let rec loop (index : Nat) : List TargetSchema → Option Nat
@@ -802,6 +901,115 @@ partial def inferSort
   | .sort level => pure level
   | _ => .error s!"expected a type, got {repr reduced}"
 
+partial def inferProjection
+    (env : Env)
+    (ctx : Context)
+    (typeName : Name)
+    (index : Nat)
+    (struct : Expr)
+    (levelParams : LevelContext := []) : Result Expr := do
+  let structTy ← infer env ctx struct (levelParams := levelParams)
+  let structTyWhnf ← whnf env structTy (levelParams := levelParams)
+  let some (headName, info, levels, args) := decomposeInductiveApp env structTyWhnf
+    | .error s!"projection target must have an inductive type, got {repr structTyWhnf}"
+  if headName != typeName then
+    .error s!"projection expected {typeName}, got {headName}"
+  else
+    let target ← projectionTarget info index
+    let resultType ← projectionFieldTypeExpr info.spec target.ctor index levels args struct
+    if inductiveIsProp info.spec then
+      let resultLevel ← inferSort env ctx resultType (levelParams := levelParams)
+      if Level.defEq resultLevel .zero then
+        pure resultType
+      else
+        .error s!"projection cannot extract non-propositional field {index} from {typeName}"
+    else
+      pure resultType
+
+partial def reduceProjection
+    (env : Env)
+    (typeName : Name)
+    (index : Nat)
+    (struct : Expr)
+    (levelParams : LevelContext := []) : Result (Option Expr) := do
+  let some info := env.findInductive? typeName
+    | .error s!"unknown projection type: {typeName}"
+  let target ← projectionTarget info index
+  let structWhnf ← whnf env struct (levelParams := levelParams)
+  let .const ctorName _ := structWhnf.getAppFn
+    | pure none
+  if ctorName != target.ctor.name then
+    match env.findCtor? ctorName with
+    | some _ => .error s!"projection target constructor does not match {typeName}"
+    | none => pure none
+  else
+    let args := structWhnf.getAppArgs
+    let expectedArity := info.spec.params.length + target.ctor.fields.length
+    if args.length != expectedArity then
+      .error s!"projection target constructor has wrong arity for {typeName}"
+    else
+      match listGet? (args.drop info.spec.params.length) index with
+      | some value => pure (some value)
+      | none => .error s!"projection index {index} is out of bounds for {typeName}"
+
+partial def isStructureEtaExpansion
+    (env : Env)
+    (ctx : Context)
+    (expanded other : Expr)
+    (levelParams : LevelContext := []) : Result Bool := do
+  let head := expanded.getAppFn
+  let .const ctorName ctorLevels := head
+    | pure false
+  let some indName := env.findCtor? ctorName
+    | pure false
+  let some info := env.findInductive? indName
+    | pure false
+  if !structureSupportsEta info then
+    pure false
+  else
+    match info.spec.ctors with
+    | [ctor] =>
+      if ctor.name != ctorName then
+        pure false
+      else
+      let args := expanded.getAppArgs
+      let paramCount := info.spec.params.length
+      let fieldCount := ctor.fields.length
+      if args.length != paramCount + fieldCount then
+        pure false
+      else
+        let otherTy ← infer env ctx other (levelParams := levelParams)
+        let otherTyWhnf ← whnf env otherTy (levelParams := levelParams)
+        match decomposeInductiveApp env otherTyWhnf with
+        | some (otherIndName, _, otherLevels, otherArgs) =>
+            if otherIndName != indName || !levelsDefEq ctorLevels otherLevels then
+              pure false
+            else
+              let ctorParams := args.take paramCount
+              let fields := args.drop paramCount
+              let mut ok := true
+              for pair in List.zip ctorParams otherArgs do
+                try
+                  let _ ← checkDefEqIn env ctx pair.1 pair.2 (levelParams := levelParams)
+                  pure ()
+                catch _ =>
+                  ok := false
+              for pair in List.zip (List.range fieldCount) fields do
+                try
+                  let _ ←
+                    checkDefEqIn
+                      env
+                      ctx
+                      pair.2
+                      (.proj indName pair.1 other)
+                      (levelParams := levelParams)
+                  pure ()
+                catch _ =>
+                  ok := false
+              pure ok
+        | none => pure false
+    | _ => pure false
+
 partial def checkDefEqIn
     (env : Env)
     (ctx : Context)
@@ -813,21 +1021,29 @@ partial def checkDefEqIn
     pure ()
   else
     let originalError := s!"definitional equality failed: {repr leftNf} vs {repr rightNf}"
-    try
-      let leftTy ← infer env ctx left (levelParams := levelParams)
-      let rightTy ← infer env ctx right (levelParams := levelParams)
-      let leftTyNf ← normalize env leftTy (levelParams := levelParams)
-      let rightTyNf ← normalize env rightTy (levelParams := levelParams)
-      if !leftTyNf.alphaEq rightTyNf then
-        .error originalError
+    let leftEta ← isStructureEtaExpansion env ctx leftNf rightNf (levelParams := levelParams)
+    if leftEta then
+      pure ()
+    else
+      let rightEta ← isStructureEtaExpansion env ctx rightNf leftNf (levelParams := levelParams)
+      if rightEta then
+        pure ()
       else
-        let typeLevel ← inferSort env ctx leftTy (levelParams := levelParams)
-        if Level.defEq typeLevel .zero then
-          pure ()
-        else
+        try
+          let leftTy ← infer env ctx left (levelParams := levelParams)
+          let rightTy ← infer env ctx right (levelParams := levelParams)
+          let leftTyNf ← normalize env leftTy (levelParams := levelParams)
+          let rightTyNf ← normalize env rightTy (levelParams := levelParams)
+          if !leftTyNf.alphaEq rightTyNf then
+            .error originalError
+          else
+            let typeLevel ← inferSort env ctx leftTy (levelParams := levelParams)
+            if Level.defEq typeLevel .zero then
+              pure ()
+            else
+              .error originalError
+        catch _ =>
           .error originalError
-    catch _ =>
-      .error originalError
 
 partial def checkDefEq
     (env : Env)
@@ -965,6 +1181,12 @@ partial def reducePrimitiveApp
 
 partial def whnf (env : Env) (expr : Expr) (levelParams : LevelContext := []) : Result Expr := do
   match expr with
+  | .proj typeName index struct => do
+      match ← reduceProjection env typeName index struct (levelParams := levelParams) with
+      | some reduced => whnf env reduced (levelParams := levelParams)
+      | none =>
+          let structWhnf ← whnf env struct (levelParams := levelParams)
+          pure (.proj typeName index structWhnf)
   | .app _ _ =>
       let head := expr.getAppFn
       let args := expr.getAppArgs
@@ -1021,6 +1243,14 @@ partial def normalize (env : Env) (expr : Expr) (levelParams : LevelContext := [
       let ty' ← normalize env ty (levelParams := levelParams)
       let body' ← normalize env body (levelParams := levelParams)
       pure (.forallE name ty' body')
+  | .proj typeName index struct => do
+      let struct' ← normalize env struct (levelParams := levelParams)
+      let rebuilt := .proj typeName index struct'
+      let whnfRebuilt ← whnf env rebuilt (levelParams := levelParams)
+      if whnfRebuilt = rebuilt then
+        pure rebuilt
+      else
+        normalize env whnfRebuilt (levelParams := levelParams)
   | .letE name ty value body => do
       let ty' ← normalize env ty (levelParams := levelParams)
       let value' ← normalize env value (levelParams := levelParams)
@@ -1102,6 +1332,8 @@ partial def infer
       let domainLevel ← inferSort env ctx domain (levelParams := levelParams)
       let bodyLevel ← inferSort env ({ name, type := domain } :: ctx) body (levelParams := levelParams)
       pure (.sort (inferSortOfPi domainLevel bodyLevel))
+  | .proj typeName index struct =>
+      inferProjection env ctx typeName index struct (levelParams := levelParams)
   | .letE name type value body => do
       let _ ← inferSort env ctx type (levelParams := levelParams)
       let valueTy ← infer env ctx value (levelParams := levelParams)
@@ -1137,6 +1369,16 @@ partial def positiveParamOccurrence
         .error s!"unexpected let-expression in positivity check: {repr expr}"
     | .lam _ _ _ =>
         .error s!"unexpected lambda in positivity check: {repr expr}"
+    | .proj _ _ struct =>
+        positiveParamOccurrence
+          env
+          self
+          selfPositive
+          (openPositive := openPositive)
+          targetIndex
+          depth
+          struct
+          (levelParams := levelParams)
     | .forallE _ dom body =>
         if containsBVarAt targetIndex depth dom then
           .error s!"non-positive parameter occurrence in {repr expr}"
@@ -1314,6 +1556,14 @@ partial def analyzeRecursiveShape
       .error s!"unexpected let-expression in positivity check: {repr expr}"
   | .lam _ _ _ =>
       .error s!"unexpected lambda in positivity check: {repr expr}"
+  | .proj _ _ struct =>
+      analyzeRecursiveShape
+        env
+        root
+        (recursiveInfos := recursiveInfos)
+        locals
+        struct
+        (levelParams := levelParams)
   | .forallE name dom body =>
       let dom ← normalizeForInductiveAnalysis env dom (levelParams := levelParams)
       if containsAnyExprAt recursiveTargets locals.length dom then
@@ -1608,6 +1858,21 @@ def addOpaqueDefinitionWithLevels
 
 def addOpaqueDefinition (env : Env) (name : Name) (type value : Expr) : Result Env :=
   addOpaqueDefinitionWithLevels env name [] type value
+
+def addProjection (env : Env) (name structName : Name) (index : Nat) : Result Env := do
+  let _ ← checkFreshName env name
+  let some info := env.findInductive? structName
+    | .error s!"unknown projection structure: {structName}"
+  let projection ← projectionInfo info index
+  let type ← projectionFunctionType info index
+  let value ← projectionFunctionValue info index
+  let levelParams := info.spec.levelParams
+  let _ ← checkClosedIn levelParams s!"projection {name} type" type
+  let _ ← checkClosedIn levelParams s!"projection {name} value" value
+  let _ ← inferSort env [] type (levelParams := levelParams)
+  let valueTy ← infer env [] value (levelParams := levelParams)
+  let _ ← checkDefEq env valueTy type (levelParams := levelParams)
+  pure (ConstantInfo.mkProjection name levelParams type value projection :: env)
 
 def quotientRelationType : Expr :=
   .forallE "a" (.bvar 0) (.forallE "b" (.bvar 1) (.sort .zero))

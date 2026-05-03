@@ -93,6 +93,42 @@ def listSpec : InductiveSpec :=
       ]
   }
 
+def pairSpec : InductiveSpec :=
+  {
+    name := "Pair"
+    params := []
+    level := type0Level
+    ctors :=
+      [
+        {
+          name := "Pair.mk"
+          fields :=
+            [
+              { name := "fst", type := natType },
+              { name := "snd", type := boolType }
+            ]
+        }
+      ]
+  }
+
+def sigmaBoxSpec : InductiveSpec :=
+  {
+    name := "SigmaBox"
+    params := []
+    level := type1Level
+    ctors :=
+      [
+        {
+          name := "SigmaBox.mk"
+          fields :=
+            [
+              { name := "α", type := type0Sort },
+              { name := "value", type := .bvar 0 }
+            ]
+        }
+      ]
+  }
+
 def eqSpec : InductiveSpec :=
   {
     name := "Eq"
@@ -594,6 +630,17 @@ def dataWitnessPropSpec : InductiveSpec :=
       ]
   }
 
+def proofBoxSpec : InductiveSpec :=
+  {
+    name := "ProofBox"
+    params := [{ name := "p", type := propSort }]
+    level := propLevel
+    ctors :=
+      [
+        { name := "ProofBox.mk", fields := [{ name := "h", type := .bvar 0 }] }
+      ]
+  }
+
 def mutEvenSpec : InductiveSpec :=
   {
     name := "MutEven"
@@ -803,6 +850,21 @@ def dataWitnessPropRecToBool : Expr :=
       dataWitnessPropMk boolType (const0 "Bool.false")
     ]
 
+def dataWitnessPropProjection : Expr :=
+  .proj "DataWitnessProp" 0 (dataWitnessPropMk boolType (const0 "Bool.false"))
+
+def proofBoxType (prop : Expr) : Expr :=
+  Expr.mkApps (const0 "ProofBox") [prop]
+
+def proofBoxMk (prop proof : Expr) : Expr :=
+  Expr.mkApps (const0 "ProofBox.mk") [prop, proof]
+
+def proofBoxProjection : Expr :=
+  .proj "ProofBox" 0 (proofBoxMk pProp pProof)
+
+def proofBoxProjectionFn : Expr :=
+  Expr.mkApps (const0 "ProofBox.proof") [pProp, proofBoxMk pProp pProof]
+
 def propDemoChecks (env : Env) : Result Unit := do
   let pTy ← infer env [] pProp
   let _ ← checkDefEq env pTy propSort
@@ -842,6 +904,12 @@ def sampleEnv : Result Env := do
   let env ← addInductive [] boolSpec
   let env ← addInductive env natSpec
   let env ← addInductive env listSpec
+  let env ← addInductive env pairSpec
+  let env ← addProjection env "Pair.fst" "Pair" 0
+  let env ← addProjection env "Pair.snd" "Pair" 1
+  let env ← addInductive env sigmaBoxSpec
+  let env ← addProjection env "SigmaBox.type" "SigmaBox" 0
+  let env ← addProjection env "SigmaBox.value" "SigmaBox" 1
   let env ← addInductive env eqSpec
   let env ← addQuotPrimitives env
   let env ← addInductive env vecSpec
@@ -858,12 +926,16 @@ def sampleEnv : Result Env := do
   let env ← addInductive env indexSingletonSpec
   let env ← addInductive env shiftedIndexPropSpec
   let env ← addInductive env dataWitnessPropSpec
+  let env ← addInductive env proofBoxSpec
+  let env ← addProjection env "ProofBox.proof" "ProofBox" 0
   let env ← addInductiveBlock env mutEvenOddBlock
   let env ← addInductiveBlock env mutNestBlock
   let one := Expr.mkApps (const0 "Nat.succ") [const0 "Nat.zero"]
   let env ← addDefinition env "one" natType one
   let env ← addOpaqueDefinition env "opaqueTrue" boolType (const0 "Bool.true")
   let env ← addDefinitionWithLevels env "polyId" ["u"] polyIdType polyIdValue
+  let env ← addAxiom env "pairSeed" (const0 "Pair")
+  let env ← addAxiom env "sigmaSeed" (const0 "SigmaBox")
   let env ← addAxiom env "P" propSort
   let env ← addAxiom env "pProof" pProp
   addAxiom env "qProof" pProp
@@ -882,6 +954,60 @@ def opaqueTrue : Expr :=
 
 def natZero : Expr :=
   const0 "Nat.zero"
+
+def pairType : Expr :=
+  const0 "Pair"
+
+def pairMk (fst snd : Expr) : Expr :=
+  Expr.mkApps (const0 "Pair.mk") [fst, snd]
+
+def pairSeedName : Name :=
+  "pairSeed"
+
+def pairSeed : Expr :=
+  const0 pairSeedName
+
+def pairZeroTrue : Expr :=
+  pairMk natZero boolTrue
+
+def pairFst (pair : Expr) : Expr :=
+  .proj "Pair" 0 pair
+
+def pairSnd (pair : Expr) : Expr :=
+  .proj "Pair" 1 pair
+
+def pairFstFn (pair : Expr) : Expr :=
+  Expr.mkApps (const0 "Pair.fst") [pair]
+
+def pairEtaExpansion : Expr :=
+  pairMk (pairFst pairSeed) (pairSnd pairSeed)
+
+def sigmaBoxType : Expr :=
+  const0 "SigmaBox"
+
+def sigmaBoxMk (elem value : Expr) : Expr :=
+  Expr.mkApps (const0 "SigmaBox.mk") [elem, value]
+
+def sigmaSeedName : Name :=
+  "sigmaSeed"
+
+def sigmaSeed : Expr :=
+  const0 sigmaSeedName
+
+def sigmaBoolTrue : Expr :=
+  sigmaBoxMk boolType boolTrue
+
+def sigmaTypeProj (box : Expr) : Expr :=
+  .proj "SigmaBox" 0 box
+
+def sigmaValueProj (box : Expr) : Expr :=
+  .proj "SigmaBox" 1 box
+
+def sigmaValueFn (box : Expr) : Expr :=
+  Expr.mkApps (const0 "SigmaBox.value") [box]
+
+def sigmaEtaExpansion : Expr :=
+  sigmaBoxMk (sigmaTypeProj sigmaSeed) (sigmaValueProj sigmaSeed)
 
 def mutEvenType : Expr :=
   const0 "MutEven"
@@ -1584,6 +1710,7 @@ def demoReportLines : List String :=
     "Eq.refl checks as an indexed constructor",
     "Eq.rec eliminates into data and reduces on refl",
     "Quot.lift computes on Quot.mk and Quot.sound checks",
+    "core projections type-check, reduce, and support structure eta",
     "mutual inductive recursors compute across block members",
     "nested mutual recursors compute through positive containers",
     "Vec.rec computes through indexed constructor targets",
@@ -1606,6 +1733,37 @@ def demoReportLines : List String :=
     "non-positive nested uses of inductive parameters are rejected"
   ]
 
+def projectionDemoChecks (env : Env) : Result Unit := do
+  let pairTy ← infer env [] pairZeroTrue
+  let _ ← checkDefEq env pairTy pairType
+  let pairFstTy ← infer env [] (pairFst pairZeroTrue)
+  let _ ← checkDefEq env pairFstTy natType
+  let pairFstNf ← normalize env (pairFst pairZeroTrue)
+  let _ ← checkDefEq env pairFstNf natZero
+  let pairSndTy ← infer env [] (pairSnd pairZeroTrue)
+  let _ ← checkDefEq env pairSndTy boolType
+  let pairFstFnNf ← normalize env (pairFstFn pairZeroTrue)
+  let _ ← checkDefEq env pairFstFnNf natZero
+  let _ ← checkDefEq env pairEtaExpansion pairSeed
+  let sigmaTypeNf ← normalize env (sigmaTypeProj sigmaBoolTrue)
+  let _ ← checkDefEq env sigmaTypeNf boolType
+  let sigmaValueTy ← infer env [] (sigmaValueProj sigmaBoolTrue)
+  let _ ← checkDefEq env sigmaValueTy boolType
+  let sigmaValueNf ← normalize env (sigmaValueProj sigmaBoolTrue)
+  let _ ← checkDefEq env sigmaValueNf boolTrue
+  let sigmaValueFnNf ← normalize env (sigmaValueFn sigmaBoolTrue)
+  let _ ← checkDefEq env sigmaValueFnNf boolTrue
+  let _ ← checkDefEq env sigmaEtaExpansion sigmaSeed
+  let proofBoxProjectionTy ← infer env [] proofBoxProjection
+  let _ ← checkDefEq env proofBoxProjectionTy pProp
+  let proofBoxProjectionNf ← normalize env proofBoxProjection
+  let _ ← checkDefEq env proofBoxProjectionNf pProof
+  let proofBoxProjectionFnNf ← normalize env proofBoxProjectionFn
+  let _ ← checkDefEq env proofBoxProjectionFnNf pProof
+  match infer env [] dataWitnessPropProjection with
+  | .ok _ => .error "DataWitnessProp projection should reject extraction of data from Prop"
+  | .error _ => pure ()
+
 def demoCoreChecks (env : Env) : Result Unit := do
   let oneTy ← infer env [] (const0 "one")
   let _ ← checkDefEq env oneTy natType
@@ -1613,6 +1771,7 @@ def demoCoreChecks (env : Env) : Result Unit := do
   let _ ← checkDefEq env opaqueTrueTy boolType
   let opaqueTrueNf ← normalize env opaqueTrue
   let _ ← checkDefEq env opaqueTrueNf opaqueTrue
+  let _ ← projectionDemoChecks env
   let polyIdBoolTy ← infer env [] polyIdBool
   let _ ← checkDefEq env polyIdBoolTy boolType
   let polyIdBoolNf ← normalize env polyIdBool

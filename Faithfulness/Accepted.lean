@@ -87,4 +87,39 @@ end
 example : MutNestA :=
   MutNestA.mk [MutNestB.mk (MutNestA.mk [])]
 
+structure Pair where
+  fst : Nat
+  snd : Bool
+
+example :
+    Pair.fst { fst := 0, snd := true } = 0 := rfl
+
+example (x : Pair) :
+    Pair.mk x.fst x.snd = x := rfl
+
+structure SigmaBox where
+  α : Type
+  value : α
+
+example :
+    SigmaBox.α { α := Bool, value := true } = Bool := rfl
+
+example :
+    SigmaBox.value { α := Bool, value := true } = true := rfl
+
+example (x : SigmaBox) :
+    SigmaBox.mk x.α x.value = x := rfl
+
+inductive ProofBox (p : Prop) : Prop
+| mk : p → ProofBox p
+
+example {p : Prop} (h : p) :
+    (ProofBox.mk h).1 = h := rfl
+
+inductive RecStruct : Type
+| mk : RecStruct → RecStruct
+
+example (x : RecStruct) :
+    x.1 = x.1 := rfl
+
 end LeanLeanFaithfulness.Accepted

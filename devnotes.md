@@ -59,7 +59,7 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Add opaque definitions as checked, non-unfolding declarations.
 - [x] Add low-level quotient primitives and the `Quot.lift` reduction rule.
 - [x] Add a first Lean 4 faithfulness corpus with accepted and rejected source examples.
-- [ ] Add core projection expressions and projection declarations for non-indexed one-constructor inductives.
+- [x] Add core projection expressions and projection declarations for non-indexed one-constructor inductives.
 
 ## Current Decisions
 
@@ -99,4 +99,4 @@ The quotient primitive subset follows the Lean reference's low-level `Quot` API 
 
 The first faithfulness harness now lives under `Faithfulness`.  It runs small Lean source files through the installed Lean compiler and separates examples that Lean must accept from examples that Lean must reject.  The ordinary kernel regression suite contains matching local bridge tests for the same behavior classes, because the project does not yet translate Lean source or exported declarations into the local syntax.
 
-Projection work should follow Lean's representation split.  The core term language needs `proj S i s`, because treating projections as ordinary constants would hide a kernel reduction rule behind declaration names.  Projection functions should still be represented in the environment, with metadata recording the structure name, constructor name, number of parameters, and projection index.  The first implementation target is the non-indexed one-constructor case; indexed projections need an explicit mapping from Lean's projection index to the constructor argument selected after index arguments are removed.
+Projection work follows Lean's representation split.  The core term language now has `proj S i s`, because treating projections as ordinary constants would hide a kernel reduction rule behind declaration names.  Projection functions are represented in the environment, with metadata recording the structure name, constructor name, number of parameters, and projection index.  The implementation covers the non-indexed one-constructor case, dependent field types through earlier projections, projection functions as checked declarations, Prop projection rejection for computational fields, and eta for non-recursive data structures.  Indexed projections still need an explicit mapping from Lean's projection index to the constructor argument selected after index arguments are removed.

@@ -185,6 +185,7 @@ inductive Expr where
   | app : Expr → Expr → Expr
   | lam : String → Expr → Expr → Expr
   | forallE : String → Expr → Expr → Expr
+  | proj : Name → Nat → Expr → Expr
   | letE : String → Expr → Expr → Expr → Expr
   deriving DecidableEq, Repr, Inhabited
 
@@ -216,6 +217,7 @@ def closedAt (depth : Nat) : Expr → Bool
   | .app fn arg => closedAt depth fn && closedAt depth arg
   | .lam _ ty body => closedAt depth ty && closedAt (depth + 1) body
   | .forallE _ ty body => closedAt depth ty && closedAt (depth + 1) body
+  | .proj _ _ struct => closedAt depth struct
   | .letE _ ty val body =>
       closedAt depth ty && closedAt depth val && closedAt (depth + 1) body
 
@@ -229,6 +231,7 @@ def closedAtIn (params : List Name) (depth : Nat) : Expr → Bool
   | .app fn arg => closedAtIn params depth fn && closedAtIn params depth arg
   | .lam _ ty body => closedAtIn params depth ty && closedAtIn params (depth + 1) body
   | .forallE _ ty body => closedAtIn params depth ty && closedAtIn params (depth + 1) body
+  | .proj _ _ struct => closedAtIn params depth struct
   | .letE _ ty val body =>
       closedAtIn params depth ty && closedAtIn params depth val && closedAtIn params (depth + 1) body
 
@@ -248,6 +251,8 @@ def alphaEq : Expr → Expr → Bool
       alphaEq leftTy rightTy && alphaEq leftBody rightBody
   | .forallE _ leftTy leftBody, .forallE _ rightTy rightBody =>
       alphaEq leftTy rightTy && alphaEq leftBody rightBody
+  | .proj leftName leftIndex leftStruct, .proj rightName rightIndex rightStruct =>
+      leftName = rightName && leftIndex = rightIndex && alphaEq leftStruct rightStruct
   | .letE _ leftTy leftVal leftBody, .letE _ rightTy rightVal rightBody =>
       alphaEq leftTy rightTy &&
       alphaEq leftVal rightVal &&
@@ -261,6 +266,7 @@ def occursConst (target : Name) : Expr → Bool
   | .app fn arg => occursConst target fn || occursConst target arg
   | .lam _ ty body => occursConst target ty || occursConst target body
   | .forallE _ ty body => occursConst target ty || occursConst target body
+  | .proj typeName _ struct => typeName = target || occursConst target struct
   | .letE _ ty val body =>
       occursConst target ty || occursConst target val || occursConst target body
 
@@ -277,6 +283,8 @@ def liftFrom (cutoff delta : Nat) : Expr → Expr
       .lam name (liftFrom cutoff delta ty) (liftFrom (cutoff + 1) delta body)
   | .forallE name ty body =>
       .forallE name (liftFrom cutoff delta ty) (liftFrom (cutoff + 1) delta body)
+  | .proj typeName index struct =>
+      .proj typeName index (liftFrom cutoff delta struct)
   | .letE name ty val body =>
       .letE
         name
@@ -309,6 +317,9 @@ def lowerFrom (cutoff delta : Nat) : Expr → Option Expr
       let ty' ← lowerFrom cutoff delta ty
       let body' ← lowerFrom (cutoff + 1) delta body
       pure (.forallE name ty' body')
+  | .proj typeName index struct => do
+      let struct' ← lowerFrom cutoff delta struct
+      pure (.proj typeName index struct')
   | .letE name ty val body => do
       let ty' ← lowerFrom cutoff delta ty
       let val' ← lowerFrom cutoff delta val
@@ -340,6 +351,8 @@ def instantiateFrom (cutoff : Nat) (value : Expr) : Expr → Expr
         name
         (instantiateFrom cutoff value ty)
         (instantiateFrom (cutoff + 1) value body)
+  | .proj typeName index struct =>
+      .proj typeName index (instantiateFrom cutoff value struct)
   | .letE name ty val body =>
       .letE
         name
@@ -381,6 +394,8 @@ def instantiateManyFrom (cutoff : Nat) (values : List Expr) : Expr → Expr
         name
         (instantiateManyFrom cutoff values ty)
         (instantiateManyFrom (cutoff + 1) values body)
+  | .proj typeName index struct =>
+      .proj typeName index (instantiateManyFrom cutoff values struct)
   | .letE name ty val body =>
       .letE
         name
@@ -409,6 +424,8 @@ def instantiateLevels (params : List Name) (values : List Level) : Expr → Expr
         name
         (instantiateLevels params values ty)
         (instantiateLevels params values body)
+  | .proj typeName index struct =>
+      .proj typeName index (instantiateLevels params values struct)
   | .letE name ty val body =>
       .letE
         name

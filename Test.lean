@@ -370,6 +370,67 @@ def environmentTests : Result Unit := do
       | .primitive .quotLift => pure ()
       | _ => .error "Quot.lift should be recorded as a quotient primitive"
   | none => .error "Quot.lift should be present in the environment"
+  match env.find? "Pair.fst" with
+  | some info =>
+      match info.kind with
+      | .projection projection =>
+          let _ ← expect "projection metadata records the structure" (projection.structName = "Pair")
+          let _ ← expect "projection metadata records the constructor" (projection.ctorName = "Pair.mk")
+          let _ ← expect "projection metadata records the field index" (projection.index = 0)
+          pure ()
+      | _ => .error "Pair.fst should be recorded as a projection"
+  | none => .error "Pair.fst should be present in the environment"
+
+def projectionTests : Result Unit := do
+  let env ← sampleEnv
+  let pairFstTy ← infer env [] (pairFst pairZeroTrue)
+  let _ ← checkDefEq env pairFstTy natType
+  let pairFstNf ← normalize env (pairFst pairZeroTrue)
+  let _ ← expectExprEq "projection reduces on constructor targets" pairFstNf natZero
+  let pairFstFnNf ← normalize env (pairFstFn pairZeroTrue)
+  let _ ← expectExprEq "projection functions unfold to core projections" pairFstFnNf natZero
+  let _ ← checkDefEq env pairEtaExpansion pairSeed
+  let sigmaValueTy ← infer env [] (sigmaValueProj sigmaBoolTrue)
+  let _ ← checkDefEq env sigmaValueTy boolType
+  let sigmaValueNf ← normalize env (sigmaValueProj sigmaBoolTrue)
+  let _ ← expectExprEq "dependent projection result types substitute earlier projections" sigmaValueNf boolTrue
+  let _ ← checkDefEq env sigmaEtaExpansion sigmaSeed
+  let proofProjectionTy ← infer env [] proofBoxProjection
+  let _ ← checkDefEq env proofProjectionTy pProp
+  let proofProjectionNf ← normalize env proofBoxProjection
+  let _ ← checkDefEq env proofProjectionNf pProof
+  let _ ←
+    expectError
+      "projection rejects extraction of data from Prop"
+      (infer env [] dataWitnessPropProjection)
+  let _ ←
+    expectError
+      "projection rejects invalid field indices"
+      (infer env [] (.proj "Pair" 2 pairZeroTrue))
+  let _ ←
+    expectError
+      "projection rejects mismatched major-premise types"
+      (infer env [] (.proj "Pair" 0 boolTrue))
+  let recStructSpec : InductiveSpec :=
+    {
+      name := "RecStruct"
+      params := []
+      level := type0Level
+      ctors :=
+        [
+          { name := "RecStruct.mk", fields := [{ name := "child", type := const0 "RecStruct" }] }
+        ]
+    }
+  let env ← addInductive env recStructSpec
+  let env ← addProjection env "RecStruct.child" "RecStruct" 0
+  let env ← addAxiom env "recStructSeed" (const0 "RecStruct")
+  let recSeed := const0 "recStructSeed"
+  let recEtaExpansion := Expr.mkApps (const0 "RecStruct.mk") [.proj "RecStruct" 0 recSeed]
+  let recProjectionTy ← infer env [] (.proj "RecStruct" 0 recSeed)
+  let _ ← checkDefEq env recProjectionTy (const0 "RecStruct")
+  expectError
+    "recursive single-constructor inductives do not use structure eta"
+    (checkDefEq env recEtaExpansion recSeed)
 
 def faithfulnessBridgeTests : Result Unit := do
   let env ← sampleEnv
@@ -464,6 +525,7 @@ def kernelRegressionTests : Result Unit := do
   let _ ← substitutionTests
   let _ ← generatedValidationTests
   let _ ← environmentTests
+  let _ ← projectionTests
   let _ ← faithfulnessBridgeTests
   let _ ← rawEntryTests
   let _ ← demoReport
@@ -475,6 +537,8 @@ def testReport : Result (List String) := do
   let _ ← substitutionTests
   let _ ← generatedValidationTests
   let _ ← environmentTests
+  let _ ← projectionTests
+  let _ ← faithfulnessBridgeTests
   let _ ← rawEntryTests
   let _ ← demoReport
   pure
@@ -484,6 +548,7 @@ def testReport : Result (List String) := do
       "substitution invariants check",
       "generated declaration validation rejects malformed generated types",
       "environment declaration metadata checks",
+      "projection typing, reduction, and eta checks",
       "faithfulness bridge checks local expressions against the Lean corpus",
       "raw inference and normalization entry points reject malformed primitives",
       "kernel example regressions check"

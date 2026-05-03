@@ -39,9 +39,19 @@ def cases : List Case :=
       expectation := .rejects ["opaqueTrue = true"]
     },
     {
+      label := "invalid projection index rejection"
+      path := "Faithfulness/Rejected/InvalidProjectionIndex.lean"
+      expectation := .rejects ["Invalid projection", "Index `3` is invalid"]
+    },
+    {
       label := "multi-constructor Prop data elimination rejection"
       path := "Faithfulness/Rejected/POrDataElim.lean"
       expectation := .rejects ["expected to have type", "Prop"]
+    },
+    {
+      label := "Prop data projection rejection"
+      path := "Faithfulness/Rejected/PropDataProjection.lean"
+      expectation := .rejects ["Invalid projection", "Cannot project a value of non-propositional type"]
     },
     {
       label := "quotient relation mismatch rejection"
