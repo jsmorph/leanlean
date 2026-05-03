@@ -172,6 +172,7 @@ inductive DefinitionTransparency where
 inductive ConstantKind where
   | axiom : ConstantKind
   | defn : DefinitionTransparency → ConstantKind
+  | thm : ConstantKind
   | inductive : InductiveInfo → ConstantKind
   | ctor : Name → ConstantKind
   | projection : ProjectionInfo → ConstantKind
@@ -198,6 +199,9 @@ def mkDefn (name : Name) (levelParams : List Name) (type value : Expr) : Constan
 
 def mkOpaqueDefn (name : Name) (levelParams : List Name) (type value : Expr) : ConstantInfo :=
   { name, levelParams, typeExpr := type, valueExpr? := some value, kind := .defn .opaque }
+
+def mkTheorem (name : Name) (levelParams : List Name) (type value : Expr) : ConstantInfo :=
+  { name, levelParams, typeExpr := type, valueExpr? := some value, kind := .thm }
 
 def mkInductive (name : Name) (levelParams : List Name) (info : InductiveInfo) : ConstantInfo :=
   { name, levelParams, typeExpr := info.type, kind := .inductive info }
@@ -1939,6 +1943,25 @@ def addOpaqueDefinitionWithLevels
 
 def addOpaqueDefinition (env : Env) (name : Name) (type value : Expr) : Result Env :=
   addOpaqueDefinitionWithLevels env name [] type value
+
+def addTheoremWithLevels
+    (env : Env)
+    (name : Name)
+    (levelParams : LevelContext)
+    (type value : Expr) : Result Env := do
+  let _ ← checkLevelParamsUnique levelParams
+  let _ ← checkFreshName env name
+  let _ ← checkClosedIn levelParams s!"theorem {name} type" type
+  let _ ← checkClosedIn levelParams s!"theorem {name} value" value
+  let typeSort ← inferSort env [] type (levelParams := levelParams)
+  if !Level.defEq typeSort .zero then
+    .error s!"theorem {name} type must be a proposition"
+  let valueTy ← infer env [] value (levelParams := levelParams)
+  let _ ← checkDefEq env valueTy type (levelParams := levelParams)
+  pure (ConstantInfo.mkTheorem name levelParams type value :: env)
+
+def addTheorem (env : Env) (name : Name) (type value : Expr) : Result Env :=
+  addTheoremWithLevels env name [] type value
 
 def addProjection (env : Env) (name structName : Name) (index : Nat) : Result Env := do
   let _ ← checkFreshName env name

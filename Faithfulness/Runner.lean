@@ -39,6 +39,11 @@ def cases : List Case :=
       expectation := .rejects ["has type", "is expected to have type"]
     },
     {
+      label := "theorem type rejection"
+      path := "Faithfulness/Rejected/TheoremTypeNotProp.lean"
+      expectation := .rejects ["type of theorem", "is not a proposition"]
+    },
+    {
       label := "opaque rfl rejection"
       path := "Faithfulness/Rejected/OpaqueRfl.lean"
       expectation := .rejects ["opaqueTrue = true"]

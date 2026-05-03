@@ -782,6 +782,9 @@ def pProof : Expr :=
 def qProof : Expr :=
   const0 "qProof"
 
+def pTheorem : Expr :=
+  const0 "pTheorem"
+
 def propSelfImpType : Expr :=
   .forallE "h" pProp pProp
 
@@ -915,6 +918,14 @@ def propDemoChecks (env : Env) : Result Unit := do
   let pProofTy ← infer env [] pProof
   let _ ← checkDefEq env pProofTy pProp
   let _ ← checkDefEq env pProof qProof
+  let pTheoremTy ← infer env [] pTheorem
+  let _ ← checkDefEq env pTheoremTy pProp
+  let pTheoremNf ← normalize env pTheorem
+  if pTheoremNf != pTheorem then
+    .error s!"theorem constants should not unfold during normalization: {repr pTheoremNf}"
+  else
+    pure ()
+  let _ ← checkDefEq env pTheorem qProof
   let propSelfImpTy ← infer env [] propSelfImpType
   let _ ← checkDefEq env propSelfImpTy propSort
   let pTrueTy ← infer env [] pTrueType
@@ -993,7 +1004,8 @@ def sampleEnv : Result Env := do
       (Expr.mkApps (const0 "ShiftedStruct") [boolType, Expr.mkApps (const0 "Nat.succ") [const0 "Nat.zero"]])
   let env ← addAxiom env "P" propSort
   let env ← addAxiom env "pProof" pProp
-  addAxiom env "qProof" pProp
+  let env ← addAxiom env "qProof" pProp
+  addTheorem env "pTheorem" pProp pProof
 
 def natSucc (value : Expr) : Expr :=
   Expr.mkApps (const0 "Nat.succ") [value]
@@ -1817,6 +1829,7 @@ def demoReportLines : List String :=
     "Eq.rec eliminates into data and reduces on refl",
     "Quot.lift computes on Quot.mk and Quot.sound checks",
     "core and indexed projections type-check, reduce, and support structure eta",
+    "theorem declarations store checked proof values without unfolding",
     "mutual inductive recursors compute across block members",
     "nested mutual recursors compute through positive containers",
     "Vec.rec computes through indexed constructor targets",

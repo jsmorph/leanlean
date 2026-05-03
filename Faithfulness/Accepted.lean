@@ -116,6 +116,12 @@ inductive ProofBox (p : Prop) : Prop
 example {p : Prop} (h : p) :
     (ProofBox.mk h).1 = h := rfl
 
+theorem trueTheorem : True :=
+  True.intro
+
+example :
+    trueTheorem = True.intro := rfl
+
 inductive RecStruct : Type
 | mk : RecStruct → RecStruct
 

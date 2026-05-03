@@ -352,6 +352,26 @@ def environmentTests : Result Unit := do
   let opaqueTrueNf ← normalize env opaqueTrue
   let _ ← expectExprEq "opaque definitions do not unfold" opaqueTrueNf opaqueTrue
   let _ ← expectError "opaque definitions are not definitionally equal to their values" (checkDefEq env opaqueTrue boolTrue)
+  match env.find? "pTheorem" with
+  | some info =>
+      let _ ← expect "theorem declarations keep stored values" info.valueExpr?.isSome
+      match info.kind with
+      | .thm => pure ()
+      | _ => .error "pTheorem should be recorded as a theorem"
+  | none => .error "pTheorem should be present in the environment"
+  let pTheoremTy ← infer env [] pTheorem
+  let _ ← checkDefEq env pTheoremTy pProp
+  let pTheoremNf ← normalize env pTheorem
+  let _ ← expectExprEq "theorem declarations do not unfold" pTheoremNf pTheorem
+  let _ ← checkDefEq env pTheorem qProof
+  let _ ←
+    expectError
+      "theorem declarations reject non-proposition types"
+      (addTheorem env "badTheorem" boolType boolTrue)
+  let _ ←
+    expectError
+      "theorem declarations reject proof type mismatches"
+      (addTheorem env "badTheoremProof" pProp boolTrue)
   match env.find? "Nat" with
   | some info =>
       match info.kind with
