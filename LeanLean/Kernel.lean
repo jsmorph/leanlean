@@ -189,6 +189,23 @@ structure ConstantInfo where
 
 abbrev Env := List ConstantInfo
 
+structure KernelConstructorDecl where
+  name : Name
+  type : Expr
+  deriving DecidableEq, Repr, Inhabited
+
+structure KernelInductiveTypeDecl where
+  name : Name
+  type : Expr
+  ctors : List KernelConstructorDecl
+  deriving DecidableEq, Repr, Inhabited
+
+structure KernelInductiveDecl where
+  levelParams : LevelContext := []
+  numParams : Nat
+  types : List KernelInductiveTypeDecl
+  deriving DecidableEq, Repr, Inhabited
+
 inductive Declaration where
   | axiom : Name → LevelContext → Expr → Declaration
   | definition : Name → LevelContext → Expr → Expr → Declaration
@@ -196,6 +213,7 @@ inductive Declaration where
   | theorem : Name → LevelContext → Expr → Expr → Declaration
   | inductive : InductiveSpec → Declaration
   | inductiveBlock : InductiveBlockSpec → Declaration
+  | kernelInductive : KernelInductiveDecl → Declaration
   | projection : Name → Name → Nat → Declaration
   | quotientPrimitives : Declaration
   deriving DecidableEq, Repr, Inhabited
@@ -2288,6 +2306,68 @@ def addInductiveBlock (env : Env) (block : InductiveBlockSpec) : Result Env := d
 def addInductive (env : Env) (spec : InductiveSpec) : Result Env :=
   addInductiveBlock env { levelParams := spec.levelParams, specs := [spec] }
 
+def decomposeForalls : Expr → Telescope × Expr
+  | .forallE name type body =>
+      let (binders, result) := decomposeForalls body
+      ({ name, type } :: binders, result)
+  | expr => ([], expr)
+
+def splitAt? (n : Nat) (xs : List α) : Option (List α × List α) :=
+  if n <= xs.length then
+    some (xs.take n, xs.drop n)
+  else
+    none
+
+def kernelInductiveHeaderToSpec
+    (decl : KernelInductiveDecl)
+    (typeDecl : KernelInductiveTypeDecl) : Result InductiveSpec := do
+  let (binders, result) := decomposeForalls typeDecl.type
+  let some (params, indices) := splitAt? decl.numParams binders
+    | .error s!"kernel inductive {typeDecl.name} has fewer parameters than declared"
+  let .sort level := result
+    | .error s!"kernel inductive {typeDecl.name} type must end in a sort"
+  pure
+    {
+      name := typeDecl.name
+      levelParams := decl.levelParams
+      params
+      indices
+      level
+      ctors := []
+    }
+
+def kernelConstructorToSpec
+    (decl : KernelInductiveDecl)
+    (spec : InductiveSpec)
+    (ctor : KernelConstructorDecl) : Result ConstructorSpec := do
+  let (binders, target) := decomposeForalls ctor.type
+  let some (params, fields) := splitAt? decl.numParams binders
+    | .error s!"kernel constructor {ctor.name} has fewer parameters than declared"
+  if !telescopeTypesAlphaEq params spec.params then
+    .error s!"kernel constructor {ctor.name} parameter telescope does not match {spec.name}"
+  pure { name := ctor.name, fields, target? := some target }
+
+def kernelInductiveDeclToBlock (decl : KernelInductiveDecl) : Result InductiveBlockSpec := do
+  match decl.types with
+  | [] => .error "kernel inductive declaration must contain at least one type"
+  | firstType :: restTypes => do
+      let firstSpec ← kernelInductiveHeaderToSpec decl firstType
+      let restSpecs ← restTypes.mapM (kernelInductiveHeaderToSpec decl)
+      for spec in restSpecs do
+        if !telescopeTypesAlphaEq spec.params firstSpec.params then
+          .error s!"kernel inductive {spec.name} parameter telescope does not match the block"
+      let allTypes := firstType :: restTypes
+      let allSpecs := firstSpec :: restSpecs
+      let specs ←
+        (List.zip allTypes allSpecs).mapM fun pair => do
+          let ctors ← pair.1.ctors.mapM (kernelConstructorToSpec decl pair.2)
+          pure { pair.2 with ctors }
+      pure { levelParams := decl.levelParams, specs }
+
+def addKernelInductive (env : Env) (decl : KernelInductiveDecl) : Result Env := do
+  let block ← kernelInductiveDeclToBlock decl
+  addInductiveBlock env block
+
 def addDeclaration (env : Env) : Declaration → Result Env
   | .axiom name levelParams type => addAxiomWithLevels env name levelParams type
   | .definition name levelParams type value =>
@@ -2297,6 +2377,7 @@ def addDeclaration (env : Env) : Declaration → Result Env
   | .theorem name levelParams type value => addTheoremWithLevels env name levelParams type value
   | .inductive spec => addInductive env spec
   | .inductiveBlock block => addInductiveBlock env block
+  | .kernelInductive decl => addKernelInductive env decl
   | .projection name structName index => addProjection env name structName index
   | .quotientPrimitives => addQuotPrimitives env
 

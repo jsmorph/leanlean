@@ -349,6 +349,91 @@ def declarationScriptTests : Result Unit := do
     "declaration scripts reject malformed declarations"
     (addDeclarations env [.theorem "badScriptTheorem" [] boolType boolTrue])
 
+def kernelInductiveDeclTests : Result Unit := do
+  let kernelBoolDecl : KernelInductiveDecl :=
+    {
+      numParams := 0
+      types :=
+        [
+          {
+            name := "KernelBool"
+            type := type0Sort
+            ctors :=
+              [
+                { name := "KernelBool.false", type := const0 "KernelBool" },
+                { name := "KernelBool.true", type := const0 "KernelBool" }
+              ]
+          }
+        ]
+    }
+  let kernelBoxDecl : KernelInductiveDecl :=
+    {
+      levelParams := ["u"]
+      numParams := 1
+      types :=
+        [
+          {
+            name := "KernelBox"
+            type := .forallE "α" (.sort (.param "u")) (.sort (typeLevel (.param "u")))
+            ctors :=
+              [
+                {
+                  name := "KernelBox.mk"
+                  type :=
+                    .forallE
+                      "α"
+                      (.sort (.param "u"))
+                      (.forallE
+                        "value"
+                        (.bvar 0)
+                        (Expr.mkApps (.const "KernelBox" [.param "u"]) [.bvar 1]))
+                }
+              ]
+          }
+        ]
+    }
+  let env ← addDeclaration [] (.kernelInductive kernelBoolDecl)
+  let falseTy ← infer env [] (const0 "KernelBool.false")
+  let _ ← checkDefEq env falseTy (const0 "KernelBool")
+  let env ← addDeclaration env (.kernelInductive kernelBoxDecl)
+  let kernelBoxTrue := Expr.mkApps (.const "KernelBox.mk" [type0Level]) [const0 "KernelBool", const0 "KernelBool.true"]
+  let kernelBoxTrueTy ← infer env [] kernelBoxTrue
+  let _ ← checkDefEq env kernelBoxTrueTy (Expr.mkApps (.const "KernelBox" [type0Level]) [const0 "KernelBool"])
+  let badTypeDecl : KernelInductiveDecl :=
+    {
+      numParams := 0
+      types := [{ name := "BadKernelInd", type := const0 "KernelBool", ctors := [] }]
+    }
+  let _ ←
+    expectError
+      "kernel-style inductive declarations require type formers ending in sorts"
+      (addDeclaration env (.kernelInductive badTypeDecl))
+  let badCtorDecl : KernelInductiveDecl :=
+    {
+      numParams := 1
+      types :=
+        [
+          {
+            name := "BadKernelBox"
+            type := .forallE "α" type0Sort type0Sort
+            ctors :=
+              [
+                {
+                  name := "BadKernelBox.mk"
+                  type :=
+                    .forallE
+                      "α"
+                      propSort
+                      (Expr.mkApps (const0 "BadKernelBox") [.bvar 0])
+                }
+              ]
+          }
+        ]
+    }
+  expectError
+    "kernel-style constructors must repeat the block parameters"
+    (addDeclaration env (.kernelInductive badCtorDecl))
+
 def environmentTests : Result Unit := do
   let env ← sampleEnv
   match env.find? "one" with
@@ -590,6 +675,7 @@ def kernelRegressionTests : Result Unit := do
   let _ ← substitutionTests
   let _ ← generatedValidationTests
   let _ ← declarationScriptTests
+  let _ ← kernelInductiveDeclTests
   let _ ← environmentTests
   let _ ← projectionTests
   let _ ← faithfulnessBridgeTests
@@ -603,6 +689,7 @@ def testReport : Result (List String) := do
   let _ ← substitutionTests
   let _ ← generatedValidationTests
   let _ ← declarationScriptTests
+  let _ ← kernelInductiveDeclTests
   let _ ← environmentTests
   let _ ← projectionTests
   let _ ← faithfulnessBridgeTests
@@ -615,6 +702,7 @@ def testReport : Result (List String) := do
       "substitution invariants check",
       "generated declaration validation rejects malformed generated types",
       "declaration scripts use the checked admission path",
+      "kernel-style inductive declarations map to checked blocks",
       "environment declaration metadata checks",
       "projection typing, reduction, and eta checks",
       "faithfulness bridge checks local expressions against the Lean corpus",

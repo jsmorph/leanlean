@@ -18,6 +18,8 @@ The environment admits checked declaration records.  An axiom adds a constant wi
 
 An ordered declaration script is the kernel-facing form of a post-elaboration module fragment.  Each script entry is one of the declaration classes listed above, and script admission folds over the entries by calling the same checker used by the direct declaration API.  Later export parsers may build these scripts, but the trusted boundary remains the script-entry checker rather than the parser.
 
+A kernel-style inductive declaration may provide type-former types and constructor types instead of source-shaped field telescopes.  This form records the universe parameters, the number of shared inductive parameters, one type-former type for each block member, and the fully elaborated constructor types.  Admission reconstructs the local inductive block by splitting each type-former type into shared parameters, indices, and a result sort, then splitting each constructor type into the repeated parameters, fields, and target.  The reconstructed block then follows the ordinary inductive admission path, including positivity, universe checks, projection-field computation, and generated constructor and recursor validation.
+
 ## Contexts and Substitution
 
 Runtime contexts are stored innermost binder first: de Bruijn index `0` refers to the head of the context, and index `i + 1` refers one binder farther out.  Source-level telescopes are written outermost first.  Binding a telescope as dependent function types therefore introduces the first listed binder as the outermost binder and the last listed binder as the innermost binder.
