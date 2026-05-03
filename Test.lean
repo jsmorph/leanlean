@@ -78,6 +78,8 @@ def universeTests : Result Unit := do
   let _ ← expectExprEq "Bool lives in Type 0" boolSort type0Sort
   let pTy ← infer env [] pProp
   let _ ← expectExprEq "proposition constants have type Prop" pTy propSort
+  let _ ← checkDefEq env pProof qProof
+  let _ ← expectError "data constructors remain proof-relevant" (checkDefEq env boolTrue boolFalse)
   let propSelfImpTy ← infer env [] propSelfImpType
   let _ ←
     expectExprEq

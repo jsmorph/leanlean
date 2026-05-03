@@ -1053,6 +1053,7 @@ def demoReport : Result (List String) := do
   let _ ← checkDefEq env pTy propSort
   let pProofTy ← infer env [] pProof
   let _ ← checkDefEq env pProofTy pProp
+  let _ ← checkDefEq env pProof qProof
   let propSelfImpTy ← infer env [] propSelfImpType
   let _ ← checkDefEq env propSelfImpTy propSort
   let _ ← infer env [] (recConst "Nat.rec")
@@ -1227,7 +1228,7 @@ def demoReport : Result (List String) := do
       "definition one : Nat checks",
       "polymorphic definitions instantiate at data and type universes",
       "polymorphic inductives instantiate at data and type universes",
-      "basic Prop constants and proposition-valued functions check",
+      "basic Prop constants, proof irrelevance, and proposition-valued functions check",
       "recursor constants type-check and support partial application",
       "Nat.rec on one normalizes to Bool.false",
       "List Bool constructor application checks",

@@ -750,8 +750,9 @@ partial def inferSort
   | .sort level => pure level
   | _ => .error s!"expected a type, got {repr reduced}"
 
-partial def checkDefEq
+partial def checkDefEqIn
     (env : Env)
+    (ctx : Context)
     (left right : Expr)
     (levelParams : LevelContext := []) : Result Unit := do
   let leftNf ← normalize env left (levelParams := levelParams)
@@ -759,7 +760,28 @@ partial def checkDefEq
   if leftNf.alphaEq rightNf then
     pure ()
   else
-    .error s!"definitional equality failed: {repr leftNf} vs {repr rightNf}"
+    let originalError := s!"definitional equality failed: {repr leftNf} vs {repr rightNf}"
+    try
+      let leftTy ← infer env ctx left (levelParams := levelParams)
+      let rightTy ← infer env ctx right (levelParams := levelParams)
+      let leftTyNf ← normalize env leftTy (levelParams := levelParams)
+      let rightTyNf ← normalize env rightTy (levelParams := levelParams)
+      if !leftTyNf.alphaEq rightTyNf then
+        .error originalError
+      else
+        let typeLevel ← inferSort env ctx leftTy (levelParams := levelParams)
+        if Level.defEq typeLevel .zero then
+          pure ()
+        else
+          .error originalError
+    catch _ =>
+      .error originalError
+
+partial def checkDefEq
+    (env : Env)
+    (left right : Expr)
+    (levelParams : LevelContext := []) : Result Unit :=
+  checkDefEqIn env [] left right (levelParams := levelParams)
 
 partial def checkRecursorTargetArgs
     (env : Env)
@@ -944,7 +966,7 @@ partial def inferSpine
         match reduced with
         | .forallE _ domain body =>
             let actual ← infer env ctx arg (levelParams := levelParams)
-            let _ ← checkDefEq env actual domain (levelParams := levelParams)
+            let _ ← checkDefEqIn env ctx actual domain (levelParams := levelParams)
             loop (Expr.instantiate1 arg body) rest
         | _ => .error s!"application expects a function, got {repr reduced}"
   loop headTy args
@@ -992,7 +1014,7 @@ partial def infer
   | .letE name type value body => do
       let _ ← inferSort env ctx type (levelParams := levelParams)
       let valueTy ← infer env ctx value (levelParams := levelParams)
-      let _ ← checkDefEq env valueTy type (levelParams := levelParams)
+      let _ ← checkDefEqIn env ctx valueTy type (levelParams := levelParams)
       let bodyTy ← infer env ({ name, type } :: ctx) body (levelParams := levelParams)
       pure (Expr.instantiate1 value bodyTy)
 

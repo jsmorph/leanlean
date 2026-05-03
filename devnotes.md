@@ -45,7 +45,8 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Extend universe polymorphism to inductive declarations and generated recursors.
 - [x] Rebase the data fragment so `Sort 0` is reserved for `Prop` and data inductives live above it.
 - [x] Add the known-Prop function-sort rule.
-- [ ] Specify proposition-valued inductives, elimination restrictions, and proof irrelevance.
+- [x] Add proof irrelevance for terms with the same normalized proposition type.
+- [ ] Specify proposition-valued inductives and elimination restrictions.
 
 ## Current Decisions
 
@@ -75,4 +76,4 @@ Indexed inductive families now use explicit constructor result targets.  The pri
 
 Universe-polymorphic definitions and inductives now have checked paths through the kernel.  `addDefinitionWithLevels` and `addAxiomWithLevels` reject duplicate universe parameters and reject level variables outside the declared universe context, while `addInductive` applies the same discipline to inductive result universes, constructor types, and generated recursor types.  The raw public entry points still reject open universe levels.  The examples `polyId.{u}` and `PolyBox.{u}` instantiate at both `Type 0` and `Type 1`, with `PolyBox` using Lean's `Type u` convention as `Sort (u + 1)`.  The focused regression tests cover symbolic level ordering, universe-context closure, generated recursor level ordering, rejection of proposition-valued data inductives, the known-Prop function-sort rule, and iota rejection for constructor targets at mismatched universe levels.
 
-The Prop work has started at the function-sort boundary.  Axioms may now introduce propositions and proofs, and `∀ x : A, B` lives in `Prop` when the codomain has sort `Prop`.  The kernel still lacks proposition-valued inductives, elimination restrictions, proof irrelevance, and a symbolic `imax` level former for universe-polymorphic codomain levels.
+The Prop work has started at the function-sort and conversion boundary.  Axioms may now introduce propositions and proofs, and `∀ x : A, B` lives in `Prop` when the codomain has sort `Prop`.  Conversion is now context-aware internally, and proof irrelevance treats two terms as equal when they infer the same normalized proposition type.  The kernel still lacks proposition-valued inductives, elimination restrictions, and a symbolic `imax` level former for universe-polymorphic codomain levels.
