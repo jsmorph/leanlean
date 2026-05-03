@@ -1528,7 +1528,7 @@ partial def whnf (env : Env) (expr : Expr) (levelParams : LevelContext := []) : 
       | .lam _ _ body =>
           match args with
           | [] => pure rebuilt
-          | arg :: rest => whnf env (Expr.mkApps (Expr.instantiate1 arg body) rest)
+          | arg :: rest => whnf env (Expr.mkApps (Expr.instantiate1 arg body) rest) (levelParams := levelParams)
       | .const name levels =>
           match env.find? name with
           | some info =>

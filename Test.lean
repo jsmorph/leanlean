@@ -76,6 +76,14 @@ def universeTests : Result Unit := do
       (!(Level.le (.param "u") (.param "v")))
   let _ ←
     expect
+      "symbolic universe equality removes dominated max summands"
+      (Level.defEq
+        (.max
+          (.max (.succ .zero) (.param "v"))
+          (.max (.succ (.param "u")) (.param "v")))
+        (.max (.succ (.param "u")) (.param "v")))
+  let _ ←
+    expect
       "imax into Prop reduces to Prop"
       (Level.defEq (Level.normalize (.imax (.param "u") propLevel)) propLevel)
   let _ ←

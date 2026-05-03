@@ -130,13 +130,20 @@ def eval (level : Level) : Nat :=
   | some value => value
   | none => panic! s!"attempted to evaluate open universe level {repr level}"
 
+def summandLe (left right : Summand) : Bool :=
+  match left.name?, right.name? with
+  | none, none => left.offset <= right.offset
+  | none, some _ => left.offset = 0 || left.offset <= right.offset
+  | some leftName, some rightName => leftName = rightName && left.offset <= right.offset
+  | some _, none => false
+
 partial def defEq (left right : Level) : Bool :=
   let left := normalize left
   let right := normalize right
   match normalizeSummands? left, normalizeSummands? right with
   | some leftN, some rightN =>
-      leftN.length = rightN.length &&
-        leftN.all fun summand => rightN.any fun other => other = summand
+      leftN.all (fun leftSummand => rightN.any (summandLe leftSummand)) &&
+        rightN.all fun rightSummand => leftN.any fun leftSummand => summandLe rightSummand leftSummand
   | _, _ =>
       match left, right with
       | .zero, .zero => true
@@ -148,13 +155,6 @@ partial def defEq (left right : Level) : Bool :=
       | .imax leftA leftB, .imax rightA rightB =>
           defEq leftA rightA && defEq leftB rightB
       | _, _ => false
-
-def summandLe (left right : Summand) : Bool :=
-  match left.name?, right.name? with
-  | none, none => left.offset <= right.offset
-  | none, some _ => left.offset = 0 || left.offset <= right.offset
-  | some leftName, some rightName => leftName = rightName && left.offset <= right.offset
-  | some _, none => false
 
 def le (left right : Level) : Bool :=
   let left := normalize left

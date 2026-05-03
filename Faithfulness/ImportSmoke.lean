@@ -3,16 +3,15 @@ import LeanLean.Import
 
 namespace LeanLeanFaithfulness.ImportSmoke
 
-def expectReplayErrorPrefix
+def expectReplayContains
     (env : Lean.Environment)
-    (root : Lean.Name)
-    (expectedPrefix : String) : Lean.Elab.Command.CommandElabM Unit := do
+    (root : Lean.Name) : Lean.Elab.Command.CommandElabM Unit := do
   match LeanLean.Import.replayEnvironmentClosure [] env [root] with
-  | .ok _ => Lean.throwError m!"environment import unexpectedly succeeded: {root}"
-  | .error err =>
-      unless expectedPrefix.isPrefixOf err do
-        Lean.throwError
-          m!"environment import for {root} failed with the wrong error\nexpected prefix: {expectedPrefix}\nactual: {err}"
+  | .ok localEnv =>
+      let localRoot := LeanLean.Import.translateName root
+      unless localEnv.contains localRoot do
+        Lean.throwError m!"environment import succeeded without root declaration: {root}"
+  | .error err => Lean.throwError m!"environment import unexpectedly failed for {root}: {err}"
 
 run_cmd
   let env ← Lean.getEnv
@@ -53,15 +52,9 @@ run_cmd
         `LeanLeanFaithfulness.Accepted.evenFlag,
         `LeanLeanFaithfulness.Accepted.oddFlag
       ] do
-    expectReplayErrorPrefix
-      env
-      recursiveRoot
-      "recursive definition artifacts are outside the local environment importer:"
+    expectReplayContains env recursiveRoot
   for recursiveCoreRoot in #[``Nat.add, ``List.map] do
-    expectReplayErrorPrefix
-      env
-      recursiveCoreRoot
-      "recursive definition artifacts are outside the local environment importer:"
+    expectReplayContains env recursiveCoreRoot
 
 end LeanLeanFaithfulness.ImportSmoke
 

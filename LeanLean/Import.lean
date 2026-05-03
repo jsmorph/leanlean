@@ -555,14 +555,10 @@ def constantInfoDependencyNames (info : Lean.ConstantInfo) : List Lean.Name :=
     (appendLeanNames (leanExprConstants info.type) (constantInfoValueConstants info))
     (constantInfoMetadataConstants info)
 
-def checkTrustedEnvironmentConstant
-    (leanEnv : Lean.Environment)
-    (info : Lean.ConstantInfo) : Result Unit := do
+def checkTrustedEnvironmentConstant (info : Lean.ConstantInfo) : Result Unit := do
   match info with
   | .defnInfo value =>
       checkTrustedDefinitionSafety value.name value.safety
-      if Lean.Meta.recExt.isTagged leanEnv value.name then
-        .error s!"recursive definition artifacts are outside the local environment importer: {value.name}"
   | _ => pure ()
 
 def environmentConstantInfoDependencyNames
@@ -605,7 +601,7 @@ partial def collectEnvironmentClosure
         else
           let some info := env.find? name
             | .error s!"unknown Lean environment constant in import closure: {name}"
-          checkTrustedEnvironmentConstant env info
+          checkTrustedEnvironmentConstant info
           let dependencies := environmentConstantInfoDependencyNames env info
           let pending := appendLeanNames rest dependencies
           loop pending (name :: seen) (info :: infos)
