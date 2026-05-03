@@ -1,4 +1,5 @@
 import Lean
+import Faithfulness.ModuleB
 
 namespace LeanLeanFaithfulness.Runner
 
@@ -16,6 +17,11 @@ def cases : List Case :=
     {
       label := "accepted core Lean fragment"
       path := "Faithfulness/Accepted.lean"
+      expectation := .accepts
+    },
+    {
+      label := "accepted module boundary fragment"
+      path := "Faithfulness/ModuleB.lean"
       expectation := .accepts
     },
     {

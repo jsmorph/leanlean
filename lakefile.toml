@@ -8,6 +8,12 @@ name = "LeanLean"
 [[lean_lib]]
 name = "Faithfulness.Accepted"
 
+[[lean_lib]]
+name = "Faithfulness.ModuleA"
+
+[[lean_lib]]
+name = "Faithfulness.ModuleB"
+
 [[lean_exe]]
 name = "leanlean"
 root = "Main"

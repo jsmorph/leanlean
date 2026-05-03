@@ -29,6 +29,18 @@ def two : LocalNat :=
 example :
     LocalNat.rec LocalNat.zero (fun _ ih => LocalNat.succ ih) two = two := rfl
 
+def literalNat : Nat :=
+  3
+
+example :
+    Nat.rec true (fun _ _ => false) literalNat = false := rfl
+
+def literalString : String :=
+  "lean"
+
+example :
+    literalString = "lean" := rfl
+
 def natDouble : Nat → Nat
   | 0 => 0
   | n + 1 => Nat.succ (Nat.succ (natDouble n))
@@ -92,6 +104,33 @@ example :
 
 example (x : PEmpty) : Bool :=
   PEmpty.elim x
+
+def liftedBool : ULift Bool :=
+  ⟨true⟩
+
+example :
+    liftedBool.down = true := rfl
+
+def liftedTrue : PLift True :=
+  ⟨True.intro⟩
+
+example :
+    liftedTrue.down = True.intro := rfl
+
+def sigmaPair : Sigma (fun _ : Bool => Nat) :=
+  ⟨true, 1⟩
+
+example :
+    sigmaPair.1 = true := rfl
+
+example :
+    sigmaPair.2 = 1 := rfl
+
+def subtypeTrue : { b : Bool // b = true } :=
+  ⟨true, rfl⟩
+
+example :
+    subtypeTrue.val = true := rfl
 
 def rel (a b : Bool) : Prop :=
   a = b

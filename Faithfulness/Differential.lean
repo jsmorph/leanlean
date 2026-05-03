@@ -50,6 +50,9 @@ run_cmd
     "abbreviation value"
     (← `(LeanLeanFaithfulness.Accepted.abbrevTrue))
   compareTerm
+    "natural literal value"
+    (← `(LeanLeanFaithfulness.Accepted.literalNat))
+  compareTerm
     "primitive Nat recursor value"
     (← `(
       LeanLeanFaithfulness.Accepted.LocalNat.rec
@@ -72,6 +75,12 @@ run_cmd
     "sort-polymorphic unit recursor value"
     (← `(
       @PUnit.rec.{1, 0} (fun _ => Bool) true PUnit.unit))
+  compareTerm
+    "Sigma projection value"
+    (← `(LeanLeanFaithfulness.Accepted.sigmaPair.2))
+  compareTerm
+    "Subtype projection value"
+    (← `(LeanLeanFaithfulness.Accepted.subtypeTrue.val))
   compareTerm
     "dependent projection value"
     (← `(
