@@ -73,6 +73,69 @@ def universeTests : Result Unit := do
   let _ ← expectExprEq "polymorphic definition instantiates at Type 0" polyIdBoolTy boolType
   let polyIdTypeTy ← infer env [] polyIdTypeArg
   let _ ← expectExprEq "polymorphic definition instantiates at Type 1" polyIdTypeTy (.sort 0)
+  let polyBoxBoolTy ← infer env [] polyBoxBool
+  let _ ←
+    expectExprEq
+      "polymorphic inductive constructor instantiates at Type 0"
+      polyBoxBoolTy
+      (polyBoxType 0 boolType)
+  let polyBoxBoolNf ← normalize env polyBoxRecOnTrue
+  let _ ←
+    expectExprEq
+      "polymorphic inductive recursor reduces at Type 0"
+      polyBoxBoolNf
+      boolTrue
+  let polyBoxTypeBoxTy ← infer env [] polyBoxTypeBox
+  let _ ←
+    expectExprEq
+      "polymorphic inductive constructor instantiates at Type 1"
+      polyBoxTypeBoxTy
+      (polyBoxType 1 (.sort 0))
+  let polyBoxTypeNf ← normalize env polyBoxRecOnBoolType
+  let _ ←
+    expectExprEq
+      "polymorphic inductive recursor reduces at Type 1"
+      polyBoxTypeNf
+      boolType
+  match env.find? "PolyBox.rec" with
+  | some info =>
+      let _ ←
+        expect
+          "polymorphic recursor keeps inductive levels before the motive level"
+          (info.levelParams = ["u", "u'"])
+      pure ()
+  | none => .error "PolyBox.rec should be present in the environment"
+  let badOpenInductive : InductiveSpec :=
+    {
+      name := "BadOpenInductive"
+      levelParams := ["u"]
+      params := []
+      level := .param "v"
+      ctors := []
+    }
+  let badDuplicateInductive : InductiveSpec :=
+    {
+      name := "BadDuplicateInductive"
+      levelParams := ["u", "u"]
+      params := []
+      level := .param "u"
+      ctors := []
+    }
+  let badTargetLevelInductive : InductiveSpec :=
+    {
+      name := "BadTargetLevelInductive"
+      levelParams := ["u"]
+      params := [{ name := "α", type := .sort (.param "u") }]
+      level := .param "u"
+      ctors :=
+        [
+          {
+            name := "BadTargetLevelInductive.mk"
+            fields := []
+            target? := some (Expr.mkApps (.const "BadTargetLevelInductive" [0]) [.bvar 0])
+          }
+        ]
+    }
   let _ ←
     expectError
       "universe-polymorphic definitions reject unbound level parameters"
@@ -80,6 +143,21 @@ def universeTests : Result Unit := do
   expectError
     "universe-polymorphic definitions reject duplicate level parameters"
     (addDefinitionWithLevels [] "badPolyDup" ["u", "u"] polyIdType polyIdValue)
+  let _ ←
+    expectError
+      "universe-polymorphic inductives reject unbound result levels"
+      (addInductive [] badOpenInductive)
+  let _ ←
+    expectError
+      "universe-polymorphic inductives reject duplicate level parameters"
+      (addInductive [] badDuplicateInductive)
+  let _ ←
+    expectError
+      "constructor targets must use inductive universe parameters"
+      (addInductive [] badTargetLevelInductive)
+  expectError
+    "recursor reduction rejects mismatched constructor universe arguments"
+    (normalize env polyBoxRecCtorLevelMismatch)
 
 def substitutionTests : Result Unit := do
   let body := Expr.app (.bvar 1) (.bvar 0)

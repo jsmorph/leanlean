@@ -463,6 +463,18 @@ def polyIdValue : Expr :=
     (.sort (.param "u"))
     (.lam "x" (.bvar 0) (.bvar 0))
 
+def polyBoxSpec : InductiveSpec :=
+  {
+    name := "PolyBox"
+    levelParams := ["u"]
+    params := [{ name := "α", type := .sort (.param "u") }]
+    level := .param "u"
+    ctors :=
+      [
+        { name := "PolyBox.mk", fields := [{ name := "value", type := .bvar 0 }] }
+      ]
+  }
+
 def sampleEnv : Result Env := do
   let env ← addInductive [] boolSpec
   let env ← addInductive env natSpec
@@ -475,6 +487,7 @@ def sampleEnv : Result Env := do
   let env ← addInductive env badParamSpec
   let env ← addInductive env natListTreeSpec
   let env ← addInductive env letTreeSpec
+  let env ← addInductive env polyBoxSpec
   let one := Expr.mkApps (const0 "Nat.succ") [const0 "Nat.zero"]
   let env ← addDefinition env "one" natType one
   addDefinitionWithLevels env "polyId" ["u"] polyIdType polyIdValue
@@ -505,6 +518,60 @@ def polyIdBool : Expr :=
 
 def polyIdTypeArg : Expr :=
   polyId 1 (.sort 0) boolType
+
+def polyBoxType (level : Level) (elem : Expr) : Expr :=
+  Expr.mkApps (.const "PolyBox" [level]) [elem]
+
+def polyBoxMk (level : Level) (elem value : Expr) : Expr :=
+  Expr.mkApps (.const "PolyBox.mk" [level]) [elem, value]
+
+def polyBoxBool : Expr :=
+  polyBoxMk 0 boolType boolTrue
+
+def polyBoxBoolMotive : Expr :=
+  .lam "box" (polyBoxType 0 boolType) boolType
+
+def polyBoxBoolCase : Expr :=
+  .lam "value" boolType (.bvar 0)
+
+def polyBoxRecOnTrue : Expr :=
+  Expr.mkApps
+    (.const "PolyBox.rec" [0, 0])
+    [
+      boolType,
+      polyBoxBoolMotive,
+      polyBoxBoolCase,
+      polyBoxBool
+    ]
+
+def polyBoxTypeBox : Expr :=
+  polyBoxMk 1 (.sort 0) boolType
+
+def polyBoxTypeMotive : Expr :=
+  .lam "box" (polyBoxType 1 (.sort 0)) (.sort 0)
+
+def polyBoxTypeCase : Expr :=
+  .lam "value" (.sort 0) (.bvar 0)
+
+def polyBoxRecOnBoolType : Expr :=
+  Expr.mkApps
+    (.const "PolyBox.rec" [1, 1])
+    [
+      .sort 0,
+      polyBoxTypeMotive,
+      polyBoxTypeCase,
+      polyBoxTypeBox
+    ]
+
+def polyBoxRecCtorLevelMismatch : Expr :=
+  Expr.mkApps
+    (.const "PolyBox.rec" [0, 0])
+    [
+      boolType,
+      polyBoxBoolMotive,
+      polyBoxBoolCase,
+      polyBoxTypeBox
+    ]
 
 def eqType (elem lhs rhs : Expr) : Expr :=
   Expr.mkApps (const0 "Eq") [elem, lhs, rhs]
@@ -922,6 +989,18 @@ def demoReport : Result (List String) := do
   let _ ← checkDefEq env polyIdTypeTy (.sort 0)
   let polyIdTypeNf ← normalize env polyIdTypeArg
   let _ ← checkDefEq env polyIdTypeNf boolType
+  let polyBoxBoolTy ← infer env [] polyBoxBool
+  let _ ← checkDefEq env polyBoxBoolTy (polyBoxType 0 boolType)
+  let polyBoxBoolRecTy ← infer env [] polyBoxRecOnTrue
+  let _ ← checkDefEq env polyBoxBoolRecTy boolType
+  let polyBoxBoolRecNf ← normalize env polyBoxRecOnTrue
+  let _ ← checkDefEq env polyBoxBoolRecNf boolTrue
+  let polyBoxTypeBoxTy ← infer env [] polyBoxTypeBox
+  let _ ← checkDefEq env polyBoxTypeBoxTy (polyBoxType 1 (.sort 0))
+  let polyBoxTypeRecTy ← infer env [] polyBoxRecOnBoolType
+  let _ ← checkDefEq env polyBoxTypeRecTy (.sort 0)
+  let polyBoxTypeRecNf ← normalize env polyBoxRecOnBoolType
+  let _ ← checkDefEq env polyBoxTypeRecNf boolType
   let _ ← infer env [] (recConst "Nat.rec")
   let natRecPartialTy ← infer env [] natRecPartial
   let _ ←
@@ -1086,10 +1165,14 @@ def demoReport : Result (List String) := do
   match infer env [] (.const "polyId" [.param "u"]) with
   | .ok _ => .error "raw constants should reject open universe arguments"
   | .error _ => pure ()
+  match normalize env polyBoxRecCtorLevelMismatch with
+  | .ok _ => .error "PolyBox.rec should reject mismatched constructor universe arguments"
+  | .error _ => pure ()
   pure
     [
       "definition one : Nat checks",
       "polymorphic definitions instantiate at data and type universes",
+      "polymorphic inductives instantiate at data and type universes",
       "recursor constants type-check and support partial application",
       "Nat.rec on one normalizes to Bool.false",
       "List Bool constructor application checks",
