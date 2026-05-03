@@ -106,6 +106,12 @@ def universeTests : Result Unit := do
   let _ ← expectExprEq "Prop inductive types live in Prop" pTrueTy propSort
   let eqBoolTy ← infer env [] (eqType boolType boolTrue boolTrue)
   let _ ← expectExprEq "equality lives in Prop" eqBoolTy propSort
+  let eqTypeTy ← infer env [] (eqReflAt type1Level type0Sort boolType)
+  let _ ←
+    expectExprEq
+      "equality instantiates above Type 0"
+      eqTypeTy
+      (eqTypeAt type1Level type0Sort boolType boolType)
   let pTrueRecTy ← infer env [] pTrueRecOnIntro
   let _ ← checkDefEq env pTrueRecTy pProp
   let pTrueRecNf ← normalize env pTrueRecOnIntro
@@ -122,6 +128,10 @@ def universeTests : Result Unit := do
     expectError
       "subsingleton Prop inductive recursors require motive universe arguments"
       (infer env [] (const0 "PTrue.rec"))
+  let _ ←
+    expectError
+      "universe-polymorphic equality rejects open universe arguments"
+      (infer env [] (.const "Eq" [.param "u"]))
   let polyIdBoolTy ← infer env [] polyIdBool
   let _ ← expectExprEq "polymorphic definition instantiates at Type 0" polyIdBoolTy boolType
   let polyIdTypeTy ← infer env [] polyIdTypeArg

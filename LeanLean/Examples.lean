@@ -96,7 +96,8 @@ def listSpec : InductiveSpec :=
 def eqSpec : InductiveSpec :=
   {
     name := "Eq"
-    params := [{ name := "α", type := type0Sort }]
+    levelParams := ["u"]
+    params := [{ name := "α", type := .sort (.param "u") }]
     indices :=
       [
         { name := "lhs", type := .bvar 0 },
@@ -108,7 +109,7 @@ def eqSpec : InductiveSpec :=
         {
           name := "Eq.refl"
           fields := [{ name := "value", type := .bvar 0 }]
-          target? := some (Expr.mkApps (const0 "Eq") [.bvar 1, .bvar 0, .bvar 0])
+          target? := some (Expr.mkApps (.const "Eq" [.param "u"]) [.bvar 1, .bvar 0, .bvar 0])
         }
       ]
   }
@@ -726,11 +727,17 @@ def polyBoxRecCtorLevelMismatch : Expr :=
       polyBoxTypeBox
     ]
 
+def eqTypeAt (level : Level) (elem lhs rhs : Expr) : Expr :=
+  Expr.mkApps (.const "Eq" [level]) [elem, lhs, rhs]
+
 def eqType (elem lhs rhs : Expr) : Expr :=
-  Expr.mkApps (const0 "Eq") [elem, lhs, rhs]
+  eqTypeAt type0Level elem lhs rhs
+
+def eqReflAt (level : Level) (elem value : Expr) : Expr :=
+  Expr.mkApps (.const "Eq.refl" [level]) [elem, value]
 
 def eqRefl (elem value : Expr) : Expr :=
-  Expr.mkApps (const0 "Eq.refl") [elem, value]
+  eqReflAt type0Level elem value
 
 def vecType (elem index : Expr) : Expr :=
   Expr.mkApps (const0 "Vec") [elem, index]
