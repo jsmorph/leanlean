@@ -327,10 +327,7 @@ def constructorTypeExpr (spec : InductiveSpec) (ctor : ConstructorSpec) : Result
   pure (Telescope.bindForall spec.params withFields)
 
 def inferSortOfPi (domain codomain : Level) : Level :=
-  if Level.defEq codomain .zero then
-    .zero
-  else
-    Level.normalize (.max domain codomain)
+  Level.normalize (.imax domain codomain)
 
 def recursiveTargetExpr (spec : InductiveSpec) : Expr :=
   let params := Expr.bvarArgs spec.params.length spec.indices.length

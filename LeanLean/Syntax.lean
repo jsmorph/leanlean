@@ -7,6 +7,7 @@ inductive Level where
   | param : Name → Level
   | succ : Level → Level
   | max : Level → Level → Level
+  | imax : Level → Level → Level
   deriving DecidableEq, Repr, Inhabited
 
 namespace Level
@@ -28,12 +29,14 @@ def closed : Level → Bool
   | .param _ => false
   | .succ level => closed level
   | .max left right => closed left && closed right
+  | .imax left right => closed left && closed right
 
 def closedIn (params : List Name) : Level → Bool
   | .zero => true
   | .param name => params.contains name
   | .succ level => closedIn params level
   | .max left right => closedIn params left && closedIn params right
+  | .imax left right => closedIn params left && closedIn params right
 
 def bumpSummands : List Summand → List Summand :=
   List.map fun summand => { summand with offset := summand.offset + 1 }
@@ -49,46 +52,102 @@ def mergeSummand (summand : Summand) : List Summand → List Summand
 def mergeSummands (left right : List Summand) : List Summand :=
   right.foldl (fun acc summand => mergeSummand summand acc) left
 
-def normalizeSummands : Level → List Summand
-  | .zero => [{ name? := none, offset := 0 }]
-  | .param name => [{ name? := some name, offset := 0 }]
-  | .succ level => bumpSummands (normalizeSummands level)
-  | .max left right =>
-      mergeSummands (normalizeSummands left) (normalizeSummands right)
+def normalizeSummands? : Level → Option (List Summand)
+  | .zero => some [{ name? := none, offset := 0 }]
+  | .param name => some [{ name? := some name, offset := 0 }]
+  | .succ level => bumpSummands <$> normalizeSummands? level
+  | .max left right => do
+      let left ← normalizeSummands? left
+      let right ← normalizeSummands? right
+      pure (mergeSummands left right)
+  | .imax _ _ => none
 termination_by level => level
+
+def normalizeSummands (level : Level) : List Summand :=
+  match normalizeSummands? level with
+  | some summands => summands
+  | none => panic! s!"cannot flatten unresolved imax level {repr level}"
 
 def toLevel : Summand → Level
   | { name? := none, offset } => ofNat offset
   | { name? := some name, offset } =>
       Nat.rec (.param name) (fun _ acc => .succ acc) offset
 
-def normalize : Level → Level
+def fromSummands : List Summand → Level
+  | [] => .zero
+  | summand :: rest =>
+      rest.foldl (fun acc entry => .max acc (toLevel entry)) (toLevel summand)
+
+def reduceIMax : Level → Level
+  | .zero => .zero
+  | .param name => .param name
+  | .succ level => .succ (reduceIMax level)
+  | .max left right => .max (reduceIMax left) (reduceIMax right)
+  | .imax left right =>
+      let left := reduceIMax left
+      let right := reduceIMax right
+      match right with
+      | .zero => .zero
+      | .succ _ => .max left right
+      | _ =>
+          match normalizeSummands? right with
+          | some summands =>
+              if summands.any fun summand => 0 < summand.offset then
+                .max left right
+              else
+                .imax left right
+          | none => .imax left right
+termination_by level => level
+
+partial def normalize : Level → Level
   | level =>
-      match normalizeSummands level with
-      | [] => .zero
-      | summand :: rest =>
-          rest.foldl (fun acc entry => .max acc (toLevel entry)) (toLevel summand)
+      let reduced := reduceIMax level
+      match normalizeSummands? reduced with
+      | some summands => fromSummands summands
+      | none =>
+          match reduced with
+          | .succ level => .succ (normalize level)
+          | .max left right => .max (normalize left) (normalize right)
+          | .imax left right => .imax (normalize left) (normalize right)
+          | other => other
 
 def closedEval? (level : Level) : Option Nat :=
-  let summands := normalizeSummands level
-  if summands.all fun summand => summand.name?.isNone then
-    some (summands.foldl (fun acc summand => Nat.max acc summand.offset) 0)
-  else
-    none
+  match normalizeSummands? (normalize level) with
+  | some summands =>
+      if summands.all fun summand => summand.name?.isNone then
+        some (summands.foldl (fun acc summand => Nat.max acc summand.offset) 0)
+      else
+        none
+  | none => none
 
 def definitelyPositive (level : Level) : Bool :=
-  (normalizeSummands level).any fun summand => 0 < summand.offset
+  match normalizeSummands? (normalize level) with
+  | some summands => summands.any fun summand => 0 < summand.offset
+  | none => false
 
 def eval (level : Level) : Nat :=
   match closedEval? level with
   | some value => value
   | none => panic! s!"attempted to evaluate open universe level {repr level}"
 
-def defEq (left right : Level) : Bool :=
-  let leftN := normalizeSummands left
-  let rightN := normalizeSummands right
-  leftN.length = rightN.length &&
-    leftN.all fun summand => rightN.any fun other => other = summand
+partial def defEq (left right : Level) : Bool :=
+  let left := normalize left
+  let right := normalize right
+  match normalizeSummands? left, normalizeSummands? right with
+  | some leftN, some rightN =>
+      leftN.length = rightN.length &&
+        leftN.all fun summand => rightN.any fun other => other = summand
+  | _, _ =>
+      match left, right with
+      | .zero, .zero => true
+      | .param left, .param right => left = right
+      | .succ left, .succ right => defEq left right
+      | .max leftA leftB, .max rightA rightB =>
+          (defEq leftA rightA && defEq leftB rightB) ||
+            (defEq leftA rightB && defEq leftB rightA)
+      | .imax leftA leftB, .imax rightA rightB =>
+          defEq leftA rightA && defEq leftB rightB
+      | _, _ => false
 
 def summandLe (left right : Summand) : Bool :=
   match left.name?, right.name? with
@@ -98,10 +157,13 @@ def summandLe (left right : Summand) : Bool :=
   | some _, none => false
 
 def le (left right : Level) : Bool :=
-  let leftN := normalizeSummands left
-  let rightN := normalizeSummands right
-  leftN.all fun leftSummand =>
-    rightN.any fun rightSummand => summandLe leftSummand rightSummand
+  let left := normalize left
+  let right := normalize right
+  match normalizeSummands? left, normalizeSummands? right with
+  | some leftN, some rightN =>
+      leftN.all fun leftSummand =>
+        rightN.any fun rightSummand => summandLe leftSummand rightSummand
+  | _, _ => defEq left right
 
 def instantiate (params : List Name) (values : List Level) : Level → Level
   | .zero => .zero
@@ -111,6 +173,7 @@ def instantiate (params : List Name) (values : List Level) : Level → Level
       | none => .param name
   | .succ level => .succ (instantiate params values level)
   | .max left right => .max (instantiate params values left) (instantiate params values right)
+  | .imax left right => .imax (instantiate params values left) (instantiate params values right)
 termination_by level => level
 
 end Level

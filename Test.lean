@@ -67,6 +67,22 @@ def universeTests : Result Unit := do
     expect
       "symbolic universe ordering rejects unrelated parameters"
       (!(Level.le (.param "u") (.param "v")))
+  let _ ←
+    expect
+      "imax into Prop reduces to Prop"
+      (Level.defEq (Level.normalize (.imax (.param "u") propLevel)) propLevel)
+  let _ ←
+    expect
+      "imax into a data universe reduces to max"
+      (Level.defEq
+        (Level.normalize (.imax (.param "u") (typeLevel (.param "v"))))
+        (.max (.param "u") (typeLevel (.param "v"))))
+  let _ ←
+    expect
+      "unresolved symbolic imax is not collapsed to max"
+      (!(Level.defEq
+        (Level.normalize (.imax (.param "u") (.param "v")))
+        (.max (.param "u") (.param "v"))))
   let _ ← expect "Sort 0 is not a data universe" (!propLevel.definitelyPositive)
   let _ ← expect "Type 0 is a data universe" type0Level.definitelyPositive
   let _ ← expect "Type u is always above Prop" ((typeLevel (.param "u")).definitelyPositive)
