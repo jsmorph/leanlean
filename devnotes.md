@@ -79,6 +79,7 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Add raw natural and string literal expressions to syntax, typing, normalization, importer translation, and dependency extraction.
 - [x] Import Lean's kernel-relevant structure-extension metadata and check field projection metadata during replay.
 - [x] Specify recursive-definition import as an explicit rejection of Lean recursive-definition artifacts.
+- [x] Add a first differential term harness comparing Lean-inferred types and reduced values with local checking.
 
 ## Current Decisions
 
@@ -137,6 +138,8 @@ Broad core replay exposed two additional rule errors.  First, the local data-uni
 The quotient primitive subset follows the Lean reference's low-level `Quot` API rather than the derived setoid-based `Quotient` interface.  The local syntax makes the underlying type and relation explicit in `Quot`, `Quot.mk`, `Quot.lift`, `Quot.ind`, and `Quot.sound`.  Primitive declaration validation checks all five types before admission.  Reduction contains one quotient rule: a saturated `Quot.lift` whose target reduces to `Quot.mk` computes to the representative function applied to the representative, after the reducer checks universe, type, and relation agreement.
 
 The first faithfulness harness now lives under `Faithfulness`.  It runs small Lean source files through the installed Lean compiler and separates examples that Lean must accept from examples that Lean must reject.  The ordinary kernel regression suite contains matching local bridge tests for the same behavior classes, because the project does not yet translate Lean source or exported declarations into the local syntax.
+
+The first differential term harness lives in `Faithfulness/Differential.lean`.  It elaborates selected Lean terms inside Lean, asks Lean for each inferred type and reduced value, translates the term, type, and value into the local syntax, replays the required Lean environment closure locally, and checks the local inferred type and normalized value against Lean's results.  The initial cases cover transparent definitions, abbreviations, primitive recursors, large proposition recursors, equality recursors, dependent projections, and `Decidable.rec`.
 
 Projection work follows Lean's representation split.  The core term language now has `proj S i s`, because treating projections as ordinary constants would hide a kernel reduction rule behind declaration names.  Projection functions are represented in the environment, with metadata recording the structure name, constructor name, number of parameters, projection index, and constructor-field index.  The implementation covers one-constructor inductives, dependent field types through earlier projections, projection functions as checked declarations, Prop projection rejection for computational fields, indexed projection maps that skip whole-index fields, and eta for non-recursive data structures whose constructor target matches the major premise type.
 
