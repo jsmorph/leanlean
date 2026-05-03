@@ -510,6 +510,7 @@ partial def exprConstants (expr : Expr) : List Name :=
   | .bvar _ => []
   | .sort _ => []
   | .const name _ => [name]
+  | .lit lit => [lit.typeName]
   | .app fn arg => appendNewNames (exprConstants fn) (exprConstants arg)
   | .lam _ type body => appendNewNames (exprConstants type) (exprConstants body)
   | .forallE _ type body => appendNewNames (exprConstants type) (exprConstants body)
@@ -610,6 +611,7 @@ def containsExprAt (target : Expr) (depth : Nat) (expr : Expr) : Bool :=
     | .bvar _ => false
     | .sort _ => false
     | .const _ _ => false
+    | .lit _ => false
     | .app fn arg => containsExprAt target depth fn || containsExprAt target depth arg
     | .lam _ ty body =>
         containsExprAt target depth ty || containsExprAt target (depth + 1) body
@@ -630,6 +632,7 @@ def containsBVarAt (targetIndex depth : Nat) (expr : Expr) : Bool :=
   | .bvar index => index = targetIndex + depth
   | .sort _ => false
   | .const _ _ => false
+  | .lit _ => false
   | .app fn arg => containsBVarAt targetIndex depth fn || containsBVarAt targetIndex depth arg
   | .lam _ ty body =>
       containsBVarAt targetIndex depth ty || containsBVarAt targetIndex (depth + 1) body
@@ -647,6 +650,7 @@ def containsLocalBVarAt (localCount depth : Nat) (expr : Expr) : Bool :=
   | .bvar index => depth <= index && index < depth + localCount
   | .sort _ => false
   | .const _ _ => false
+  | .lit _ => false
   | .app fn arg => containsLocalBVarAt localCount depth fn || containsLocalBVarAt localCount depth arg
   | .lam _ ty body =>
       containsLocalBVarAt localCount depth ty || containsLocalBVarAt localCount (depth + 1) body
@@ -1474,8 +1478,30 @@ partial def reducePrimitiveApp
   | .quotLift => reduceQuotLiftApp env levels args (levelParams := levelParams)
   | .quotType | .quotMk | .quotInd | .quotSound => pure none
 
+partial def requireConstant (env : Env) (name : Name) : Result Unit :=
+  if env.contains name then
+    pure ()
+  else
+    .error s!"unknown constant required by primitive literal: {name}"
+
+partial def requireNatLiteralConstructors (env : Env) : Nat → Result Unit
+  | 0 => requireConstant env "Nat.zero"
+  | _ + 1 => do
+      let _ ← requireConstant env "Nat.zero"
+      requireConstant env "Nat.succ"
+
+partial def natLiteralConstructorExpr (env : Env) : Nat → Result Expr
+  | 0 => do
+      let _ ← requireNatLiteralConstructors env 0
+      pure (.const "Nat.zero" [])
+  | n + 1 => do
+      let _ ← requireNatLiteralConstructors env (n + 1)
+      pure (Expr.mkApps (.const "Nat.succ" []) [.lit (.natVal n)])
+
 partial def whnf (env : Env) (expr : Expr) (levelParams : LevelContext := []) : Result Expr := do
   match expr with
+  | .lit (.natVal value) => whnf env (← natLiteralConstructorExpr env value) (levelParams := levelParams)
+  | .lit (.strVal _) => pure expr
   | .proj typeName index struct => do
       match ← reduceProjection env typeName index struct (levelParams := levelParams) with
       | some reduced => whnf env reduced (levelParams := levelParams)
@@ -1530,6 +1556,7 @@ partial def normalize (env : Env) (expr : Expr) (levelParams : LevelContext := [
   | .bvar _ => pure reduced
   | .sort _ => pure reduced
   | .const _ _ => pure reduced
+  | .lit _ => pure reduced
   | .lam name ty body => do
       let ty' ← normalize env ty (levelParams := levelParams)
       let body' ← normalize env body (levelParams := levelParams)
@@ -1618,6 +1645,13 @@ partial def infer
           let _ ← info.checkLevelsIn levelParams levels
           info.type levels (levelParams := levelParams)
       | none => .error s!"unknown constant: {name}"
+  | .lit literal => do
+      let type := Expr.literalType literal
+      let _ ← inferSort env ctx type (levelParams := levelParams)
+      match literal with
+      | .natVal value => requireNatLiteralConstructors env value
+      | .strVal _ => pure ()
+      pure type
   | .app _ _ => inferApp env ctx expr (levelParams := levelParams)
   | .lam name type body => do
       let _ ← inferSort env ctx type (levelParams := levelParams)
@@ -1660,6 +1694,7 @@ partial def positiveParamOccurrence
     | .bvar _ => pure false
     | .sort _ => pure false
     | .const _ _ => pure false
+    | .lit _ => pure false
     | .letE _ _ _ _ =>
         .error s!"unexpected let-expression in positivity check: {repr expr}"
     | .lam _ _ _ =>
@@ -1846,6 +1881,7 @@ partial def analyzeRecursiveShape
   match expr with
   | .bvar _ => pure .none
   | .sort _ => pure .none
+  | .lit _ => pure .none
   | .const _ _ =>
       match decomposeInductiveApp env expr with
       | some (headName, info, levels, args) => analyzeInductiveApp headName info levels args

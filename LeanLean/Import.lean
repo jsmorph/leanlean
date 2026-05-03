@@ -50,7 +50,8 @@ def translateExpr : Lean.Expr → Result LeanLean.Expr
   | .mdata _ body => translateExpr body
   | .fvar id => .error s!"free variable is outside the local kernel syntax: {repr id}"
   | .mvar id => .error s!"term metavariable is outside the local kernel syntax: {repr id}"
-  | .lit lit => .error s!"literal expression is outside the local kernel syntax: {repr lit}"
+  | .lit (.natVal value) => pure (.lit (.natVal value))
+  | .lit (.strVal value) => pure (.lit (.strVal value))
 termination_by expr => expr
 
 def translateReducibilityHints : Lean.ReducibilityHints → ReducibilityHint
@@ -364,8 +365,23 @@ def appendLeanNames (names extra : List Lean.Name) : List Lean.Name :=
         acc ++ [name])
     names
 
-def leanExprConstants (expr : Lean.Expr) : List Lean.Name :=
-  expr.getUsedConstants.toList
+partial def leanExprConstants : Lean.Expr → List Lean.Name
+  | .bvar _ => []
+  | .sort _ => []
+  | .const name _ => [name]
+  | .app fn arg => appendLeanNames (leanExprConstants fn) (leanExprConstants arg)
+  | .lam _ type body _ => appendLeanNames (leanExprConstants type) (leanExprConstants body)
+  | .forallE _ type body _ => appendLeanNames (leanExprConstants type) (leanExprConstants body)
+  | .letE _ type value body _ =>
+      appendLeanNames
+        (appendLeanNames (leanExprConstants type) (leanExprConstants value))
+        (leanExprConstants body)
+  | .proj typeName _ struct => appendLeanNames [typeName] (leanExprConstants struct)
+  | .mdata _ body => leanExprConstants body
+  | .lit (.natVal _) => [``Nat]
+  | .lit (.strVal _) => [``String]
+  | .fvar _ => []
+  | .mvar _ => []
 
 def recursorRuleConstants (rule : Lean.RecursorRule) : List Lean.Name :=
   leanExprConstants rule.rhs

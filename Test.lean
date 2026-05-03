@@ -1265,6 +1265,62 @@ def faithfulnessBridgeTests : Result Unit := do
     "Lean rejects quotient relation mismatches"
     (normalize env boolQuotLiftRelationMismatch)
 
+def literalTests : Result Unit := do
+  let env ← sampleEnv
+  let litThree : Expr := .lit (.natVal 3)
+  let ctorThree := natSucc (natSucc (natSucc natZero))
+  let litThreeTy ← infer env [] litThree
+  let _ ← checkDefEq env litThreeTy natType
+  let litThreeNf ← normalize env litThree
+  let _ ← expectExprEq "natural literals normalize through Nat constructors" litThreeNf ctorThree
+  let _ ← checkDefEq env litThree ctorThree
+  let env ← addDefinition env "threeLit" natType litThree
+  let threeLitNf ← normalize env (const0 "threeLit")
+  let _ ← expectExprEq "definitions may store natural literals" threeLitNf ctorThree
+  let natOnlyEnv ← addAxiom [] "Nat" type0Sort
+  let _ ← expectError "natural literal typing requires Nat constructors" (infer natOnlyEnv [] (.lit (.natVal 0)))
+  let _ ← expectError "natural literal reduction requires Nat constructors" (normalize [] (.lit (.natVal 0)))
+
+  let env ← addAxiom env "String" type0Sort
+  let helloLit : Expr := .lit (.strVal "hello")
+  let helloTy ← infer env [] helloLit
+  let _ ← checkDefEq env helloTy (const0 "String")
+  let helloNf ← normalize env helloLit
+  let _ ← expectExprEq "string literals are typed neutral literals" helloNf helloLit
+
+  let importedNatLitName := Lean.Name.mkSimple "importedNatLit"
+  let importedNatLitDecl : Lean.Declaration :=
+    .defnDecl
+      {
+        name := importedNatLitName
+        levelParams := []
+        type := .const ``Nat []
+        value := .lit (.natVal 2)
+        hints := .regular 0
+        safety := .safe
+      }
+  let importedNatLit ← Import.translateDeclaration importedNatLitDecl
+  let env ← addDeclaration env importedNatLit
+  let importedNatLitNf ← normalize env (const0 "importedNatLit")
+  let _ ←
+    expectExprEq
+      "Lean declaration importer translates natural literals"
+      importedNatLitNf
+      (natSucc (natSucc natZero))
+  let translatedString ← Import.translateExpr (.lit (.strVal "lean"))
+  let _ ←
+    expectExprEq
+      "Lean expression importer translates string literals"
+      translatedString
+      (.lit (.strVal "lean"))
+  let natDependencies := Import.leanExprConstants (.lit (.natVal 4))
+  let stringDependencies := Import.leanExprConstants (.lit (.strVal "x"))
+  let _ ←
+    expect
+      "Lean literal dependency extraction records literal types"
+      (natDependencies.any (· == ``Nat) && stringDependencies.any (· == ``String))
+  pure ()
+
 def rawEntryTests : Result Unit := do
   let env ← sampleEnv
   let _ ← expectError "normalization rejects recursor missing universe argument" (normalize env natRecMissingLevel)
@@ -1286,6 +1342,7 @@ def kernelRegressionTests : Result Unit := do
   let _ ← environmentTests
   let _ ← projectionTests
   let _ ← faithfulnessBridgeTests
+  let _ ← literalTests
   let _ ← rawEntryTests
   let _ ← demoReport
   pure ()
@@ -1304,6 +1361,7 @@ def testReport : Result (List String) := do
   let _ ← environmentTests
   let _ ← projectionTests
   let _ ← faithfulnessBridgeTests
+  let _ ← literalTests
   let _ ← rawEntryTests
   let _ ← demoReport
   pure
@@ -1321,6 +1379,7 @@ def testReport : Result (List String) := do
       "environment declaration metadata checks",
       "projection typing, reduction, and eta checks",
       "faithfulness bridge checks local expressions against the Lean corpus",
+      "literal expressions type-check and normalize",
       "raw inference and normalization entry points reject malformed primitives",
       "kernel example regressions check"
     ]

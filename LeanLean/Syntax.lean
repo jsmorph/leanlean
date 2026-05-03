@@ -178,10 +178,24 @@ termination_by level => level
 
 end Level
 
+inductive Literal where
+  | natVal : Nat → Literal
+  | strVal : String → Literal
+  deriving DecidableEq, Repr, Inhabited
+
+namespace Literal
+
+def typeName : Literal → Name
+  | .natVal _ => "Nat"
+  | .strVal _ => "String"
+
+end Literal
+
 inductive Expr where
   | bvar : Nat → Expr
   | sort : Level → Expr
   | const : Name → List Level → Expr
+  | lit : Literal → Expr
   | app : Expr → Expr → Expr
   | lam : String → Expr → Expr → Expr
   | forallE : String → Expr → Expr → Expr
@@ -190,6 +204,9 @@ inductive Expr where
   deriving DecidableEq, Repr, Inhabited
 
 namespace Expr
+
+def literalType (lit : Literal) : Expr :=
+  .const lit.typeName []
 
 def mkApps (fn : Expr) : List Expr → Expr
   | [] => fn
@@ -214,6 +231,7 @@ def closedAt (depth : Nat) : Expr → Bool
   | .bvar index => index < depth
   | .sort level => level.closed
   | .const _ levels => levels.all Level.closed
+  | .lit _ => true
   | .app fn arg => closedAt depth fn && closedAt depth arg
   | .lam _ ty body => closedAt depth ty && closedAt (depth + 1) body
   | .forallE _ ty body => closedAt depth ty && closedAt (depth + 1) body
@@ -228,6 +246,7 @@ def closedAtIn (params : List Name) (depth : Nat) : Expr → Bool
   | .bvar index => index < depth
   | .sort level => level.closedIn params
   | .const _ levels => levels.all (Level.closedIn params)
+  | .lit _ => true
   | .app fn arg => closedAtIn params depth fn && closedAtIn params depth arg
   | .lam _ ty body => closedAtIn params depth ty && closedAtIn params (depth + 1) body
   | .forallE _ ty body => closedAtIn params depth ty && closedAtIn params (depth + 1) body
@@ -245,6 +264,7 @@ def alphaEq : Expr → Expr → Bool
       leftName = rightName &&
       leftLevels.length = rightLevels.length &&
       (List.zip leftLevels rightLevels).all fun pair => Level.defEq pair.1 pair.2
+  | .lit left, .lit right => left = right
   | .app leftFn leftArg, .app rightFn rightArg =>
       alphaEq leftFn rightFn && alphaEq leftArg rightArg
   | .lam _ leftTy leftBody, .lam _ rightTy rightBody =>
@@ -263,6 +283,7 @@ def occursConst (target : Name) : Expr → Bool
   | .bvar _ => false
   | .sort _ => false
   | .const name _ => name = target
+  | .lit _ => false
   | .app fn arg => occursConst target fn || occursConst target arg
   | .lam _ ty body => occursConst target ty || occursConst target body
   | .forallE _ ty body => occursConst target ty || occursConst target body
@@ -278,6 +299,7 @@ def liftFrom (cutoff delta : Nat) : Expr → Expr
         .bvar (index + delta)
   | .sort level => .sort level
   | .const name levels => .const name levels
+  | .lit literal => .lit literal
   | .app fn arg => .app (liftFrom cutoff delta fn) (liftFrom cutoff delta arg)
   | .lam name ty body =>
       .lam name (liftFrom cutoff delta ty) (liftFrom (cutoff + 1) delta body)
@@ -305,6 +327,7 @@ def lowerFrom (cutoff delta : Nat) : Expr → Option Expr
         none
   | .sort level => some (.sort level)
   | .const name levels => some (.const name levels)
+  | .lit literal => some (.lit literal)
   | .app fn arg => do
       let fn' ← lowerFrom cutoff delta fn
       let arg' ← lowerFrom cutoff delta arg
@@ -339,6 +362,7 @@ def instantiateFrom (cutoff : Nat) (value : Expr) : Expr → Expr
         .bvar (index - 1)
   | .sort level => .sort level
   | .const name levels => .const name levels
+  | .lit literal => .lit literal
   | .app fn arg =>
       .app (instantiateFrom cutoff value fn) (instantiateFrom cutoff value arg)
   | .lam name ty body =>
@@ -382,6 +406,7 @@ def instantiateManyFrom (cutoff : Nat) (values : List Expr) : Expr → Expr
           .bvar (index - values.length)
   | .sort level => .sort level
   | .const name levels => .const name levels
+  | .lit literal => .lit literal
   | .app fn arg =>
       .app (instantiateManyFrom cutoff values fn) (instantiateManyFrom cutoff values arg)
   | .lam name ty body =>
@@ -412,6 +437,7 @@ def instantiateLevels (params : List Name) (values : List Level) : Expr → Expr
   | .sort level => .sort (Level.instantiate params values level)
   | .const name levels =>
       .const name (levels.map (Level.instantiate params values))
+  | .lit literal => .lit literal
   | .app fn arg =>
       .app (instantiateLevels params values fn) (instantiateLevels params values arg)
   | .lam name ty body =>
