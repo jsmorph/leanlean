@@ -41,8 +41,8 @@
   - [x] Draft the paper claim structure around specification, implementation, and Lean 4 faithfulness.
   - [x] State remaining Lean 4 divergences and unsupported features in paper-ready form.
 - [ ] Phase 12: External checker interfaces.
-  - [ ] Add typed checker outcomes for acceptance, supported-fragment rejection, unsupported input, and internal checker failure.
-  - [ ] Add `leanlean-check-module`, which loads compiled Lean modules with `Lean.importModules`, takes explicit root declarations, and replays the root-name closure through the local checker.
+  - [x] Add typed checker outcomes for acceptance, supported-fragment rejection, unsupported input, and internal checker failure.
+  - [x] Add `leanlean-check-module`, which loads compiled Lean modules with `Lean.importModules`, takes explicit root declarations, and replays the root-name closure through the local checker.
   - [ ] Add module-checker tests for accepted declarations, unsupported declarations, and rejected declarations inside the supported fragment.
   - [ ] Specify the accepted `lean4export` NDJSON fragment before implementing the reader.
   - [ ] Add `leanlean-check-export`, which reads the Arena input, translates exported declarations into local replay scripts, and reports Arena outcomes.

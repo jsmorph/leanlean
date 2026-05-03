@@ -15,6 +15,8 @@ The first implementation target is a small data fragment.  It includes closed un
 | <https://arxiv.org/abs/2403.14064> | Reviewed for project contrast.  It describes Lean4Lean as an external checker for Lean written in Lean, and it reports partial kernel correctness work. |
 | <https://ammkrn.github.io/type_checking_in_lean4/declarations/inductive.html> | Reviewed for inductive structure.  It treats an inductive declaration as a type, constructors, derived recursors, and recursor rules. |
 | <https://github.com/digama0/lean4lean> | Reviewed for contrast in implementation strategy.  The repository describes itself as a Lean 4 kernel or external checker written in Lean 4. |
+| <https://github.com/leanprover/lean-kernel-arena> | Reviewed for checker-interface planning.  The harness expects checker executables to read a `lean4export` file through `$IN` and report accepted, rejected, or declined outcomes by exit code. |
+| <https://leodemoura.github.io/blog/2026-3-16-who-watches-the-provers/> | Reviewed for the external-checker rationale.  The post frames proof-producing tools as systems that should emit artifacts checkable by smaller, independent watchers. |
 | <https://lean-lang.org/doc/reference/latest/The-Type-System/> | Reviewed for the core language boundary.  The reference manual describes Lean's core terms and the reduction rules used by definitional equality. |
 | <https://lean-lang.org/doc/reference/latest/The-Type-System/Inductive-Types/> | Reviewed for recursors, iota reduction, and the well-formedness conditions on inductive declarations. |
 | <https://lean-lang.org/doc/reference/latest/The-Type-System/Universes/> | Reviewed for the universe hierarchy and the scope of the omitted universe-polymorphic fragment. |
@@ -88,6 +90,10 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Add a metatheoretic account and proof-obligation table.
 - [x] Tighten the specification with an explicit grammar, universe-result predicate, and declaration-script entry table.
 - [x] Add a paper claim structure and paper-ready boundary table.
+- [x] Add typed checker outcomes for accepted, rejected, unsupported, and internal results.
+- [x] Add `leanlean-check-module` for root-name closure replay from compiled Lean modules.
+- [ ] Specify the accepted `lean4export` fragment before implementing the Arena checker.
+- [ ] Add `leanlean-check-export` as the independent artifact-checking interface.
 
 ## Current Decisions
 
@@ -158,3 +164,5 @@ Projection work follows Lean's representation split.  The core term language now
 Structure metadata follows Lean's split between kernel declarations and elaborator structure information.  A structure record in the local environment records direct fields, projection names, direct parents, and subobject fields, while parent projections remain ordinary checked projection declarations.  Flattened inherited-field lookup is metadata over those declarations; it does not add a reduction rule beyond the existing projection and delta rules.
 
 Lean's structure extension is now imported for the fields that affect kernel-facing replay.  The importer reads `StructureInfo.fieldNames`, `fieldInfo.projFn`, `fieldInfo.subobject?`, and `parentInfo`, then validates each direct field projection against Lean's `ProjectionFunctionInfo`: constructor name, parameter count, and field index must match the structure declaration.  The local structure registration repeats the relevant check over translated declarations by requiring each direct field projection to be either a local projection declaration or a checked lambda whose body is the corresponding core projection.  Parent projections must also have stored checked values, and their types must return the declared parent structure after binding the child parameters and child value.  Binder annotations, deprecated auto-parameter fields, defaults, resolution order, class-instance metadata, and notation data stay outside the trusted kernel subset because they guide elaboration rather than typing or conversion.
+
+The first external checker interface is `leanlean-check-module`.  It is a module-loader bridge over the existing root-name closure importer, while the independent export checker remains a separate task.  It returns typed outcomes: accepted roots return `0`, local replay rejections after translation return `1`, unsupported Lean artifacts return `2`, and internal checker failures return `3`.  The executable initializes Lean's search path from the current Lake build directory and loads environment extensions so that structure metadata and projection metadata are available during closure extraction.

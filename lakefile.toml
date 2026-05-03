@@ -36,3 +36,8 @@ root = "Faithfulness.ImportSmoke"
 [[lean_exe]]
 name = "leanleandiff"
 root = "Faithfulness.Differential"
+
+[[lean_exe]]
+name = "leanlean-check-module"
+root = "CheckModule"
+supportInterpreter = true
