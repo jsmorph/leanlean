@@ -108,14 +108,18 @@ def universeTests : Result Unit := do
   let _ ← checkDefEq env pTrueRecTy pProp
   let pTrueRecNf ← normalize env pTrueRecOnIntro
   let _ ← expectExprEq "Prop inductive recursors reduce in Prop" pTrueRecNf pProof
+  let pTrueBoolTy ← infer env [] pTrueRecToBool
+  let _ ← checkDefEq env pTrueBoolTy boolType
+  let pTrueBoolNf ← normalize env pTrueRecToBool
+  let _ ← expectExprEq "subsingleton Prop inductive data elimination reduces" pTrueBoolNf boolTrue
   let _ ←
     expectError
-      "Prop inductive recursors reject data-valued motives"
-      (infer env [] pTrueRecToBool)
+      "non-subsingleton Prop inductives reject data-valued motives"
+      (infer env [] pOrRecToBool)
   let _ ←
     expectError
-      "Prop inductive recursors do not take motive universe arguments"
-      (infer env [] (.const "PTrue.rec" [type0Level]))
+      "subsingleton Prop inductive recursors require motive universe arguments"
+      (infer env [] (const0 "PTrue.rec"))
   let polyIdBoolTy ← infer env [] polyIdBool
   let _ ← expectExprEq "polymorphic definition instantiates at Type 0" polyIdBoolTy boolType
   let polyIdTypeTy ← infer env [] polyIdTypeArg

@@ -48,7 +48,8 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Add proof irrelevance for terms with the same normalized proposition type.
 - [x] Add proposition-valued inductives with Prop-only elimination.
 - [x] Add a symbolic `imax` level former.
-- [ ] Specify large-elimination exceptions for propositions.
+- [x] Add large elimination for a conservative syntactic subsingleton class.
+- [ ] Specify the full indexed subsingleton-elimination criterion.
 
 ## Current Decisions
 
@@ -78,4 +79,4 @@ Indexed inductive families now use explicit constructor result targets.  The pri
 
 Universe-polymorphic definitions and inductives now have checked paths through the kernel.  `addDefinitionWithLevels` and `addAxiomWithLevels` reject duplicate universe parameters and reject level variables outside the declared universe context, while `addInductive` applies the same discipline to inductive result universes, constructor types, and generated recursor types.  The raw public entry points still reject open universe levels.  The examples `polyId.{u}` and `PolyBox.{u}` instantiate at both `Type 0` and `Type 1`, with `PolyBox` using Lean's `Type u` convention as `Sort (u + 1)`.  The focused regression tests cover symbolic level ordering, universe-context closure, generated recursor level ordering, rejection of proposition-valued data inductives, the known-Prop function-sort rule, and iota rejection for constructor targets at mismatched universe levels.
 
-The Prop work now covers the basic sort, conversion, and inductive boundaries.  Axioms may introduce propositions and proofs, and `∀ x : A, B` lives in `Sort (imax u v)` when the domain has sort `u` and the codomain has sort `v`.  The `imax` normalizer reduces known-Prop codomains to `Prop`, reduces known-data codomains to `max`, and preserves unresolved symbolic `imax` terms instead of approximating them.  Conversion is context-aware internally, and proof irrelevance treats two terms as equal when they infer the same normalized proposition type.  Proposition-valued inductives now generate recursors without a motive universe parameter, so their motives must return `Prop`.  The kernel still lacks Lean's large-elimination exceptions for propositions.
+The Prop work now covers the basic sort, conversion, and inductive boundaries.  Axioms may introduce propositions and proofs, and `∀ x : A, B` lives in `Sort (imax u v)` when the domain has sort `u` and the codomain has sort `v`.  The `imax` normalizer reduces known-Prop codomains to `Prop`, reduces known-data codomains to `max`, and preserves unresolved symbolic `imax` terms instead of approximating them.  Conversion is context-aware internally, and proof irrelevance treats two terms as equal when they infer the same normalized proposition type.  Proposition-valued inductives generate Prop-only recursors unless the inductive is a syntactic subsingleton; the current subsingleton approximation accepts empty propositions and one-constructor propositions whose fields are propositions or inductive parameters.  The remaining gap is the full Lean criterion for indexed subsingleton elimination.

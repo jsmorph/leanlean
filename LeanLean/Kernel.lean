@@ -130,6 +130,7 @@ structure InductiveInfo where
   type : Expr
   spec : InductiveSpec
   positiveParams : List Bool
+  allowsLargeElim : Bool := true
   deriving DecidableEq, Repr, Inhabited
 
 inductive ConstantInfo where
@@ -1319,10 +1320,10 @@ partial def buildRecursorFamily
       rootName := root.spec.name
       levelParams := root.spec.levelParams
       motiveLevelParam? :=
-        if inductiveIsProp root.spec then
-          none
-        else
+        if root.allowsLargeElim then
           some (recursorMotiveLevelParam root.spec)
+        else
+          none
       params := root.spec.params
       targets
     }
@@ -1453,6 +1454,7 @@ def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
       type := indType
       spec
       positiveParams := List.replicate spec.params.length true
+      allowsLargeElim := !inductiveIsProp spec
     }
   let tempEnv := .inductive spec.name spec.levelParams provisionalInfo :: env
   if !spec.ctors.isEmpty && !inductiveIsProp spec then
@@ -1479,8 +1481,32 @@ def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
               spec.level
           checkFieldLevels (Telescope.withBinder ctx field) rest
     let _ ← checkFieldLevels paramCtx ctor.fields
+  let allowsLargeElim ←
+    if !inductiveIsProp spec then
+      pure true
+    else
+      match spec.ctors with
+      | [] => pure true
+      | [ctor] =>
+          let rec checkFields (ctx : Context) (fieldDepth : Nat) : Telescope → Result Bool
+            | [] => pure true
+            | field :: rest => do
+                let fieldSort ← inferSort tempEnv ctx field.type (levelParams := spec.levelParams)
+                let fieldType ←
+                  normalizeForInductiveAnalysis
+                    tempEnv
+                    field.type
+                    (levelParams := spec.levelParams)
+                let paramVars := Expr.bvarArgs spec.params.length fieldDepth
+                if Level.defEq fieldSort .zero ||
+                    paramVars.any (fun paramVar => fieldType.alphaEq paramVar) then
+                  checkFields (Telescope.withBinder ctx field) (fieldDepth + 1) rest
+                else
+                  pure false
+          checkFields paramCtx 0 ctor.fields
+      | _ => pure false
   let positiveParams ← computePositiveParams tempEnv spec
-  let info : InductiveInfo := { type := indType, spec, positiveParams }
+  let info : InductiveInfo := { type := indType, spec, positiveParams, allowsLargeElim }
   let infoEnv := .inductive spec.name spec.levelParams info :: env
   let family ← buildRecursorFamily infoEnv info
   for target in family.targets.drop 1 do

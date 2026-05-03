@@ -527,6 +527,22 @@ def pTrueSpec : InductiveSpec :=
       ]
   }
 
+def pOrSpec : InductiveSpec :=
+  {
+    name := "POr"
+    params :=
+      [
+        { name := "a", type := propSort },
+        { name := "b", type := propSort }
+      ]
+    level := propLevel
+    ctors :=
+      [
+        { name := "POr.inl", fields := [{ name := "h", type := .bvar 1 }] },
+        { name := "POr.inr", fields := [{ name := "h", type := .bvar 0 }] }
+      ]
+  }
+
 def pProp : Expr :=
   const0 "P"
 
@@ -552,13 +568,34 @@ def pTrueCase : Expr :=
   pProof
 
 def pTrueRecOnIntro : Expr :=
-  Expr.mkApps (const0 "PTrue.rec") [pTrueMotive, pTrueCase, pTrueIntro]
+  Expr.mkApps (.const "PTrue.rec" [propLevel]) [pTrueMotive, pTrueCase, pTrueIntro]
 
 def pTrueBoolMotive : Expr :=
   .lam "t" pTrueType boolType
 
 def pTrueRecToBool : Expr :=
-  Expr.mkApps (const0 "PTrue.rec") [pTrueBoolMotive, const0 "Bool.true", pTrueIntro]
+  Expr.mkApps (.const "PTrue.rec" [type0Level]) [pTrueBoolMotive, const0 "Bool.true", pTrueIntro]
+
+def pOrType (left right : Expr) : Expr :=
+  Expr.mkApps (const0 "POr") [left, right]
+
+def pOrInl (left right proof : Expr) : Expr :=
+  Expr.mkApps (const0 "POr.inl") [left, right, proof]
+
+def pOrBoolMotive : Expr :=
+  .lam "h" (pOrType pProp pProp) boolType
+
+def pOrRecToBool : Expr :=
+  Expr.mkApps
+    (const0 "POr.rec")
+    [
+      pProp,
+      pProp,
+      pOrBoolMotive,
+      const0 "Bool.true",
+      const0 "Bool.false",
+      pOrInl pProp pProp pProof
+    ]
 
 def propDemoChecks (env : Env) : Result Unit := do
   let pTy ← infer env [] pProp
@@ -574,11 +611,15 @@ def propDemoChecks (env : Env) : Result Unit := do
   let _ ← checkDefEq env pTrueRecTy pProp
   let pTrueRecNf ← normalize env pTrueRecOnIntro
   let _ ← checkDefEq env pTrueRecNf pProof
-  match infer env [] pTrueRecToBool with
-  | .ok _ => .error "PTrue.rec should reject data-valued motives"
+  let pTrueBoolTy ← infer env [] pTrueRecToBool
+  let _ ← checkDefEq env pTrueBoolTy boolType
+  let pTrueBoolNf ← normalize env pTrueRecToBool
+  let _ ← checkDefEq env pTrueBoolNf (const0 "Bool.true")
+  match infer env [] (const0 "PTrue.rec") with
+  | .ok _ => .error "PTrue.rec should require a motive universe argument"
   | .error _ => pure ()
-  match infer env [] (.const "PTrue.rec" [type0Level]) with
-  | .ok _ => .error "PTrue.rec should not take a motive universe argument"
+  match infer env [] pOrRecToBool with
+  | .ok _ => .error "POr.rec should reject data-valued motives"
   | .error _ => pure ()
 
 def sampleEnv : Result Env := do
@@ -596,6 +637,7 @@ def sampleEnv : Result Env := do
   let env ← addInductive env polyBoxSpec
   let env ← addInductive env pFalseSpec
   let env ← addInductive env pTrueSpec
+  let env ← addInductive env pOrSpec
   let one := Expr.mkApps (const0 "Nat.succ") [const0 "Nat.zero"]
   let env ← addDefinition env "one" natType one
   let env ← addDefinitionWithLevels env "polyId" ["u"] polyIdType polyIdValue
@@ -1286,7 +1328,7 @@ def demoReport : Result (List String) := do
       "polymorphic definitions instantiate at data and type universes",
       "polymorphic inductives instantiate at data and type universes",
       "basic Prop constants, proof irrelevance, and proposition-valued functions check",
-      "Prop inductive recursors eliminate to Prop",
+      "Prop inductive recursors enforce large-elimination rules",
       "recursor constants type-check and support partial application",
       "Nat.rec on one normalizes to Bool.false",
       "List Bool constructor application checks",
