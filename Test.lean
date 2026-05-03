@@ -331,6 +331,24 @@ def generatedValidationTests : Result Unit := do
     "generated declaration validation rejects ill-typed generated types"
     (validateGeneratedType env "malformed generated type" [] malformedType)
 
+def declarationScriptTests : Result Unit := do
+  let env ←
+    addDeclarations
+      []
+      [
+        .inductive boolSpec,
+        .axiom "ScriptP" [] propSort,
+        .axiom "scriptProof" [] (const0 "ScriptP"),
+        .theorem "scriptTheorem" [] (const0 "ScriptP") (const0 "scriptProof")
+      ]
+  let scriptTheoremTy ← infer env [] (const0 "scriptTheorem")
+  let _ ← checkDefEq env scriptTheoremTy (const0 "ScriptP")
+  let scriptTheoremNf ← normalize env (const0 "scriptTheorem")
+  let _ ← expectExprEq "declaration scripts preserve theorem opacity" scriptTheoremNf (const0 "scriptTheorem")
+  expectError
+    "declaration scripts reject malformed declarations"
+    (addDeclarations env [.theorem "badScriptTheorem" [] boolType boolTrue])
+
 def environmentTests : Result Unit := do
   let env ← sampleEnv
   match env.find? "one" with
@@ -571,6 +589,7 @@ def kernelRegressionTests : Result Unit := do
   let _ ← universeTests
   let _ ← substitutionTests
   let _ ← generatedValidationTests
+  let _ ← declarationScriptTests
   let _ ← environmentTests
   let _ ← projectionTests
   let _ ← faithfulnessBridgeTests
@@ -583,6 +602,7 @@ def testReport : Result (List String) := do
   let _ ← universeTests
   let _ ← substitutionTests
   let _ ← generatedValidationTests
+  let _ ← declarationScriptTests
   let _ ← environmentTests
   let _ ← projectionTests
   let _ ← faithfulnessBridgeTests
@@ -594,6 +614,7 @@ def testReport : Result (List String) := do
       "universe-polymorphism invariants check",
       "substitution invariants check",
       "generated declaration validation rejects malformed generated types",
+      "declaration scripts use the checked admission path",
       "environment declaration metadata checks",
       "projection typing, reduction, and eta checks",
       "faithfulness bridge checks local expressions against the Lean corpus",

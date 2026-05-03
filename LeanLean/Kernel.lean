@@ -189,6 +189,17 @@ structure ConstantInfo where
 
 abbrev Env := List ConstantInfo
 
+inductive Declaration where
+  | axiom : Name → LevelContext → Expr → Declaration
+  | definition : Name → LevelContext → Expr → Expr → Declaration
+  | opaqueDefinition : Name → LevelContext → Expr → Expr → Declaration
+  | theorem : Name → LevelContext → Expr → Expr → Declaration
+  | inductive : InductiveSpec → Declaration
+  | inductiveBlock : InductiveBlockSpec → Declaration
+  | projection : Name → Name → Nat → Declaration
+  | quotientPrimitives : Declaration
+  deriving DecidableEq, Repr, Inhabited
+
 namespace ConstantInfo
 
 def mkAxiom (name : Name) (levelParams : List Name) (type : Expr) : ConstantInfo :=
@@ -2276,5 +2287,23 @@ def addInductiveBlock (env : Env) (block : InductiveBlockSpec) : Result Env := d
 
 def addInductive (env : Env) (spec : InductiveSpec) : Result Env :=
   addInductiveBlock env { levelParams := spec.levelParams, specs := [spec] }
+
+def addDeclaration (env : Env) : Declaration → Result Env
+  | .axiom name levelParams type => addAxiomWithLevels env name levelParams type
+  | .definition name levelParams type value =>
+      addDefinitionWithLevels env name levelParams type value
+  | .opaqueDefinition name levelParams type value =>
+      addOpaqueDefinitionWithLevels env name levelParams type value
+  | .theorem name levelParams type value => addTheoremWithLevels env name levelParams type value
+  | .inductive spec => addInductive env spec
+  | .inductiveBlock block => addInductiveBlock env block
+  | .projection name structName index => addProjection env name structName index
+  | .quotientPrimitives => addQuotPrimitives env
+
+def addDeclarations : Env → List Declaration → Result Env
+  | env, [] => pure env
+  | env, declaration :: rest => do
+      let env ← addDeclaration env declaration
+      addDeclarations env rest
 
 end LeanLean

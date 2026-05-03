@@ -955,57 +955,60 @@ def propDemoChecks (env : Env) : Result Unit := do
   | .ok _ => .error "DataWitnessProp.rec should reject data-valued motives"
   | .error _ => pure ()
 
-def sampleEnv : Result Env := do
-  let env ← addInductive [] boolSpec
-  let env ← addInductive env natSpec
-  let env ← addInductive env listSpec
-  let env ← addInductive env pairSpec
-  let env ← addProjection env "Pair.fst" "Pair" 0
-  let env ← addProjection env "Pair.snd" "Pair" 1
-  let env ← addInductive env sigmaBoxSpec
-  let env ← addProjection env "SigmaBox.type" "SigmaBox" 0
-  let env ← addProjection env "SigmaBox.value" "SigmaBox" 1
-  let env ← addInductive env vec1Spec
-  let env ← addProjection env "Vec1.value" "Vec1" 0
-  let env ← addInductive env shiftedStructSpec
-  let env ← addProjection env "ShiftedStruct.pred" "ShiftedStruct" 0
-  let env ← addProjection env "ShiftedStruct.value" "ShiftedStruct" 1
-  let env ← addInductive env eqSpec
-  let env ← addQuotPrimitives env
-  let env ← addInductive env vecSpec
-  let env ← addInductive env heightTreeSpec
-  let env ← addInductive env sortBoxSpec
-  let env ← addInductive env spuriousSpec
-  let env ← addInductive env badParamSpec
-  let env ← addInductive env natListTreeSpec
-  let env ← addInductive env letTreeSpec
-  let env ← addInductive env polyBoxSpec
-  let env ← addInductive env pFalseSpec
-  let env ← addInductive env pTrueSpec
-  let env ← addInductive env pOrSpec
-  let env ← addInductive env indexSingletonSpec
-  let env ← addInductive env shiftedIndexPropSpec
-  let env ← addInductive env dataWitnessPropSpec
-  let env ← addInductive env proofBoxSpec
-  let env ← addProjection env "ProofBox.proof" "ProofBox" 0
-  let env ← addInductiveBlock env mutEvenOddBlock
-  let env ← addInductiveBlock env mutNestBlock
-  let one := Expr.mkApps (const0 "Nat.succ") [const0 "Nat.zero"]
-  let env ← addDefinition env "one" natType one
-  let env ← addOpaqueDefinition env "opaqueTrue" boolType (const0 "Bool.true")
-  let env ← addDefinitionWithLevels env "polyId" ["u"] polyIdType polyIdValue
-  let env ← addAxiom env "pairSeed" (const0 "Pair")
-  let env ← addAxiom env "sigmaSeed" (const0 "SigmaBox")
-  let env ← addAxiom env "vec1Seed" (Expr.mkApps (const0 "Vec1") [boolType, const0 "Nat.zero"])
-  let env ←
-    addAxiom
-      env
+def sampleDeclarations : List Declaration :=
+  [
+    .inductive boolSpec,
+    .inductive natSpec,
+    .inductive listSpec,
+    .inductive pairSpec,
+    .projection "Pair.fst" "Pair" 0,
+    .projection "Pair.snd" "Pair" 1,
+    .inductive sigmaBoxSpec,
+    .projection "SigmaBox.type" "SigmaBox" 0,
+    .projection "SigmaBox.value" "SigmaBox" 1,
+    .inductive vec1Spec,
+    .projection "Vec1.value" "Vec1" 0,
+    .inductive shiftedStructSpec,
+    .projection "ShiftedStruct.pred" "ShiftedStruct" 0,
+    .projection "ShiftedStruct.value" "ShiftedStruct" 1,
+    .inductive eqSpec,
+    .quotientPrimitives,
+    .inductive vecSpec,
+    .inductive heightTreeSpec,
+    .inductive sortBoxSpec,
+    .inductive spuriousSpec,
+    .inductive badParamSpec,
+    .inductive natListTreeSpec,
+    .inductive letTreeSpec,
+    .inductive polyBoxSpec,
+    .inductive pFalseSpec,
+    .inductive pTrueSpec,
+    .inductive pOrSpec,
+    .inductive indexSingletonSpec,
+    .inductive shiftedIndexPropSpec,
+    .inductive dataWitnessPropSpec,
+    .inductive proofBoxSpec,
+    .projection "ProofBox.proof" "ProofBox" 0,
+    .inductiveBlock mutEvenOddBlock,
+    .inductiveBlock mutNestBlock,
+    .definition "one" [] natType (Expr.mkApps (const0 "Nat.succ") [const0 "Nat.zero"]),
+    .opaqueDefinition "opaqueTrue" [] boolType (const0 "Bool.true"),
+    .definition "polyId" ["u"] polyIdType polyIdValue,
+    .axiom "pairSeed" [] (const0 "Pair"),
+    .axiom "sigmaSeed" [] (const0 "SigmaBox"),
+    .axiom "vec1Seed" [] (Expr.mkApps (const0 "Vec1") [boolType, const0 "Nat.zero"]),
+    .axiom
       "shiftedSeed"
-      (Expr.mkApps (const0 "ShiftedStruct") [boolType, Expr.mkApps (const0 "Nat.succ") [const0 "Nat.zero"]])
-  let env ← addAxiom env "P" propSort
-  let env ← addAxiom env "pProof" pProp
-  let env ← addAxiom env "qProof" pProp
-  addTheorem env "pTheorem" pProp pProof
+      []
+      (Expr.mkApps (const0 "ShiftedStruct") [boolType, Expr.mkApps (const0 "Nat.succ") [const0 "Nat.zero"]]),
+    .axiom "P" [] propSort,
+    .axiom "pProof" [] pProp,
+    .axiom "qProof" [] pProp,
+    .theorem "pTheorem" [] pProp pProof
+  ]
+
+def sampleEnv : Result Env :=
+  addDeclarations [] sampleDeclarations
 
 def natSucc (value : Expr) : Expr :=
   Expr.mkApps (const0 "Nat.succ") [value]
