@@ -146,5 +146,196 @@ def translateGeneratedConstantInfo : Lean.ConstantInfo → Result Declaration
           (← translateExpr value.type))
   | info => .error s!"constant is not a generated constructor or recursor: {info.name}"
 
+def findInductiveInfo? : List Lean.ConstantInfo → Lean.Name → Option Lean.InductiveVal
+  | [], _ => none
+  | .inductInfo value :: rest, name =>
+      if value.name == name then
+        some value
+      else
+        findInductiveInfo? rest name
+  | _ :: rest, name => findInductiveInfo? rest name
+
+def findConstructorInfo? : List Lean.ConstantInfo → Lean.Name → Option Lean.ConstructorVal
+  | [], _ => none
+  | .ctorInfo value :: rest, name =>
+      if value.name == name then
+        some value
+      else
+        findConstructorInfo? rest name
+  | _ :: rest, name => findConstructorInfo? rest name
+
+def nameListsEq (left right : List Lean.Name) : Bool :=
+  left.length = right.length && (List.zip left right).all fun pair => pair.1 == pair.2
+
+def appendGroupKey (keys : List (List Lean.Name)) (key : List Lean.Name) : List (List Lean.Name) :=
+  if keys.any fun existing => nameListsEq existing key then
+    keys
+  else
+    keys ++ [key]
+
+def inductiveGroupKey (value : Lean.InductiveVal) : List Lean.Name :=
+  match value.all with
+  | [] => [value.name]
+  | names => names
+
+def inductiveGroupKeys (infos : List Lean.ConstantInfo) : List (List Lean.Name) :=
+  infos.foldl
+    (fun keys info =>
+      match info with
+      | .inductInfo value => appendGroupKey keys (inductiveGroupKey value)
+      | _ => keys)
+    []
+
+def translateConstructorFromInfo
+    (infos : List Lean.ConstantInfo)
+    (inductiveName ctorName : Lean.Name)
+    (numParams expectedIndex : Nat) : Result KernelConstructorDecl := do
+  let some ctor ← pure (findConstructorInfo? infos ctorName)
+    | .error s!"missing constructor info for inductive snapshot: {ctorName}"
+  if ctor.induct != inductiveName then
+    .error s!"constructor {ctorName} belongs to {ctor.induct}, not {inductiveName}"
+  if ctor.cidx != expectedIndex then
+    .error s!"constructor {ctorName} has an unexpected constructor index"
+  if ctor.numParams != numParams then
+    .error s!"constructor {ctorName} has an unexpected parameter count"
+  pure
+    {
+      name := translateName ctor.name
+      type := (← translateExpr ctor.type)
+    }
+
+def translateConstructorsFromInfo
+    (infos : List Lean.ConstantInfo)
+    (inductiveName : Lean.Name)
+    (numParams : Nat) : Nat → List Lean.Name → Result (List KernelConstructorDecl)
+  | _, [] => pure []
+  | index, ctorName :: rest => do
+      let ctor ← translateConstructorFromInfo infos inductiveName ctorName numParams index
+      let rest ← translateConstructorsFromInfo infos inductiveName numParams (index + 1) rest
+      pure (ctor :: rest)
+
+def translateInductiveInfo
+    (infos : List Lean.ConstantInfo)
+    (groupNames : List Lean.Name)
+    (levelParams : List Lean.Name)
+    (numParams : Nat)
+    (name : Lean.Name) : Result KernelInductiveTypeDecl := do
+  let some value ← pure (findInductiveInfo? infos name)
+    | .error s!"missing inductive info for snapshot group member: {name}"
+  if value.isUnsafe then
+    .error s!"unsafe inductive declaration is outside the local importer: {name}"
+  if !nameListsEq (inductiveGroupKey value) groupNames then
+    .error s!"inductive snapshot group has inconsistent member list: {name}"
+  if !nameListsEq value.levelParams levelParams then
+    .error s!"inductive snapshot group has inconsistent universe parameters: {name}"
+  if value.numParams != numParams then
+    .error s!"inductive snapshot group has inconsistent parameter counts: {name}"
+  let ctors ← translateConstructorsFromInfo infos value.name numParams 0 value.ctors
+  pure
+    {
+      name := translateName value.name
+      type := (← translateExpr value.type)
+      ctors
+    }
+
+def translateInductiveGroup
+    (infos : List Lean.ConstantInfo)
+    (names : List Lean.Name) : Result Declaration := do
+  let some firstName := names.head?
+    | .error "empty inductive snapshot group"
+  let some first ← pure (findInductiveInfo? infos firstName)
+    | .error s!"missing inductive info for snapshot group root: {firstName}"
+  if first.isUnsafe then
+    .error s!"unsafe inductive declaration is outside the local importer: {first.name}"
+  let groupNames := inductiveGroupKey first
+  if !nameListsEq groupNames names then
+    .error s!"inductive snapshot group has inconsistent member list: {repr names}"
+  let types ← names.mapM (translateInductiveInfo infos names first.levelParams first.numParams)
+  pure
+    (.kernelInductive
+      {
+        levelParams := translateLevelParams first.levelParams
+        numParams := first.numParams
+        types
+      })
+
+def translateOrdinaryConstantInfo? : Lean.ConstantInfo → Result (Option Declaration)
+  | .axiomInfo value => do
+      checkSafeFlag "axiom" value.name value.isUnsafe
+      pure
+        (some
+          (.axiom
+            (translateName value.name)
+            (translateLevelParams value.levelParams)
+            (← translateExpr value.type)))
+  | .defnInfo value => do
+      checkSafeDefinition value.name value.safety
+      pure
+        (some
+          (.definitionWithHint
+            (translateName value.name)
+            (translateLevelParams value.levelParams)
+            (translateReducibilityHints value.hints)
+            (← translateExpr value.type)
+            (← translateExpr value.value)))
+  | .thmInfo value => do
+      pure
+        (some
+          (.theorem
+            (translateName value.name)
+            (translateLevelParams value.levelParams)
+            (← translateExpr value.type)
+            (← translateExpr value.value)))
+  | .opaqueInfo value => do
+      checkSafeFlag "opaque definition" value.name value.isUnsafe
+      pure
+        (some
+          (.opaqueDefinition
+            (translateName value.name)
+            (translateLevelParams value.levelParams)
+            (← translateExpr value.type)
+            (← translateExpr value.value)))
+  | .quotInfo _ => pure none
+  | .inductInfo _ => pure none
+  | .ctorInfo _ => pure none
+  | .recInfo _ => pure none
+
+def translateOrdinaryConstantInfos (infos : List Lean.ConstantInfo) : Result (List Declaration) :=
+  let collect :=
+    infos.foldlM
+      (fun declarations info => do
+        match (← translateOrdinaryConstantInfo? info) with
+        | some declaration => pure (declaration :: declarations)
+        | none => pure declarations)
+      []
+  collect.map List.reverse
+
+def translateGeneratedConstantInfos (infos : List Lean.ConstantInfo) : Result (List Declaration) :=
+  let collect :=
+    infos.foldlM
+      (fun declarations info => do
+        match info with
+        | .ctorInfo _ | .recInfo _ =>
+            pure ((← translateGeneratedConstantInfo info) :: declarations)
+        | _ => pure declarations)
+      []
+  collect.map List.reverse
+
+def hasQuotientInfo (infos : List Lean.ConstantInfo) : Bool :=
+  infos.any fun info =>
+    match info with
+    | .quotInfo _ => true
+    | _ => false
+
+def translateConstantInfoSnapshot (infos : List Lean.ConstantInfo) : Result (List Declaration) := do
+  let quotientDecls := if hasQuotientInfo infos then [.quotientPrimitives] else []
+  let ordinary ← translateOrdinaryConstantInfos infos
+  let inductives ← (inductiveGroupKeys infos).mapM (translateInductiveGroup infos)
+  let generated ← translateGeneratedConstantInfos infos
+  pure (quotientDecls ++ ordinary ++ inductives ++ generated)
+
+def replayConstantInfoSnapshot (env : Env) (infos : List Lean.ConstantInfo) : Result Env := do
+  replayDeclarations env (← translateConstantInfoSnapshot infos)
+
 end Import
 end LeanLean

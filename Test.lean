@@ -557,6 +557,149 @@ def importBridgeTests : Result Unit := do
   let falseReplay ← Import.translateGeneratedConstantInfo leanFalseInfo
   let _ ← addDeclaration env falseReplay
 
+  let infoPropName := Lean.Name.mkSimple "InfoP"
+  let infoProofName := Lean.Name.mkSimple "infoProof"
+  let infoTheoremName := Lean.Name.mkSimple "infoTheorem"
+  let infoBoolName := Lean.Name.mkSimple "InfoBool"
+  let infoFalseName := Lean.Name.mkStr infoBoolName "false"
+  let infoTrueName := Lean.Name.mkStr infoBoolName "true"
+  let infoRecName := Lean.Name.mkStr infoBoolName "rec"
+  let motiveLevelName := Lean.Name.mkSimple "u"
+  let motiveLevel := Lean.Level.param motiveLevelName
+  let infoBoolConst : Lean.Expr := .const infoBoolName []
+  let infoFalseConst : Lean.Expr := .const infoFalseName []
+  let infoTrueConst : Lean.Expr := .const infoTrueName []
+  let infoRecType : Lean.Expr :=
+    .forallE
+      (Lean.Name.mkSimple "motive")
+      (.forallE (Lean.Name.mkSimple "target") infoBoolConst (.sort motiveLevel) .default)
+      (.forallE
+        (Lean.Name.mkSimple "falseCase")
+        (.app (.bvar 0) infoFalseConst)
+        (.forallE
+          (Lean.Name.mkSimple "trueCase")
+          (.app (.bvar 1) infoTrueConst)
+          (.forallE
+            (Lean.Name.mkSimple "target")
+            infoBoolConst
+            (.app (.bvar 3) (.bvar 0))
+            .default)
+          .default)
+        .default)
+      .default
+  let infoSnapshot : List Lean.ConstantInfo :=
+    [
+      .thmInfo
+        {
+          name := infoTheoremName
+          levelParams := []
+          type := .const infoPropName []
+          value := .const infoProofName []
+        },
+      .recInfo
+        {
+          name := infoRecName
+          levelParams := [motiveLevelName]
+          type := infoRecType
+          all := [infoBoolName]
+          numParams := 0
+          numIndices := 0
+          numMotives := 1
+          numMinors := 2
+          rules := []
+          k := false
+          isUnsafe := false
+        },
+      .ctorInfo
+        {
+          name := infoTrueName
+          levelParams := []
+          type := infoBoolConst
+          induct := infoBoolName
+          cidx := 1
+          numParams := 0
+          numFields := 0
+          isUnsafe := false
+        },
+      .axiomInfo
+        {
+          name := infoProofName
+          levelParams := []
+          type := .const infoPropName []
+          isUnsafe := false
+        },
+      .inductInfo
+        {
+          name := infoBoolName
+          levelParams := []
+          type := .sort (.succ .zero)
+          numParams := 0
+          numIndices := 0
+          all := [infoBoolName]
+          ctors := [infoFalseName, infoTrueName]
+          numNested := 0
+          isRec := false
+          isUnsafe := false
+          isReflexive := false
+        },
+      .ctorInfo
+        {
+          name := infoFalseName
+          levelParams := []
+          type := infoBoolConst
+          induct := infoBoolName
+          cidx := 0
+          numParams := 0
+          numFields := 0
+          isUnsafe := false
+        },
+      .axiomInfo
+        {
+          name := infoPropName
+          levelParams := []
+          type := .sort .zero
+          isUnsafe := false
+        }
+    ]
+  let missingCtorSnapshot :=
+    infoSnapshot.filter fun info =>
+      match info with
+      | .ctorInfo value => value.name != infoFalseName
+      | _ => true
+  let _ ←
+    expectError
+      "constant-info snapshots require constructor entries"
+      (Import.translateConstantInfoSnapshot missingCtorSnapshot)
+  let wrongIndexSnapshot :=
+    missingCtorSnapshot ++
+      [
+        Lean.ConstantInfo.ctorInfo
+          {
+            name := infoFalseName
+            levelParams := []
+            type := infoBoolConst
+            induct := infoBoolName
+            cidx := 7
+            numParams := 0
+            numFields := 0
+            isUnsafe := false
+          }
+      ]
+  let _ ←
+    expectError
+      "constant-info snapshots reject constructor index mismatches"
+      (Import.translateConstantInfoSnapshot wrongIndexSnapshot)
+  let env ← Import.replayConstantInfoSnapshot [] infoSnapshot
+  let infoTheoremTy ← infer env [] (const0 "infoTheorem")
+  let _ ← checkDefEq env infoTheoremTy (const0 "InfoP")
+  let infoTrueTy ← infer env [] (const0 "InfoBool.true")
+  let _ ← checkDefEq env infoTrueTy (const0 "InfoBool")
+  match env.find? "InfoBool.rec" with
+  | some info =>
+      let _ ← expect "constant-info snapshots replay generated recursors" (info.levelParams = ["u"])
+      pure ()
+  | none => .error "InfoBool.rec should be present after snapshot replay"
+
   let metadataExpr : Lean.Expr := .mdata Lean.MData.empty (.sort .zero)
   let translatedMetadata ← Import.translateExpr metadataExpr
   let _ ← expectExprEq "importer erases Lean expression metadata" translatedMetadata propSort
