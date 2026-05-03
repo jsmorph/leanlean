@@ -78,6 +78,11 @@ structure InductiveSpec where
   ctors : List ConstructorSpec
   deriving DecidableEq, Repr, Inhabited
 
+structure InductiveBlockSpec where
+  levelParams : LevelContext := []
+  specs : List InductiveSpec
+  deriving DecidableEq, Repr, Inhabited
+
 structure TargetSchema where
   locals : Telescope
   target : Expr
@@ -133,31 +138,70 @@ structure InductiveInfo where
   allowsLargeElim : Bool := true
   deriving DecidableEq, Repr, Inhabited
 
-inductive ConstantInfo where
-  | axiom : Name → List Name → Expr → ConstantInfo
-  | defn : Name → List Name → Expr → Expr → ConstantInfo
-  | inductive : Name → List Name → InductiveInfo → ConstantInfo
-  | ctor : Name → List Name → Expr → Name → ConstantInfo
-  | recursor : Name → List Name → Expr → Nat → RecursorFamily → ConstantInfo
+inductive PrimitiveInfo where
+  | recursor : Nat → RecursorFamily → PrimitiveInfo
+  | quotType : PrimitiveInfo
+  | quotMk : PrimitiveInfo
+  | quotLift : PrimitiveInfo
+  | quotInd : PrimitiveInfo
+  | quotSound : PrimitiveInfo
+  deriving DecidableEq, Repr, Inhabited
+
+inductive DefinitionTransparency where
+  | transparent : DefinitionTransparency
+  | opaque : DefinitionTransparency
+  deriving DecidableEq, Repr, Inhabited
+
+inductive ConstantKind where
+  | axiom : ConstantKind
+  | defn : DefinitionTransparency → ConstantKind
+  | inductive : InductiveInfo → ConstantKind
+  | ctor : Name → ConstantKind
+  | primitive : PrimitiveInfo → ConstantKind
+  deriving DecidableEq, Repr, Inhabited
+
+structure ConstantInfo where
+  name : Name
+  levelParams : List Name
+  typeExpr : Expr
+  valueExpr? : Option Expr := none
+  kind : ConstantKind
   deriving DecidableEq, Repr, Inhabited
 
 abbrev Env := List ConstantInfo
 
 namespace ConstantInfo
 
-def name : ConstantInfo → Name
-  | .axiom name _ _ => name
-  | .defn name _ _ _ => name
-  | .inductive name _ _ => name
-  | .ctor name _ _ _ => name
-  | .recursor name _ _ _ _ => name
+def mkAxiom (name : Name) (levelParams : List Name) (type : Expr) : ConstantInfo :=
+  { name, levelParams, typeExpr := type, kind := .axiom }
 
-def levelParams : ConstantInfo → List Name
-  | .axiom _ params _ => params
-  | .defn _ params _ _ => params
-  | .inductive _ params _ => params
-  | .ctor _ params _ _ => params
-  | .recursor _ params _ _ _ => params
+def mkDefn (name : Name) (levelParams : List Name) (type value : Expr) : ConstantInfo :=
+  { name, levelParams, typeExpr := type, valueExpr? := some value, kind := .defn .transparent }
+
+def mkOpaqueDefn (name : Name) (levelParams : List Name) (type value : Expr) : ConstantInfo :=
+  { name, levelParams, typeExpr := type, valueExpr? := some value, kind := .defn .opaque }
+
+def mkInductive (name : Name) (levelParams : List Name) (info : InductiveInfo) : ConstantInfo :=
+  { name, levelParams, typeExpr := info.type, kind := .inductive info }
+
+def mkCtor (name : Name) (levelParams : List Name) (type : Expr) (indName : Name) :
+    ConstantInfo :=
+  { name, levelParams, typeExpr := type, kind := .ctor indName }
+
+def mkRecursor
+    (name : Name)
+    (levelParams : List Name)
+    (type : Expr)
+    (index : Nat)
+    (family : RecursorFamily) : ConstantInfo :=
+  { name, levelParams, typeExpr := type, kind := .primitive (.recursor index family) }
+
+def mkPrimitive
+    (name : Name)
+    (levelParams : List Name)
+    (type : Expr)
+    (primitive : PrimitiveInfo) : ConstantInfo :=
+  { name, levelParams, typeExpr := type, kind := .primitive primitive }
 
 def checkLevelsIn (info : ConstantInfo) (levelParams : LevelContext) (levels : List Level) : Result Unit := do
   let params := info.levelParams
@@ -190,24 +234,14 @@ def instantiateExpr
     pure (Expr.instantiateLevels params levels expr)
 
 def type (info : ConstantInfo) (levels : List Level) (levelParams : LevelContext := []) : Result Expr :=
-  match info with
-  | .axiom name params type =>
-      instantiateExpr name "type" params levelParams levels type
-  | .defn name params type _ =>
-      instantiateExpr name "type" params levelParams levels type
-  | .inductive name params indInfo =>
-      instantiateExpr name "type" params levelParams levels indInfo.type
-  | .ctor name params type _ =>
-      instantiateExpr name "type" params levelParams levels type
-  | .recursor name params type _ _ =>
-      instantiateExpr name "type" params levelParams levels type
+  instantiateExpr info.name "type" info.levelParams levelParams levels info.typeExpr
 
 def value? (info : ConstantInfo) (levels : List Level) (levelParams : LevelContext := []) :
     Result (Option Expr) :=
-  match info with
-  | .defn name params _ value =>
-      some <$> instantiateExpr name "value" params levelParams levels value
-  | _ => pure none
+  match info.kind, info.valueExpr? with
+  | .defn .transparent, some value =>
+      some <$> instantiateExpr info.name "value" info.levelParams levelParams levels value
+  | _, _ => pure none
 
 end ConstantInfo
 
@@ -226,17 +260,17 @@ def contains (env : Env) (target : Name) : Bool :=
 
 def findInductive? (env : Env) (target : Name) : Option InductiveInfo :=
   match find? env target with
-  | some (.inductive _ _ info) => some info
+  | some { kind := .inductive info, .. } => some info
   | _ => none
 
 def findCtor? (env : Env) (target : Name) : Option Name :=
   match find? env target with
-  | some (.ctor _ _ _ indName) => some indName
+  | some { kind := .ctor indName, .. } => some indName
   | _ => none
 
 def findRecursor? (env : Env) (target : Name) : Option (Nat × RecursorFamily) :=
   match find? env target with
-  | some (.recursor _ _ _ index family) => some (index, family)
+  | some { kind := .primitive (.recursor index family), .. } => some (index, family)
   | _ => none
 
 end Env
@@ -281,6 +315,15 @@ def inductiveTarget (indName : Name) (params : List Expr) : Expr :=
 def inductiveTargetWithLevels (indName : Name) (levels : List Level) (params : List Expr) :
     Expr :=
   Expr.mkApps (.const indName levels) params
+
+def eqTypeExpr (level : Level) (elem lhs rhs : Expr) : Expr :=
+  Expr.mkApps (.const "Eq" [level]) [elem, lhs, rhs]
+
+def quotientTypeExpr (level : Level) (elem rel : Expr) : Expr :=
+  Expr.mkApps (.const "Quot" [level]) [elem, rel]
+
+def quotientMkExpr (level : Level) (elem rel value : Expr) : Expr :=
+  Expr.mkApps (.const "Quot.mk" [level]) [elem, rel, value]
 
 def inductiveSelfTarget (spec : InductiveSpec) (params : List Expr) : Expr :=
   inductiveTargetWithLevels spec.name (inductiveLevelArgs spec) params
@@ -380,6 +423,9 @@ def containsExprAt (target : Expr) (depth : Nat) (expr : Expr) : Bool :=
         containsExprAt target depth val ||
         containsExprAt target (depth + 1) body
 termination_by expr
+
+def containsAnyExprAt (targets : List Expr) (depth : Nat) (expr : Expr) : Bool :=
+  targets.any fun target => containsExprAt target depth expr
 
 def containsBVarAt (targetIndex depth : Nat) (expr : Expr) : Bool :=
   match expr with
@@ -878,6 +924,45 @@ partial def reduceRecursorApp
         | .error s!"internal error: missing minor premise for {ctor.name}"
       pure (some (Expr.mkApps minor minorArgs))
 
+partial def reduceQuotLiftApp
+    (env : Env)
+    (levels : List Level)
+    (args : List Expr)
+    (levelParams : LevelContext := []) : Result (Option Expr) := do
+  if levels.length != 2 || args.length != 6 then
+    pure none
+  else
+    let elem := args[0]!
+    let rel := args[1]!
+    let fn := args[3]!
+    let quot := args[5]!
+    let quotWhnf ← whnf env quot (levelParams := levelParams)
+    let .const ctorName ctorLevels := quotWhnf.getAppFn
+      | pure none
+    if ctorName != "Quot.mk" then
+      pure none
+    else if !levelsDefEq ctorLevels [levels[0]!] then
+      .error "Quot.lift target constructor universe does not match"
+    else
+      match quotWhnf.getAppArgs with
+      | [ctorElem, ctorRel, value] =>
+          let _ ← checkDefEqIn env [] elem ctorElem (levelParams := levelParams)
+          let _ ← checkDefEqIn env [] rel ctorRel (levelParams := levelParams)
+          pure (some (.app fn value))
+      | _ => pure none
+
+partial def reducePrimitiveApp
+    (env : Env)
+    (name : Name)
+    (primitive : PrimitiveInfo)
+    (levels : List Level)
+    (args : List Expr)
+    (levelParams : LevelContext := []) : Result (Option Expr) := do
+  match primitive with
+  | .recursor _ _ => reduceRecursorApp env name levels args (levelParams := levelParams)
+  | .quotLift => reduceQuotLiftApp env levels args (levelParams := levelParams)
+  | .quotType | .quotMk | .quotInd | .quotSound => pure none
+
 partial def whnf (env : Env) (expr : Expr) (levelParams : LevelContext := []) : Result Expr := do
   match expr with
   | .app _ _ =>
@@ -897,9 +982,9 @@ partial def whnf (env : Env) (expr : Expr) (levelParams : LevelContext := []) : 
               match ← info.value? levels (levelParams := levelParams) with
               | some value => whnf env (Expr.mkApps value args) (levelParams := levelParams)
               | none =>
-                  match info with
-                  | .recursor _ _ _ _ _ =>
-                      match ← reduceRecursorApp env name levels args (levelParams := levelParams) with
+                  match info.kind with
+                  | .primitive primitive =>
+                      match ← reducePrimitiveApp env name primitive levels args (levelParams := levelParams) with
                       | some reduced => whnf env reduced (levelParams := levelParams)
                       | none => pure rebuilt
                   | _ => pure rebuilt
@@ -1036,6 +1121,7 @@ partial def positiveParamOccurrence
     (env : Env)
     (self : InductiveSpec)
     (selfPositive : List Bool)
+    (openPositive : List (Name × List Bool))
     (targetIndex depth : Nat)
     (expr : Expr)
     (levelParams : LevelContext := []) : Result Bool := do
@@ -1059,6 +1145,7 @@ partial def positiveParamOccurrence
             env
             self
             selfPositive
+            (openPositive := openPositive)
             targetIndex
             (depth + 1)
             body
@@ -1067,10 +1154,13 @@ partial def positiveParamOccurrence
         match decomposeInductiveApp env expr with
         | some (headName, info, _, args) =>
             let positiveFlags :=
-              if headName = self.name then
-                selfPositive
-              else
-                info.positiveParams
+              match openPositive.find? (fun entry => entry.1 = headName) with
+              | some (_, flags) => flags
+              | none =>
+                  if headName = self.name then
+                    selfPositive
+                  else
+                    info.positiveParams
             let mut found := false
             for pair in List.zip args positiveFlags do
               let arg := pair.1
@@ -1084,6 +1174,7 @@ partial def positiveParamOccurrence
                     env
                     self
                     selfPositive
+                    (openPositive := openPositive)
                     targetIndex
                     depth
                     arg
@@ -1097,81 +1188,116 @@ partial def positiveParamOccurrence
             else
               pure false
 
-def computePositiveParams (env : Env) (spec : InductiveSpec) : Result (List Bool) := do
-  let paramCount := spec.params.length
-  let rec iterate (flags : List Bool) : Nat → Result (List Bool)
+def positiveFlagsFor
+    (flags : List (Name × List Bool))
+    (name : Name) : Result (List Bool) :=
+  match flags.find? (fun entry => entry.1 = name) with
+  | some (_, values) => pure values
+  | none => .error s!"internal error: missing positive-parameter facts for {name}"
+
+def computePositiveParamsInBlock
+    (env : Env)
+    (specs : List InductiveSpec) : Result (List (Name × List Bool)) := do
+  let initial :=
+    specs.map fun spec => (spec.name, List.replicate spec.params.length true)
+  let totalParams := specs.foldl (fun total spec => total + spec.params.length) 0
+  let rec computeForSpec
+      (flags : List (Name × List Bool))
+      (spec : InductiveSpec) : Result (Name × List Bool) := do
+    let selfPositive ← positiveFlagsFor flags spec.name
+    let paramCount := spec.params.length
+    let next ←
+      (List.range paramCount).mapM fun index => do
+        let baseIndex := paramBaseIndex paramCount index
+        let mut positive := true
+        for ctor in spec.ctors do
+          let mut fieldDepth := 0
+          for field in ctor.fields do
+            match
+              positiveParamOccurrence
+                env
+                spec
+                selfPositive
+                (openPositive := flags)
+                (baseIndex + fieldDepth)
+                0
+                field.type
+                (levelParams := spec.levelParams) with
+            | .ok _ => pure ()
+            | .error _ => positive := false
+            if !positive then
+              break
+            fieldDepth := fieldDepth + 1
+          if !positive then
+            break
+        pure positive
+    pure (spec.name, next)
+  let rec iterate (flags : List (Name × List Bool)) : Nat → Result (List (Name × List Bool))
     | 0 => pure flags
     | fuel + 1 => do
-        let next ←
-          (List.range paramCount).mapM fun index => do
-            let baseIndex := paramBaseIndex paramCount index
-            let mut positive := true
-            for ctor in spec.ctors do
-              let mut fieldDepth := 0
-              for field in ctor.fields do
-                match
-                  positiveParamOccurrence
-                    env
-                    spec
-                    flags
-                    (baseIndex + fieldDepth)
-                    0
-                    field.type
-                    (levelParams := spec.levelParams) with
-                | .ok _ => pure ()
-                | .error _ => positive := false
-                if !positive then
-                  break
-                fieldDepth := fieldDepth + 1
-              if !positive then
-                break
-            pure positive
+        let next ← specs.mapM (computeForSpec flags)
         if next = flags then
           pure next
         else
           iterate next fuel
-  iterate (List.replicate paramCount true) paramCount
+  iterate initial (totalParams + 1)
 
 partial def analyzeRecursiveShape
     (env : Env)
     (root : InductiveInfo)
+    (recursiveInfos : List InductiveInfo)
     (locals : Telescope)
     (expr : Expr)
     (levelParams : LevelContext := []) : Result RawFieldShape := do
   let expr ← normalizeForInductiveAnalysis env expr (levelParams := levelParams)
+  let recursiveInfos :=
+    if recursiveInfos.isEmpty then
+      [root]
+    else
+      recursiveInfos
+  let recursiveTargets := recursiveInfos.map fun info => recursiveTargetExpr info.spec
   let analyzeInductiveApp
       (headName : Name)
       (info : InductiveInfo)
       (levels : List Level)
       (args : List Expr) :
       Result RawFieldShape := do
-    if headName = root.spec.name then
-      if !levelsDefEq levels (inductiveLevelArgs root.spec) then
-        .error s!"recursive occurrence must use the universe parameters of {root.spec.name}"
+    match recursiveInfos.find? (fun recursiveInfo => recursiveInfo.spec.name = headName) with
+    | some recursiveInfo =>
+      if !levelsDefEq levels (inductiveLevelArgs recursiveInfo.spec) then
+        .error s!"recursive occurrence must use the universe parameters of {headName}"
       else
-        let paramArgs := args.take root.spec.params.length
-        let expectedParams := Expr.bvarArgs root.spec.params.length locals.length
+        let paramCount := recursiveInfo.spec.params.length
+        let paramArgs := args.take paramCount
+        let expectedParams := Expr.bvarArgs paramCount locals.length
         if !((List.zip paramArgs expectedParams).all fun pair => pair.1.alphaEq pair.2) then
-          .error s!"recursive occurrence must use the inductive parameters of {root.spec.name}"
-        else if (args.drop root.spec.params.length).any fun arg =>
-            containsExprAt (recursiveTargetExpr root.spec) locals.length arg then
-          .error s!"recursive occurrence appears inside an index of {root.spec.name}"
+          .error s!"recursive occurrence must use the inductive parameters of {headName}"
+        else if (args.drop paramCount).any fun arg =>
+            containsAnyExprAt recursiveTargets locals.length arg then
+          .error s!"recursive occurrence appears inside an index of {headName}"
         else
           pure (.nested { locals, target := expr, headName })
-    else
+    | none =>
       let mut found := false
       for pair in List.zip args info.positiveParams do
         let arg := pair.1
         let isPositive := pair.2
-        let occurs := containsExprAt (recursiveTargetExpr root.spec) locals.length arg
+        let occurs := containsAnyExprAt recursiveTargets locals.length arg
         if occurs then
           if !isPositive then
             .error s!"recursive occurrence appears in a non-positive argument of {headName}"
-          let shape ← analyzeRecursiveShape env root locals arg (levelParams := levelParams)
+          let shape ←
+            analyzeRecursiveShape
+              env
+              root
+              (recursiveInfos := recursiveInfos)
+              locals
+              arg
+              (levelParams := levelParams)
           if rawShapeHasIH shape then
             found := true
       for arg in args.drop info.spec.params.length do
-        if containsExprAt (recursiveTargetExpr root.spec) locals.length arg then
+        if containsAnyExprAt recursiveTargets locals.length arg then
           .error s!"recursive occurrence appears in an index argument of {headName}"
       if found then
         pure (.nested { locals, target := expr, headName })
@@ -1190,12 +1316,18 @@ partial def analyzeRecursiveShape
       .error s!"unexpected lambda in positivity check: {repr expr}"
   | .forallE name dom body =>
       let dom ← normalizeForInductiveAnalysis env dom (levelParams := levelParams)
-      if containsExprAt (recursiveTargetExpr root.spec) locals.length dom then
+      if containsAnyExprAt recursiveTargets locals.length dom then
         .error s!"non-positive recursive occurrence in {repr expr}"
       else
         let binder : Binder := { name, type := dom }
         let bodyShape ←
-          analyzeRecursiveShape env root (locals ++ [binder]) body (levelParams := levelParams)
+          analyzeRecursiveShape
+            env
+            root
+            (recursiveInfos := recursiveInfos)
+            (locals ++ [binder])
+            body
+            (levelParams := levelParams)
         match bodyShape with
         | .none => pure .none
         | _ => pure (.pi binder bodyShape)
@@ -1203,7 +1335,7 @@ partial def analyzeRecursiveShape
       match decomposeInductiveApp env expr with
       | some (headName, info, levels, args) => analyzeInductiveApp headName info levels args
       | none =>
-          if containsExprAt (recursiveTargetExpr root.spec) locals.length expr then
+          if containsAnyExprAt recursiveTargets locals.length expr then
             .error s!"non-positive recursive occurrence in {repr expr}"
           else
             pure .none
@@ -1224,7 +1356,8 @@ partial def internFieldShape
 
 partial def buildRecursorFamily
     (env : Env)
-    (root : InductiveInfo) : Result RecursorFamily := do
+    (root : InductiveInfo)
+    (recursiveInfos : List InductiveInfo) : Result RecursorFamily := do
   let rootLevelParams := root.spec.levelParams
   let rootTarget ←
     normalizeForInductiveAnalysis
@@ -1265,6 +1398,7 @@ partial def buildRecursorFamily
                 analyzeRecursiveShape
                   env
                   root
+                  recursiveInfos
                   fieldLocals
                   field.type
                   (levelParams := rootLevelParams)
@@ -1373,6 +1507,33 @@ def checkLevelAtMost
       s!"{what} requires universe {repr (Level.normalize actual)}, \
          but the inductive result is only {repr (Level.normalize bound)}"
 
+def constructorFieldVar? (fieldCount fieldIndex : Nat) : Option Expr :=
+  if fieldIndex < fieldCount then
+    some (.bvar (fieldCount - 1 - fieldIndex))
+  else
+    none
+
+def constructorIndexArgs (spec : InductiveSpec) (target : Expr) : List Expr :=
+  target.getAppArgs.drop spec.params.length
+
+partial def constructorFieldIsTargetIndex
+    (env : Env)
+    (ctx : Context)
+    (spec : InductiveSpec)
+    (ctor : ConstructorSpec)
+    (target : Expr)
+    (fieldIndex : Nat) : Result Bool := do
+  let some fieldVar := constructorFieldVar? ctor.fields.length fieldIndex
+    | .error s!"internal error: invalid constructor field index {fieldIndex}"
+  let mut found := false
+  for indexArg in constructorIndexArgs spec target do
+    try
+      let _ ← checkDefEqIn env ctx fieldVar indexArg (levelParams := spec.levelParams)
+      found := true
+    catch _ =>
+      pure ()
+  pure found
+
 partial def inferBinderUniverse
     (env : Env)
     (ctx : Context)
@@ -1409,7 +1570,7 @@ def addAxiomWithLevels (env : Env) (name : Name) (levelParams : LevelContext) (t
   let _ ← checkFreshName env name
   let _ ← checkClosedIn levelParams s!"axiom {name}" type
   let _ ← inferSort env [] type (levelParams := levelParams)
-  pure (.axiom name levelParams type :: env)
+  pure (ConstantInfo.mkAxiom name levelParams type :: env)
 
 def addAxiom (env : Env) (name : Name) (type : Expr) : Result Env :=
   addAxiomWithLevels env name [] type
@@ -1426,47 +1587,178 @@ def addDefinitionWithLevels
   let _ ← inferSort env [] type (levelParams := levelParams)
   let valueTy ← infer env [] value (levelParams := levelParams)
   let _ ← checkDefEq env valueTy type (levelParams := levelParams)
-  pure (.defn name levelParams type value :: env)
+  pure (ConstantInfo.mkDefn name levelParams type value :: env)
 
 def addDefinition (env : Env) (name : Name) (type value : Expr) : Result Env :=
   addDefinitionWithLevels env name [] type value
 
-def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
-  let _ ← checkLevelParamsUnique spec.levelParams
-  if !spec.level.closedIn spec.levelParams then
+def addOpaqueDefinitionWithLevels
+    (env : Env)
+    (name : Name)
+    (levelParams : LevelContext)
+    (type value : Expr) : Result Env := do
+  let _ ← checkLevelParamsUnique levelParams
+  let _ ← checkFreshName env name
+  let _ ← checkClosedIn levelParams s!"opaque definition {name} type" type
+  let _ ← checkClosedIn levelParams s!"opaque definition {name} value" value
+  let _ ← inferSort env [] type (levelParams := levelParams)
+  let valueTy ← infer env [] value (levelParams := levelParams)
+  let _ ← checkDefEq env valueTy type (levelParams := levelParams)
+  pure (ConstantInfo.mkOpaqueDefn name levelParams type value :: env)
+
+def addOpaqueDefinition (env : Env) (name : Name) (type value : Expr) : Result Env :=
+  addOpaqueDefinitionWithLevels env name [] type value
+
+def quotientRelationType : Expr :=
+  .forallE "a" (.bvar 0) (.forallE "b" (.bvar 1) (.sort .zero))
+
+def quotientTypeFormerType : Expr :=
+  Telescope.bindForall
+    [
+      { name := "α", type := .sort (.param "u") },
+      { name := "r", type := quotientRelationType }
+    ]
+    (.sort (.param "u"))
+
+def quotientMkType : Expr :=
+  Telescope.bindForall
+    [
+      { name := "α", type := .sort (.param "u") },
+      { name := "r", type := quotientRelationType },
+      { name := "a", type := .bvar 1 }
+    ]
+    (quotientTypeExpr (.param "u") (.bvar 2) (.bvar 1))
+
+def quotientLiftRespType : Expr :=
+  .forallE
+    "a"
+    (.bvar 3)
+    (.forallE
+      "b"
+      (.bvar 4)
+      (.forallE
+        "h"
+        (Expr.mkApps (.bvar 4) [.bvar 1, .bvar 0])
+        (eqTypeExpr
+          (.param "v")
+          (.bvar 4)
+          (.app (.bvar 3) (.bvar 2))
+          (.app (.bvar 3) (.bvar 1)))))
+
+def quotientLiftType : Expr :=
+  Telescope.bindForall
+    [
+      { name := "α", type := .sort (.param "u") },
+      { name := "r", type := quotientRelationType },
+      { name := "β", type := .sort (.param "v") },
+      { name := "f", type := .forallE "a" (.bvar 2) (.bvar 1) },
+      { name := "resp", type := quotientLiftRespType },
+      { name := "q", type := quotientTypeExpr (.param "u") (.bvar 4) (.bvar 3) }
+    ]
+    (.bvar 3)
+
+def quotientIndType : Expr :=
+  Telescope.bindForall
+    [
+      { name := "α", type := .sort (.param "u") },
+      { name := "r", type := quotientRelationType },
+      {
+        name := "motive"
+        type := .forallE "q" (quotientTypeExpr (.param "u") (.bvar 1) (.bvar 0)) (.sort .zero)
+      },
+      {
+        name := "mk"
+        type :=
+          .forallE
+            "a"
+            (.bvar 2)
+            (.app (.bvar 1) (quotientMkExpr (.param "u") (.bvar 3) (.bvar 2) (.bvar 0)))
+      },
+      { name := "q", type := quotientTypeExpr (.param "u") (.bvar 3) (.bvar 2) }
+    ]
+    (.app (.bvar 2) (.bvar 0))
+
+def quotientSoundType : Expr :=
+  Telescope.bindForall
+    [
+      { name := "α", type := .sort (.param "u") },
+      { name := "r", type := quotientRelationType },
+      { name := "a", type := .bvar 1 },
+      { name := "b", type := .bvar 2 },
+      { name := "h", type := Expr.mkApps (.bvar 2) [.bvar 1, .bvar 0] }
+    ]
+    (eqTypeExpr
+      (.param "u")
+      (quotientTypeExpr (.param "u") (.bvar 4) (.bvar 3))
+      (quotientMkExpr (.param "u") (.bvar 4) (.bvar 3) (.bvar 2))
+      (quotientMkExpr (.param "u") (.bvar 4) (.bvar 3) (.bvar 1)))
+
+def addPrimitive
+    (env : Env)
+    (name : Name)
+    (levelParams : LevelContext)
+    (type : Expr)
+    (primitive : PrimitiveInfo) : Result Env := do
+  let _ ← checkLevelParamsUnique levelParams
+  let _ ← checkFreshName env name
+  let _ ← checkClosedIn levelParams s!"primitive {name}" type
+  let _ ← inferSort env [] type (levelParams := levelParams)
+  pure (ConstantInfo.mkPrimitive name levelParams type primitive :: env)
+
+def addQuotPrimitives (env : Env) : Result Env := do
+  let env ← addPrimitive env "Quot" ["u"] quotientTypeFormerType .quotType
+  let env ← addPrimitive env "Quot.mk" ["u"] quotientMkType .quotMk
+  let env ← addPrimitive env "Quot.lift" ["u", "v"] quotientLiftType .quotLift
+  let env ← addPrimitive env "Quot.ind" ["u"] quotientIndType .quotInd
+  addPrimitive env "Quot.sound" ["u"] quotientSoundType .quotSound
+
+def telescopeTypesAlphaEq (left right : Telescope) : Bool :=
+  left.length = right.length &&
+    (List.zip left right).all fun pair => pair.1.type.alphaEq pair.2.type
+
+def checkBlockNames (env : Env) (specs : List InductiveSpec) : Result (List Name) := do
+  let mut seenNames : List Name := []
+  for spec in specs do
+    for name in [spec.name, recursorName spec.name] do
+      if seenNames.contains name then
+        .error s!"duplicate name in inductive block: {name}"
+      let _ ← checkFreshName env name
+      seenNames := name :: seenNames
+    for ctor in spec.ctors do
+      if seenNames.contains ctor.name then
+        .error s!"duplicate name in inductive block: {ctor.name}"
+      let _ ← checkFreshName env ctor.name
+      seenNames := ctor.name :: seenNames
+  pure seenNames
+
+def checkInductiveHeader
+    (env : Env)
+    (block : InductiveBlockSpec)
+    (sharedParams : Telescope)
+    (spec : InductiveSpec) : Result Unit := do
+  if spec.levelParams != block.levelParams then
+    .error s!"inductive {spec.name} must use the block universe parameters"
+  if !telescopeTypesAlphaEq spec.params sharedParams then
+    .error s!"inductive {spec.name} must use the block parameter telescope"
+  if !spec.level.closedIn block.levelParams then
     .error s!"inductive result universe must be closed under its universe parameters: {repr spec.level}"
   if !inductiveIsProp spec && !spec.level.definitelyPositive then
     .error s!"inductive result universe is neither Prop nor a data universe: {repr spec.level}"
-  let _ ← checkFreshName env spec.name
-  let _ ← checkFreshName env (recursorName spec.name)
-  let mut seenNames := [spec.name, recursorName spec.name]
-  for ctor in spec.ctors do
-    if seenNames.contains ctor.name then
-      .error s!"duplicate name in inductive declaration: {ctor.name}"
-    let _ ← checkFreshName env ctor.name
-    seenNames := ctor.name :: seenNames
-  let _ ← checkTelescope env spec.params (levelParams := spec.levelParams)
+  let _ ← checkTelescope env spec.params (levelParams := block.levelParams)
   let paramCtx := Telescope.toContext spec.params
-  let _ ← checkTelescopeFrom env paramCtx spec.indices (levelParams := spec.levelParams)
-  let indType := inductiveTypeExpr spec
-  let provisionalInfo : InductiveInfo :=
-    {
-      type := indType
-      spec
-      positiveParams := List.replicate spec.params.length true
-      allowsLargeElim := !inductiveIsProp spec
-    }
-  let tempEnv := .inductive spec.name spec.levelParams provisionalInfo :: env
+  let _ ← checkTelescopeFrom env paramCtx spec.indices (levelParams := block.levelParams)
+
+def checkDataUniverseBounds
+    (env : Env)
+    (tempEnv : Env)
+    (spec : InductiveSpec) : Result Unit := do
+  let paramCtx := Telescope.toContext spec.params
   if !spec.ctors.isEmpty && !inductiveIsProp spec then
     let rec checkParamLevels (ctx : Context) : Telescope → Result Unit
       | [] => pure ()
       | binder :: rest => do
           let level ← inferBinderUniverse env ctx binder.type (levelParams := spec.levelParams)
-          let _ ←
-            checkLevelAtMost
-              s!"parameter {binder.name}"
-              level
-              spec.level
+          let _ ← checkLevelAtMost s!"parameter {binder.name}" level spec.level
           checkParamLevels (Telescope.withBinder ctx binder) rest
     let _ ← checkParamLevels [] spec.params
   if !inductiveIsProp spec then
@@ -1475,59 +1767,109 @@ def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
         | [] => pure ()
         | field :: rest => do
             let level ← inferSort tempEnv ctx field.type (levelParams := spec.levelParams)
-            let _ ←
-              checkLevelAtMost
-                s!"field {ctor.name}.{field.name}"
-                level
-                spec.level
+            let _ ← checkLevelAtMost s!"field {ctor.name}.{field.name}" level spec.level
             checkFieldLevels (Telescope.withBinder ctx field) rest
       let _ ← checkFieldLevels paramCtx ctor.fields
-  let allowsLargeElim ←
-    if !inductiveIsProp spec then
-      pure true
-    else
-      match spec.ctors with
-      | [] => pure true
-      | [ctor] =>
-          let rec checkFields (ctx : Context) (fieldDepth : Nat) : Telescope → Result Bool
-            | [] => pure true
-            | field :: rest => do
-                let fieldSort ← inferSort tempEnv ctx field.type (levelParams := spec.levelParams)
-                let fieldType ←
-                  normalizeForInductiveAnalysis
-                    tempEnv
-                    field.type
-                    (levelParams := spec.levelParams)
-                let paramVars := Expr.bvarArgs spec.params.length fieldDepth
-                if Level.defEq fieldSort .zero ||
-                    paramVars.any (fun paramVar => fieldType.alphaEq paramVar) then
-                  checkFields (Telescope.withBinder ctx field) (fieldDepth + 1) rest
-                else
-                  pure false
-          checkFields paramCtx 0 ctor.fields
-      | _ => pure false
-  let positiveParams ← computePositiveParams tempEnv spec
-  let info : InductiveInfo := { type := indType, spec, positiveParams, allowsLargeElim }
-  let infoEnv := .inductive spec.name spec.levelParams info :: env
-  let family ← buildRecursorFamily infoEnv info
-  for target in family.targets.drop 1 do
-    if seenNames.contains target.recName then
-      .error s!"duplicate name in inductive declaration: {target.recName}"
-    let _ ← checkFreshName env target.recName
-    seenNames := target.recName :: seenNames
-  let ctorInfos ←
-    spec.ctors.mapM fun ctor => do
+
+def checkConstructorTargets (tempEnv : Env) (spec : InductiveSpec) : Result Unit := do
+  let paramCtx := Telescope.toContext spec.params
+  for ctor in spec.ctors do
+    let fieldCtx ← checkTelescopeFrom tempEnv paramCtx ctor.fields (levelParams := spec.levelParams)
+    let target ← constructorTargetExpr spec ctor
+    let _ ← checkConstructorTargetExpr spec ctor target
+    let _ ← inferSort tempEnv fieldCtx target (levelParams := spec.levelParams)
+
+def computeAllowsLargeElim
+    (tempEnv : Env)
+    (spec : InductiveSpec) : Result Bool := do
+  if !inductiveIsProp spec then
+    pure true
+  else
+    match spec.ctors with
+    | [] => pure true
+    | [ctor] =>
+        let paramCtx := Telescope.toContext spec.params
+        let target ← constructorTargetExpr spec ctor
+        let allFieldCtx ← checkTelescopeFrom tempEnv paramCtx ctor.fields (levelParams := spec.levelParams)
+        let rec checkFields (ctx : Context) (fieldIndex : Nat) : Telescope → Result Bool
+          | [] => pure true
+          | field :: rest => do
+              let fieldSort ← inferSort tempEnv ctx field.type (levelParams := spec.levelParams)
+              let isIndex ←
+                constructorFieldIsTargetIndex
+                  tempEnv
+                  allFieldCtx
+                  spec
+                  ctor
+                  target
+                  fieldIndex
+              if Level.defEq fieldSort .zero || isIndex then
+                checkFields (Telescope.withBinder ctx field) (fieldIndex + 1) rest
+              else
+                pure false
+        checkFields paramCtx 0 ctor.fields
+    | _ => pure false
+
+def addInductiveBlock (env : Env) (block : InductiveBlockSpec) : Result Env := do
+  let _ ← checkLevelParamsUnique block.levelParams
+  let firstSpec ←
+    match block.specs with
+    | [] => .error "inductive block must contain at least one inductive"
+    | spec :: _ => pure spec
+  let mut seenNames ← checkBlockNames env block.specs
+  for spec in block.specs do
+    let _ ← checkInductiveHeader env block firstSpec.params spec
+  let provisionalInfos : List InductiveInfo :=
+    block.specs.map fun spec =>
+      {
+        type := inductiveTypeExpr spec
+        spec
+        positiveParams := List.replicate spec.params.length true
+        allowsLargeElim := !inductiveIsProp spec
+      }
+  let provisionalEnv :=
+    (List.zip block.specs provisionalInfos).map
+      (fun pair => ConstantInfo.mkInductive pair.1.name block.levelParams pair.2) ++ env
+  for spec in block.specs do
+    let _ ← checkConstructorTargets provisionalEnv spec
+    let _ ← checkDataUniverseBounds env provisionalEnv spec
+  let positiveFacts ← computePositiveParamsInBlock provisionalEnv block.specs
+  let finalInfos ←
+    block.specs.mapM fun spec => do
+      let positiveParams ← positiveFlagsFor positiveFacts spec.name
+      let allowsLargeElim ← computeAllowsLargeElim provisionalEnv spec
+      pure
+        {
+          type := inductiveTypeExpr spec
+          spec
+          positiveParams
+          allowsLargeElim
+        }
+  let infoEnv :=
+    (List.zip block.specs finalInfos).map
+      (fun pair => ConstantInfo.mkInductive pair.1.name block.levelParams pair.2) ++ env
+  let families ← finalInfos.mapM fun info => buildRecursorFamily infoEnv info finalInfos
+  for family in families do
+    for target in family.targets.drop 1 do
+      if seenNames.contains target.recName then
+        .error s!"duplicate name in inductive block: {target.recName}"
+      let _ ← checkFreshName env target.recName
+      seenNames := target.recName :: seenNames
+  let mut ctorInfos : List ConstantInfo := []
+  for spec in block.specs do
+    for ctor in spec.ctors do
       let ctorType ← constructorTypeExpr spec ctor
       let _ ←
         validateGeneratedType
           infoEnv
           s!"generated constructor {ctor.name} type"
-          spec.levelParams
+          block.levelParams
           ctorType
-      pure (.ctor ctor.name spec.levelParams ctorType spec.name)
-  let ctorEnv := ctorInfos.reverse ++ infoEnv
-  let recInfos ←
-    (List.zip (List.range family.targets.length) family.targets).mapM fun pair => do
+      ctorInfos := ConstantInfo.mkCtor ctor.name block.levelParams ctorType spec.name :: ctorInfos
+  let ctorEnv := ctorInfos ++ infoEnv
+  let mut recInfos : List ConstantInfo := []
+  for family in families do
+    for pair in List.zip (List.range family.targets.length) family.targets do
       let recType ← buildRecursorType family pair.1
       let recLevelParams := recursorLevelParamsForFamily family
       let _ ←
@@ -1536,7 +1878,14 @@ def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
           s!"generated recursor {pair.2.recName} type"
           recLevelParams
           recType
-      pure (.recursor pair.2.recName recLevelParams recType pair.1 family)
-  pure (recInfos.reverse ++ ctorInfos.reverse ++ (.inductive spec.name spec.levelParams info :: env))
+      recInfos :=
+        ConstantInfo.mkRecursor pair.2.recName recLevelParams recType pair.1 family :: recInfos
+  let inductiveInfos :=
+    (List.zip block.specs finalInfos).map
+      (fun pair => ConstantInfo.mkInductive pair.1.name block.levelParams pair.2)
+  pure (recInfos ++ ctorInfos ++ inductiveInfos ++ env)
+
+def addInductive (env : Env) (spec : InductiveSpec) : Result Env :=
+  addInductiveBlock env { levelParams := spec.levelParams, specs := [spec] }
 
 end LeanLean

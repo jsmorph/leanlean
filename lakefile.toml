@@ -12,3 +12,7 @@ root = "Main"
 [[lean_exe]]
 name = "leanleantest"
 root = "Test"
+
+[[lean_exe]]
+name = "leanleanfaith"
+root = "Faithfulness.Runner"

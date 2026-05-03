@@ -97,18 +97,18 @@ def eqSpec : InductiveSpec :=
   {
     name := "Eq"
     levelParams := ["u"]
-    params := [{ name := "α", type := .sort (.param "u") }]
-    indices :=
+    params :=
       [
-        { name := "lhs", type := .bvar 0 },
-        { name := "rhs", type := .bvar 1 }
+        { name := "α", type := .sort (.param "u") },
+        { name := "lhs", type := .bvar 0 }
       ]
+    indices := [{ name := "rhs", type := .bvar 1 }]
     level := propLevel
     ctors :=
       [
         {
           name := "Eq.refl"
-          fields := [{ name := "value", type := .bvar 0 }]
+          fields := []
           target? := some (Expr.mkApps (.const "Eq" [.param "u"]) [.bvar 1, .bvar 0, .bvar 0])
         }
       ]
@@ -544,6 +544,144 @@ def pOrSpec : InductiveSpec :=
       ]
   }
 
+def indexSingletonSpec : InductiveSpec :=
+  {
+    name := "IndexSingleton"
+    params := []
+    indices := [{ name := "n", type := natType }]
+    level := propLevel
+    ctors :=
+      [
+        {
+          name := "IndexSingleton.mk"
+          fields := [{ name := "n", type := natType }]
+          target? := some (Expr.mkApps (const0 "IndexSingleton") [.bvar 0])
+        }
+      ]
+  }
+
+def shiftedIndexPropSpec : InductiveSpec :=
+  {
+    name := "ShiftedIndexProp"
+    params := []
+    indices := [{ name := "n", type := natType }]
+    level := propLevel
+    ctors :=
+      [
+        {
+          name := "ShiftedIndexProp.mk"
+          fields := [{ name := "n", type := natType }]
+          target? :=
+            some
+              (Expr.mkApps
+                (const0 "ShiftedIndexProp")
+                [Expr.mkApps (const0 "Nat.succ") [.bvar 0]])
+        }
+      ]
+  }
+
+def dataWitnessPropSpec : InductiveSpec :=
+  {
+    name := "DataWitnessProp"
+    params := [{ name := "α", type := type0Sort }]
+    level := propLevel
+    ctors :=
+      [
+        {
+          name := "DataWitnessProp.mk"
+          fields := [{ name := "value", type := .bvar 0 }]
+        }
+      ]
+  }
+
+def mutEvenSpec : InductiveSpec :=
+  {
+    name := "MutEven"
+    params := []
+    level := type0Level
+    ctors :=
+      [
+        { name := "MutEven.zero", fields := [] },
+        { name := "MutEven.succOdd", fields := [{ name := "pred", type := const0 "MutOdd" }] }
+      ]
+  }
+
+def mutOddSpec : InductiveSpec :=
+  {
+    name := "MutOdd"
+    params := []
+    level := type0Level
+    ctors :=
+      [
+        { name := "MutOdd.succEven", fields := [{ name := "pred", type := const0 "MutEven" }] }
+      ]
+  }
+
+def mutEvenOddBlock : InductiveBlockSpec :=
+  { levelParams := [], specs := [mutEvenSpec, mutOddSpec] }
+
+def badMutAType : Expr :=
+  const0 "BadMutA"
+
+def badMutBType : Expr :=
+  const0 "BadMutB"
+
+def badMutASpec : InductiveSpec :=
+  {
+    name := "BadMutA"
+    params := []
+    level := type0Level
+    ctors :=
+      [
+        {
+          name := "BadMutA.mk"
+          fields := [{ name := "f", type := .forallE "x" badMutBType natType }]
+        }
+      ]
+  }
+
+def badMutBSpec : InductiveSpec :=
+  {
+    name := "BadMutB"
+    params := []
+    level := type0Level
+    ctors :=
+      [
+        { name := "BadMutB.mk", fields := [{ name := "x", type := badMutAType }] }
+      ]
+  }
+
+def badMutualBlock : InductiveBlockSpec :=
+  { levelParams := [], specs := [badMutASpec, badMutBSpec] }
+
+def mutNestASpec : InductiveSpec :=
+  {
+    name := "MutNestA"
+    params := []
+    level := type0Level
+    ctors :=
+      [
+        {
+          name := "MutNestA.mk"
+          fields := [{ name := "children", type := Expr.mkApps (const0 "List") [const0 "MutNestB"] }]
+        }
+      ]
+  }
+
+def mutNestBSpec : InductiveSpec :=
+  {
+    name := "MutNestB"
+    params := []
+    level := type0Level
+    ctors :=
+      [
+        { name := "MutNestB.mk", fields := [{ name := "child", type := const0 "MutNestA" }] }
+      ]
+  }
+
+def mutNestBlock : InductiveBlockSpec :=
+  { levelParams := [], specs := [mutNestASpec, mutNestBSpec] }
+
 def pProp : Expr :=
   const0 "P"
 
@@ -598,6 +736,73 @@ def pOrRecToBool : Expr :=
       pOrInl pProp pProp pProof
     ]
 
+def indexSingletonType (index : Expr) : Expr :=
+  Expr.mkApps (const0 "IndexSingleton") [index]
+
+def indexSingletonMk (index : Expr) : Expr :=
+  Expr.mkApps (const0 "IndexSingleton.mk") [index]
+
+def indexSingletonMotive : Expr :=
+  .lam "n" natType (.lam "h" (indexSingletonType (.bvar 0)) natType)
+
+def indexSingletonCase : Expr :=
+  .lam "n" natType (.bvar 0)
+
+def indexSingletonRecOnZero : Expr :=
+  Expr.mkApps
+    (.const "IndexSingleton.rec" [type0Level])
+    [
+      indexSingletonMotive,
+      indexSingletonCase,
+      const0 "Nat.zero",
+      indexSingletonMk (const0 "Nat.zero")
+    ]
+
+def shiftedIndexPropType (index : Expr) : Expr :=
+  Expr.mkApps (const0 "ShiftedIndexProp") [index]
+
+def shiftedIndexPropMk (index : Expr) : Expr :=
+  Expr.mkApps (const0 "ShiftedIndexProp.mk") [index]
+
+def shiftedIndexPropMotive : Expr :=
+  .lam "n" natType (.lam "h" (shiftedIndexPropType (.bvar 0)) boolType)
+
+def shiftedIndexPropCase : Expr :=
+  .lam "n" natType (const0 "Bool.true")
+
+def shiftedIndexPropRecToBool : Expr :=
+  let one := Expr.mkApps (const0 "Nat.succ") [const0 "Nat.zero"]
+  Expr.mkApps
+    (.const "ShiftedIndexProp.rec" [type0Level])
+    [
+      shiftedIndexPropMotive,
+      shiftedIndexPropCase,
+      one,
+      shiftedIndexPropMk (const0 "Nat.zero")
+    ]
+
+def dataWitnessPropType (elem : Expr) : Expr :=
+  Expr.mkApps (const0 "DataWitnessProp") [elem]
+
+def dataWitnessPropMk (elem value : Expr) : Expr :=
+  Expr.mkApps (const0 "DataWitnessProp.mk") [elem, value]
+
+def dataWitnessPropMotive : Expr :=
+  .lam "h" (dataWitnessPropType boolType) boolType
+
+def dataWitnessPropCase : Expr :=
+  .lam "value" boolType (const0 "Bool.true")
+
+def dataWitnessPropRecToBool : Expr :=
+  Expr.mkApps
+    (.const "DataWitnessProp.rec" [type0Level])
+    [
+      boolType,
+      dataWitnessPropMotive,
+      dataWitnessPropCase,
+      dataWitnessPropMk boolType (const0 "Bool.false")
+    ]
+
 def propDemoChecks (env : Env) : Result Unit := do
   let pTy ← infer env [] pProp
   let _ ← checkDefEq env pTy propSort
@@ -616,11 +821,21 @@ def propDemoChecks (env : Env) : Result Unit := do
   let _ ← checkDefEq env pTrueBoolTy boolType
   let pTrueBoolNf ← normalize env pTrueRecToBool
   let _ ← checkDefEq env pTrueBoolNf (const0 "Bool.true")
+  let indexSingletonTy ← infer env [] indexSingletonRecOnZero
+  let _ ← checkDefEq env indexSingletonTy natType
+  let indexSingletonNf ← normalize env indexSingletonRecOnZero
+  let _ ← checkDefEq env indexSingletonNf (const0 "Nat.zero")
   match infer env [] (const0 "PTrue.rec") with
   | .ok _ => .error "PTrue.rec should require a motive universe argument"
   | .error _ => pure ()
   match infer env [] pOrRecToBool with
   | .ok _ => .error "POr.rec should reject data-valued motives"
+  | .error _ => pure ()
+  match infer env [] shiftedIndexPropRecToBool with
+  | .ok _ => .error "ShiftedIndexProp.rec should reject data-valued motives"
+  | .error _ => pure ()
+  match infer env [] dataWitnessPropRecToBool with
+  | .ok _ => .error "DataWitnessProp.rec should reject data-valued motives"
   | .error _ => pure ()
 
 def sampleEnv : Result Env := do
@@ -628,6 +843,7 @@ def sampleEnv : Result Env := do
   let env ← addInductive env natSpec
   let env ← addInductive env listSpec
   let env ← addInductive env eqSpec
+  let env ← addQuotPrimitives env
   let env ← addInductive env vecSpec
   let env ← addInductive env heightTreeSpec
   let env ← addInductive env sortBoxSpec
@@ -639,8 +855,14 @@ def sampleEnv : Result Env := do
   let env ← addInductive env pFalseSpec
   let env ← addInductive env pTrueSpec
   let env ← addInductive env pOrSpec
+  let env ← addInductive env indexSingletonSpec
+  let env ← addInductive env shiftedIndexPropSpec
+  let env ← addInductive env dataWitnessPropSpec
+  let env ← addInductiveBlock env mutEvenOddBlock
+  let env ← addInductiveBlock env mutNestBlock
   let one := Expr.mkApps (const0 "Nat.succ") [const0 "Nat.zero"]
   let env ← addDefinition env "one" natType one
+  let env ← addOpaqueDefinition env "opaqueTrue" boolType (const0 "Bool.true")
   let env ← addDefinitionWithLevels env "polyId" ["u"] polyIdType polyIdValue
   let env ← addAxiom env "P" propSort
   let env ← addAxiom env "pProof" pProp
@@ -655,14 +877,142 @@ def boolFalse : Expr :=
 def boolTrue : Expr :=
   const0 "Bool.true"
 
+def opaqueTrue : Expr :=
+  const0 "opaqueTrue"
+
 def natZero : Expr :=
   const0 "Nat.zero"
+
+def mutEvenType : Expr :=
+  const0 "MutEven"
+
+def mutOddType : Expr :=
+  const0 "MutOdd"
+
+def mutEvenZero : Expr :=
+  const0 "MutEven.zero"
+
+def mutEvenSuccOdd (pred : Expr) : Expr :=
+  Expr.mkApps (const0 "MutEven.succOdd") [pred]
+
+def mutOddSuccEven (pred : Expr) : Expr :=
+  Expr.mkApps (const0 "MutOdd.succEven") [pred]
+
+def mutEvenTwo : Expr :=
+  mutEvenSuccOdd (mutOddSuccEven mutEvenZero)
+
+def mutOddOne : Expr :=
+  mutOddSuccEven mutEvenZero
+
+def mutEvenMotive : Expr :=
+  .lam "x" mutEvenType natType
+
+def mutOddMotive : Expr :=
+  .lam "x" mutOddType natType
+
+def mutEvenZeroCase : Expr :=
+  natZero
+
+def mutEvenSuccOddCase : Expr :=
+  .lam "pred" mutOddType (.lam "ih" natType (natSucc (.bvar 0)))
+
+def mutOddSuccEvenCase : Expr :=
+  .lam "pred" mutEvenType (.lam "ih" natType (natSucc (.bvar 0)))
+
+def mutEvenRecOnTwo : Expr :=
+  Expr.mkApps
+    (recConst "MutEven.rec")
+    [
+      mutEvenMotive,
+      mutOddMotive,
+      mutEvenZeroCase,
+      mutEvenSuccOddCase,
+      mutOddSuccEvenCase,
+      mutEvenTwo
+    ]
+
+def mutEvenRecOnOddOne : Expr :=
+  Expr.mkApps
+    (recConst "MutEven.rec_1")
+    [
+      mutEvenMotive,
+      mutOddMotive,
+      mutEvenZeroCase,
+      mutEvenSuccOddCase,
+      mutOddSuccEvenCase,
+      mutOddOne
+    ]
 
 def listNil (elem : Expr) : Expr :=
   Expr.mkApps (const0 "List.nil") [elem]
 
 def listCons (elem head tail : Expr) : Expr :=
   Expr.mkApps (const0 "List.cons") [elem, head, tail]
+
+def mutNestAType : Expr :=
+  const0 "MutNestA"
+
+def mutNestBType : Expr :=
+  const0 "MutNestB"
+
+def mutNestAMk (children : Expr) : Expr :=
+  Expr.mkApps (const0 "MutNestA.mk") [children]
+
+def mutNestBMk (child : Expr) : Expr :=
+  Expr.mkApps (const0 "MutNestB.mk") [child]
+
+def mutNestANil : Expr :=
+  mutNestAMk (listNil mutNestBType)
+
+def mutNestBLeaf : Expr :=
+  mutNestBMk mutNestANil
+
+def mutNestAOne : Expr :=
+  mutNestAMk (listCons mutNestBType mutNestBLeaf (listNil mutNestBType))
+
+def mutNestAMotive : Expr :=
+  .lam "x" mutNestAType natType
+
+def mutNestListMotive : Expr :=
+  .lam "xs" (listType mutNestBType) natType
+
+def mutNestBMotive : Expr :=
+  .lam "x" mutNestBType natType
+
+def mutNestACase : Expr :=
+  .lam "children" (listType mutNestBType) (.lam "ih" natType (natSucc (.bvar 0)))
+
+def mutNestNilCase : Expr :=
+  natZero
+
+def mutNestConsCase : Expr :=
+  .lam
+    "head"
+    mutNestBType
+    (.lam
+      "ihHead"
+      natType
+      (.lam
+        "tail"
+        (listType mutNestBType)
+        (.lam "ihTail" natType (.bvar 2))))
+
+def mutNestBCase : Expr :=
+  .lam "child" mutNestAType (.lam "ih" natType (natSucc (.bvar 0)))
+
+def mutNestARecOnOne : Expr :=
+  Expr.mkApps
+    (recConst "MutNestA.rec")
+    [
+      mutNestAMotive,
+      mutNestListMotive,
+      mutNestBMotive,
+      mutNestACase,
+      mutNestNilCase,
+      mutNestConsCase,
+      mutNestBCase,
+      mutNestAOne
+    ]
 
 def polyId (level : Level) (type value : Expr) : Expr :=
   Expr.mkApps (.const "polyId" [level]) [type, value]
@@ -738,6 +1088,89 @@ def eqReflAt (level : Level) (elem value : Expr) : Expr :=
 
 def eqRefl (elem value : Expr) : Expr :=
   eqReflAt type0Level elem value
+
+def eqBoolTrueMotive : Expr :=
+  .lam
+    "rhs"
+    boolType
+    (.lam "h" (eqType boolType boolTrue (.bvar 0)) boolType)
+
+def eqRecOnRefl : Expr :=
+  Expr.mkApps
+    (.const "Eq.rec" [type0Level, type0Level])
+    [
+      boolType,
+      boolTrue,
+      eqBoolTrueMotive,
+      boolFalse,
+      boolTrue,
+      eqRefl boolType boolTrue
+    ]
+
+def boolEqRel : Expr :=
+  .lam
+    "a"
+    boolType
+    (.lam "b" boolType (eqType boolType (.bvar 1) (.bvar 0)))
+
+def boolTrivialRel : Expr :=
+  .lam "a" boolType (.lam "b" boolType pProp)
+
+def boolQuotType : Expr :=
+  quotientTypeExpr type0Level boolType boolEqRel
+
+def boolQuotTrue : Expr :=
+  quotientMkExpr type0Level boolType boolEqRel boolTrue
+
+def boolQuotTrueOtherRel : Expr :=
+  quotientMkExpr type0Level boolType boolTrivialRel boolTrue
+
+def boolId : Expr :=
+  .lam "x" boolType (.bvar 0)
+
+def boolQuotLiftResp : Expr :=
+  .lam
+    "a"
+    boolType
+    (.lam
+      "b"
+      boolType
+      (.lam "h" (Expr.mkApps boolEqRel [.bvar 1, .bvar 0]) (.bvar 0)))
+
+def boolQuotLiftOnTrue : Expr :=
+  Expr.mkApps
+    (.const "Quot.lift" [type0Level, type0Level])
+    [
+      boolType,
+      boolEqRel,
+      boolType,
+      boolId,
+      boolQuotLiftResp,
+      boolQuotTrue
+    ]
+
+def boolQuotLiftRelationMismatch : Expr :=
+  Expr.mkApps
+    (.const "Quot.lift" [type0Level, type0Level])
+    [
+      boolType,
+      boolEqRel,
+      boolType,
+      boolId,
+      boolQuotLiftResp,
+      boolQuotTrueOtherRel
+    ]
+
+def boolQuotSoundRefl : Expr :=
+  Expr.mkApps
+    (.const "Quot.sound" [type0Level])
+    [
+      boolType,
+      boolEqRel,
+      boolTrue,
+      boolTrue,
+      eqRefl boolType boolTrue
+    ]
 
 def vecType (elem index : Expr) : Expr :=
   Expr.mkApps (const0 "Vec") [elem, index]
@@ -1137,10 +1570,49 @@ def depFieldTreeRecOnNode : Expr :=
       depFieldTreeNode
     ]
 
-def demoReport : Result (List String) := do
-  let env ← sampleEnv
+def demoReportLines : List String :=
+  [
+    "definition one : Nat checks",
+    "opaque definitions type-check without unfolding",
+    "polymorphic definitions instantiate at data and type universes",
+    "polymorphic inductives instantiate at data and type universes",
+    "basic Prop constants, proof irrelevance, and proposition-valued functions check",
+    "Prop inductive recursors enforce large-elimination rules",
+    "recursor constants type-check and support partial application",
+    "Nat.rec on one normalizes to Bool.false",
+    "List Bool constructor application checks",
+    "Eq.refl checks as an indexed constructor",
+    "Eq.rec eliminates into data and reduces on refl",
+    "Quot.lift computes on Quot.mk and Quot.sound checks",
+    "mutual inductive recursors compute across block members",
+    "nested mutual recursors compute through positive containers",
+    "Vec.rec computes through indexed constructor targets",
+    "HeightTree.rec computes through recursive indexed targets",
+    "NatListTree.rec uses a nested helper recursor through List",
+    "WrapAt.rec respects inductive parameters",
+    "let-bound field types are normalized before positivity analysis",
+    "helper-recursion targets are deduplicated by canonical form",
+    "helper recursors support binder-dependent nested targets",
+    "helper recursors support targets that depend on parameters and local binders",
+    "constructor fields may depend on earlier fields",
+    "ill-scoped field dependencies are rejected",
+    "constructor targets must use the declared parameters",
+    "minor premises insert induction hypotheses at recursive fields",
+    "helper recursors support targets that depend on constructor fields",
+    "constructorless inductives may sit below parameter universes",
+    "constructor and field universes are rejected when they exceed the result universe",
+    "recursor reduction rejects targets whose constructor parameters disagree",
+    "recursor reduction rejects targets whose constructor indices disagree",
+    "non-positive nested uses of inductive parameters are rejected"
+  ]
+
+def demoCoreChecks (env : Env) : Result Unit := do
   let oneTy ← infer env [] (const0 "one")
   let _ ← checkDefEq env oneTy natType
+  let opaqueTrueTy ← infer env [] opaqueTrue
+  let _ ← checkDefEq env opaqueTrueTy boolType
+  let opaqueTrueNf ← normalize env opaqueTrue
+  let _ ← checkDefEq env opaqueTrueNf opaqueTrue
   let polyIdBoolTy ← infer env [] polyIdBool
   let _ ← checkDefEq env polyIdBoolTy boolType
   let polyIdBoolNf ← normalize env polyIdBool
@@ -1181,6 +1653,38 @@ def demoReport : Result (List String) := do
   let _ ← checkDefEq env singletonTy (listType boolType)
   let reflTy ← infer env [] (eqRefl boolType boolTrue)
   let _ ← checkDefEq env reflTy (eqType boolType boolTrue boolTrue)
+  let eqRecTy ← infer env [] eqRecOnRefl
+  let _ ← checkDefEq env eqRecTy boolType
+  let eqRecNf ← normalize env eqRecOnRefl
+  let _ ← checkDefEq env eqRecNf boolFalse
+  let boolQuotTy ← infer env [] boolQuotTrue
+  let _ ← checkDefEq env boolQuotTy boolQuotType
+  let boolQuotLiftTy ← infer env [] boolQuotLiftOnTrue
+  let _ ← checkDefEq env boolQuotLiftTy boolType
+  let boolQuotLiftNf ← normalize env boolQuotLiftOnTrue
+  let _ ← checkDefEq env boolQuotLiftNf boolTrue
+  let boolQuotSoundTy ← infer env [] boolQuotSoundRefl
+  let _ ←
+    checkDefEq
+      env
+      boolQuotSoundTy
+      (eqTypeAt type0Level boolQuotType boolQuotTrue boolQuotTrue)
+  let mutEvenTy ← infer env [] mutEvenTwo
+  let _ ← checkDefEq env mutEvenTy mutEvenType
+  let mutEvenRecTy ← infer env [] mutEvenRecOnTwo
+  let _ ← checkDefEq env mutEvenRecTy natType
+  let mutEvenRecNf ← normalize env mutEvenRecOnTwo
+  let _ ← checkDefEq env mutEvenRecNf (natSucc (natSucc natZero))
+  let mutOddHelperTy ← infer env [] mutEvenRecOnOddOne
+  let _ ← checkDefEq env mutOddHelperTy natType
+  let mutOddHelperNf ← normalize env mutEvenRecOnOddOne
+  let _ ← checkDefEq env mutOddHelperNf (natSucc natZero)
+  let mutNestTy ← infer env [] mutNestAOne
+  let _ ← checkDefEq env mutNestTy mutNestAType
+  let mutNestRecTy ← infer env [] mutNestARecOnOne
+  let _ ← checkDefEq env mutNestRecTy natType
+  let mutNestRecNf ← normalize env mutNestARecOnOne
+  let _ ← checkDefEq env mutNestRecNf (natSucc (natSucc (natSucc natZero)))
   let vecRecTy ← infer env [] vecRecOnOne
   let _ ← checkDefEq env vecRecTy natType
   let vecRecNf ← normalize env vecRecOnOne
@@ -1197,6 +1701,9 @@ def demoReport : Result (List String) := do
   let _ ← checkDefEq env listRecTy natType
   let listRecNf ← normalize env natListTreeRecOnList
   let _ ← checkDefEq env listRecNf (natSucc natZero)
+  pure ()
+
+def demoGeneratedInductiveChecks (env : Env) : Result Unit := do
   match addInductive env badSpuriousSpec with
   | .ok _ => .error "BadSpurious should fail the universe check"
   | .error _ => pure ()
@@ -1211,6 +1718,9 @@ def demoReport : Result (List String) := do
   | .error _ => pure ()
   match addInductive env badWrapSpec with
   | .ok _ => .error "BadWrap should fail the positivity check"
+  | .error _ => pure ()
+  match addInductiveBlock env badMutualBlock with
+  | .ok _ => .error "BadMutualBlock should fail the positivity check"
   | .error _ => pure ()
   let env ← addInductive env harmlessWrapSpec
   match env.findInductive? "HarmlessWrap" with
@@ -1296,6 +1806,9 @@ def demoReport : Result (List String) := do
   let _ ← checkDefEq env depFieldTreeTy natType
   let depFieldTreeNf ← normalize env depFieldTreeRecOnNode
   let _ ← checkDefEq env depFieldTreeNf natZero
+  pure ()
+
+def demoMalformedEntryChecks (env : Env) : Result Unit := do
   match normalize env natRecMissingLevel with
   | .ok _ => .error "Nat.rec without a universe argument should not normalize"
   | .error _ => pure ()
@@ -1329,35 +1842,15 @@ def demoReport : Result (List String) := do
   match normalize env polyBoxRecCtorLevelMismatch with
   | .ok _ => .error "PolyBox.rec should reject mismatched constructor universe arguments"
   | .error _ => pure ()
-  pure
-    [
-      "definition one : Nat checks",
-      "polymorphic definitions instantiate at data and type universes",
-      "polymorphic inductives instantiate at data and type universes",
-      "basic Prop constants, proof irrelevance, and proposition-valued functions check",
-      "Prop inductive recursors enforce large-elimination rules",
-      "recursor constants type-check and support partial application",
-      "Nat.rec on one normalizes to Bool.false",
-      "List Bool constructor application checks",
-      "Eq.refl checks as an indexed constructor",
-      "Vec.rec computes through indexed constructor targets",
-      "HeightTree.rec computes through recursive indexed targets",
-      "NatListTree.rec uses a nested helper recursor through List",
-      "WrapAt.rec respects inductive parameters",
-      "let-bound field types are normalized before positivity analysis",
-      "helper-recursion targets are deduplicated by canonical form",
-      "helper recursors support binder-dependent nested targets",
-      "helper recursors support targets that depend on parameters and local binders",
-      "constructor fields may depend on earlier fields",
-      "ill-scoped field dependencies are rejected",
-      "constructor targets must use the declared parameters",
-      "minor premises insert induction hypotheses at recursive fields",
-      "helper recursors support targets that depend on constructor fields",
-      "constructorless inductives may sit below parameter universes",
-      "constructor and field universes are rejected when they exceed the result universe",
-      "recursor reduction rejects targets whose constructor parameters disagree",
-      "recursor reduction rejects targets whose constructor indices disagree",
-      "non-positive nested uses of inductive parameters are rejected"
-    ]
+  match normalize env boolQuotLiftRelationMismatch with
+  | .ok _ => .error "Quot.lift should reject mismatched quotient relations during reduction"
+  | .error _ => pure ()
+
+def demoReport : Result (List String) := do
+  let env ← sampleEnv
+  let _ ← demoCoreChecks env
+  let _ ← demoGeneratedInductiveChecks env
+  let _ ← demoMalformedEntryChecks env
+  pure demoReportLines
 
 end LeanLean

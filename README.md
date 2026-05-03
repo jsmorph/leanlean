@@ -1,3 +1,5 @@
 # LeanLean
 
-This repository contains a specification-first experiment for a minimal Lean-style kernel written in Lean 4.  The current target is a small data fragment with transparent definitions, single inductive declarations, primitive recursors, and computation by beta, delta, zeta, and iota reduction.  The main specification lives in [`spec.md`](spec.md), and the development journal lives in [`devnotes.md`](devnotes.md).
+This repository contains a specification-first experiment for a Lean-style kernel written in Lean 4.  The current target is a focused kernel fragment with universes, transparent and opaque definitions, inductive blocks, generated recursors, propositions, equality, low-level quotients, and beta, delta, zeta, iota, quotient, and proof-irrelevance conversion.  The main specification lives in [`spec.md`](spec.md), the development journal lives in [`devnotes.md`](devnotes.md), and the long-range plan lives in [`plan.md`](plan.md).
+
+The regression suite runs with `lake exe leanleantest`.  The demonstration executable runs with `lake exe leanlean`.  The Lean 4 faithfulness corpus runs with `lake exe leanleanfaith`, using `LEANLEAN_LEAN` when a specific compiler binary should be checked.

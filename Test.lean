@@ -112,6 +112,52 @@ def universeTests : Result Unit := do
       "equality instantiates above Type 0"
       eqTypeTy
       (eqTypeAt type1Level type0Sort boolType boolType)
+  let eqRecTy ← infer env [] eqRecOnRefl
+  let _ ← checkDefEq env eqRecTy boolType
+  let eqRecNf ← normalize env eqRecOnRefl
+  let _ ← expectExprEq "Eq.rec reduces on refl" eqRecNf boolFalse
+  let boolQuotTy ← infer env [] boolQuotTrue
+  let _ ← checkDefEq env boolQuotTy boolQuotType
+  let boolQuotLiftTy ← infer env [] boolQuotLiftOnTrue
+  let _ ← checkDefEq env boolQuotLiftTy boolType
+  let boolQuotLiftNf ← normalize env boolQuotLiftOnTrue
+  let _ ← expectExprEq "Quot.lift reduces on Quot.mk" boolQuotLiftNf boolTrue
+  let boolQuotSoundTy ← infer env [] boolQuotSoundRefl
+  let _ ← checkDefEq env boolQuotSoundTy (eqTypeAt type0Level boolQuotType boolQuotTrue boolQuotTrue)
+  let _ ←
+    expectError
+      "Quot.lift reduction checks quotient relation agreement"
+      (normalize env boolQuotLiftRelationMismatch)
+  match env.findRecursor? "MutEven.rec" with
+  | some (_, family) =>
+      let _ ←
+        expect
+          "mutual recursor families contain both block targets"
+          (family.targets.length = 2)
+      pure ()
+  | none => .error "MutEven.rec should be present in the environment"
+  let mutEvenRecTy ← infer env [] mutEvenRecOnTwo
+  let _ ← checkDefEq env mutEvenRecTy natType
+  let mutEvenRecNf ← normalize env mutEvenRecOnTwo
+  let _ ← expectExprEq "mutual recursors reduce across block members" mutEvenRecNf (natSucc (natSucc natZero))
+  match env.findRecursor? "MutNestA.rec" with
+  | some (_, family) =>
+      let _ ←
+        expect
+          "nested mutual recursor families include helper targets"
+          (family.targets.length = 3)
+      pure ()
+  | none => .error "MutNestA.rec should be present in the environment"
+  let mutNestRecNf ← normalize env mutNestARecOnOne
+  let _ ←
+    expectExprEq
+      "nested mutual recursors reduce through positive containers"
+      mutNestRecNf
+      (natSucc (natSucc (natSucc natZero)))
+  let _ ←
+    expectError
+      "negative mutual occurrences are rejected"
+      (addInductiveBlock env badMutualBlock)
   let pTrueRecTy ← infer env [] pTrueRecOnIntro
   let _ ← checkDefEq env pTrueRecTy pProp
   let pTrueRecNf ← normalize env pTrueRecOnIntro
@@ -124,6 +170,34 @@ def universeTests : Result Unit := do
     expectError
       "non-subsingleton Prop inductives reject data-valued motives"
       (infer env [] pOrRecToBool)
+  let indexSingletonTy ← infer env [] indexSingletonRecOnZero
+  let _ ← checkDefEq env indexSingletonTy natType
+  let indexSingletonNf ← normalize env indexSingletonRecOnZero
+  let _ ← expectExprEq "index-forced Prop recursors reduce" indexSingletonNf natZero
+  let _ ←
+    expectError
+      "computed index fields do not allow data elimination"
+      (infer env [] shiftedIndexPropRecToBool)
+  let _ ←
+    expectError
+      "unindexed data witnesses do not allow data elimination"
+      (infer env [] dataWitnessPropRecToBool)
+  match env.find? "IndexSingleton.rec" with
+  | some info =>
+      let _ ←
+        expect
+          "index-forced Prop recursors carry a motive universe"
+          (info.levelParams = ["u"])
+      pure ()
+  | none => .error "IndexSingleton.rec should be present in the environment"
+  match env.find? "DataWitnessProp.rec" with
+  | some info =>
+      let _ ←
+        expect
+          "unindexed data-witness Prop recursors stay Prop-only"
+          (info.levelParams = [])
+      pure ()
+  | none => .error "DataWitnessProp.rec should be present in the environment"
   let _ ←
     expectError
       "subsingleton Prop inductive recursors require motive universe arguments"
@@ -257,6 +331,126 @@ def generatedValidationTests : Result Unit := do
     "generated declaration validation rejects ill-typed generated types"
     (validateGeneratedType env "malformed generated type" [] malformedType)
 
+def environmentTests : Result Unit := do
+  let env ← sampleEnv
+  match env.find? "one" with
+  | some info =>
+      let _ ← expect "definitions carry transparent values" info.valueExpr?.isSome
+      match info.kind with
+      | .defn .transparent => pure ()
+      | _ => .error "one should be recorded as a definition"
+  | none => .error "one should be present in the environment"
+  match env.find? "opaqueTrue" with
+  | some info =>
+      let _ ← expect "opaque definitions keep stored values" info.valueExpr?.isSome
+      match info.kind with
+      | .defn .opaque => pure ()
+      | _ => .error "opaqueTrue should be recorded as an opaque definition"
+  | none => .error "opaqueTrue should be present in the environment"
+  let opaqueTrueTy ← infer env [] opaqueTrue
+  let _ ← checkDefEq env opaqueTrueTy boolType
+  let opaqueTrueNf ← normalize env opaqueTrue
+  let _ ← expectExprEq "opaque definitions do not unfold" opaqueTrueNf opaqueTrue
+  let _ ← expectError "opaque definitions are not definitionally equal to their values" (checkDefEq env opaqueTrue boolTrue)
+  match env.find? "Nat" with
+  | some info =>
+      match info.kind with
+      | .inductive _ => pure ()
+      | _ => .error "Nat should be recorded as an inductive type constructor"
+  | none => .error "Nat should be present in the environment"
+  match env.find? "Nat.rec" with
+  | some info =>
+      match info.kind with
+      | .primitive (.recursor _ _) => pure ()
+      | _ => .error "Nat.rec should be recorded as a primitive recursor"
+  | none => .error "Nat.rec should be present in the environment"
+  match env.find? "Quot.lift" with
+  | some info =>
+      match info.kind with
+      | .primitive .quotLift => pure ()
+      | _ => .error "Quot.lift should be recorded as a quotient primitive"
+  | none => .error "Quot.lift should be present in the environment"
+
+def faithfulnessBridgeTests : Result Unit := do
+  let env ← sampleEnv
+  let polyIdBoolNf ← normalize env polyIdBool
+  let _ ← expectExprEq "Lean accepts transparent universe-polymorphic computation" polyIdBoolNf boolTrue
+  let polyIdTypeNf ← normalize env polyIdTypeArg
+  let _ ← expectExprEq "Lean accepts universe-polymorphic computation at Type" polyIdTypeNf boolType
+  let opaqueTrueTy ← infer env [] opaqueTrue
+  let _ ← checkDefEq env opaqueTrueTy boolType
+  let _ ← expectError "Lean rejects rfl through opaque definitions" (checkDefEq env opaqueTrue boolTrue)
+  let natRecTy ← infer env [] natIsZeroOnOne
+  let _ ← checkDefEq env natRecTy boolType
+  let natRecNf ← normalize env natIsZeroOnOne
+  let _ ← expectExprEq "Lean accepts primitive recursor computation" natRecNf boolFalse
+  let eqRecTy ← infer env [] eqRecOnRefl
+  let _ ← checkDefEq env eqRecTy boolType
+  let eqRecNf ← normalize env eqRecOnRefl
+  let _ ← expectExprEq "Lean accepts Eq.rec computation into data" eqRecNf boolFalse
+  let quotientNf ← normalize env boolQuotLiftOnTrue
+  let _ ← expectExprEq "Lean accepts Quot.lift computation on Quot.mk" quotientNf boolTrue
+  let indexSingletonTy ← infer env [] indexSingletonRecOnZero
+  let _ ← checkDefEq env indexSingletonTy natType
+  let indexSingletonNf ← normalize env indexSingletonRecOnZero
+  let _ ← expectExprEq "Lean accepts indexed singleton Prop elimination into data" indexSingletonNf natZero
+  let mutEvenNf ← normalize env mutEvenRecOnTwo
+  let _ ←
+    expectExprEq
+      "Lean accepts mutual inductive declarations"
+      mutEvenNf
+      (natSucc (natSucc natZero))
+  let mutNestNf ← normalize env mutNestARecOnOne
+  let _ ←
+    expectExprEq
+      "Lean accepts nested mutual inductive declarations"
+      mutNestNf
+      (natSucc (natSucc (natSucc natZero)))
+  let badPositiveSpec : InductiveSpec :=
+    {
+      name := "BadPositive"
+      params := []
+      level := type0Level
+      ctors :=
+        [
+          {
+            name := "BadPositive.mk"
+            fields := [{ name := "f", type := .forallE "x" (const0 "BadPositive") natType }]
+          }
+        ]
+    }
+  let badPolyBoxSpec : InductiveSpec :=
+    {
+      name := "BadPolyBox"
+      levelParams := ["u"]
+      params := [{ name := "α", type := .sort (.param "u") }]
+      level := .param "u"
+      ctors := []
+    }
+  let _ ←
+    expectError
+      "Lean rejects non-positive inductive occurrences"
+      (addInductive env badPositiveSpec)
+  let _ ←
+    expectError
+      "Lean rejects ambiguous Sort-valued inductive results"
+      (addInductive [] badPolyBoxSpec)
+  let _ ←
+    expectError
+      "Lean rejects multi-constructor Prop elimination into data"
+      (infer env [] pOrRecToBool)
+  let _ ←
+    expectError
+      "Lean rejects data-witness Prop elimination into data"
+      (infer env [] dataWitnessPropRecToBool)
+  let _ ←
+    expectError
+      "Lean rejects computed-index Prop elimination into data"
+      (infer env [] shiftedIndexPropRecToBool)
+  expectError
+    "Lean rejects quotient relation mismatches"
+    (normalize env boolQuotLiftRelationMismatch)
+
 def rawEntryTests : Result Unit := do
   let env ← sampleEnv
   let _ ← expectError "normalization rejects recursor missing universe argument" (normalize env natRecMissingLevel)
@@ -269,6 +463,8 @@ def kernelRegressionTests : Result Unit := do
   let _ ← universeTests
   let _ ← substitutionTests
   let _ ← generatedValidationTests
+  let _ ← environmentTests
+  let _ ← faithfulnessBridgeTests
   let _ ← rawEntryTests
   let _ ← demoReport
   pure ()
@@ -278,6 +474,7 @@ def testReport : Result (List String) := do
   let _ ← universeTests
   let _ ← substitutionTests
   let _ ← generatedValidationTests
+  let _ ← environmentTests
   let _ ← rawEntryTests
   let _ ← demoReport
   pure
@@ -286,6 +483,8 @@ def testReport : Result (List String) := do
       "universe-polymorphism invariants check",
       "substitution invariants check",
       "generated declaration validation rejects malformed generated types",
+      "environment declaration metadata checks",
+      "faithfulness bridge checks local expressions against the Lean corpus",
       "raw inference and normalization entry points reject malformed primitives",
       "kernel example regressions check"
     ]

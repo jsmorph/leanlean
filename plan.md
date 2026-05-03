@@ -2,7 +2,7 @@
 
 This plan describes a path from the current specification-driven proof of concept to a complete Lean 4 kernel.  The project has two operating standards.  Every trusted feature needs a written local specification before implementation work builds around it.  Every object admitted to the environment needs the same well-formedness discipline, whether the object came from user input or from kernel generation.
 
-The current kernel has a useful base.  It implements a small dependent type theory with universe-polymorphic axioms, definitions, and inductives, predicative inductive result universes, transparent definitions, single inductive declarations, indices, dependent constructor-field telescopes, strict positivity, first-class recursor constants, nested helper recursors, telescope-aware helper targets, beta, delta, zeta, and iota reduction, simultaneous substitution, and validation of generated constructor and recursor types.  The examples now use Lean's universe numbering: `Sort 0` is reserved for `Prop`, while ordinary data begins at `Sort 1`.  Lean 4 contains substantially more theory.  `Prop`, quotient reduction, mutual inductives, irrelevance, opacity, and the full declaration model all affect typing or conversion.
+The current kernel has a useful base.  It implements a small dependent type theory with universe-polymorphic axioms, transparent and opaque definitions, inductive blocks, predicative inductive result universes, indices, dependent constructor-field telescopes, strict positivity, first-class recursor constants, nested helper recursors, telescope-aware helper targets, low-level quotient primitives, beta, delta, zeta, iota, and quotient reduction, simultaneous substitution, and validation of generated constructor, recursor, and primitive types.  The examples now use Lean's universe numbering: `Sort 0` is reserved for `Prop`, while ordinary data begins at `Sort 1`.  Lean 4 contains substantially more theory.  The higher-level declaration model, structures, projections, theorem metadata, and broad faithfulness testing still affect the path to a complete kernel.
 
 ## Principles
 
@@ -101,6 +101,8 @@ Mutual inductives require positivity, recursor generation, and iota reduction to
 
 Positivity should compute a joint fixed point over the mutual block.  Constructor and recursor generation should validate every generated type in an environment that contains the whole block.  The generated environment should avoid accidental dependence on declaration order inside the block.  Any required ordering should appear in the specification.
 
+Status: implemented for blocks whose members share universe parameters and a parameter telescope.  The regression suite covers ordinary mutual recursion, nested mutual recursion through `List`, and rejection of a negative mutual occurrence.  The singleton inductive API now routes through block admission.
+
 Acceptance criteria:
 
 - Standard mutual examples type-check and compute.
@@ -113,6 +115,8 @@ Acceptance criteria:
 Lean's quotient types are kernel primitives.  A complete kernel needs their type former, constructors, eliminator, and reduction behavior.  This phase should follow `Prop`, because quotients depend on propositions and proof irrelevance.
 
 The local specification should state the quotient constants and their trusted computation rules.  The implementation should add them as primitive declarations whose types are checked in the same validation framework used for generated recursors where possible.  Reduction should compute only at the primitive redexes allowed by the specification.  The tests should target malformed eliminations as well as successful quotient computations.
+
+Status: implemented for the low-level `Quot` API.  The kernel validates primitive declarations for `Quot`, `Quot.mk`, `Quot.lift`, `Quot.ind`, and `Quot.sound`, and reduction computes `Quot.lift` on `Quot.mk` after checking universe, type, and relation agreement.  The higher-level setoid-based `Quotient` API remains outside the current subset.
 
 Acceptance criteria:
 
@@ -127,6 +131,8 @@ The current kernel has axioms and transparent definitions.  Lean needs opaque co
 
 The environment should record exactly the data the checker trusts: universe parameters, type, optional value, opacity, primitive kind, and reduction metadata.  Transparent and opaque constants should behave differently under conversion.  Structures and projections should either compile to existing primitives or enter as specified kernel primitives.  No reduction rule should depend on source-level syntax that elaboration should have removed.
 
+Status: partially implemented.  Environment entries now use a single declaration record with kind metadata, optional checked values, primitive recursor metadata, and transparent versus opaque definition behavior.  Projection support, theorem metadata, and reducibility hints beyond opacity remain outside the current subset.
+
 Acceptance criteria:
 
 - Transparent and opaque constants behave differently under conversion.
@@ -139,6 +145,8 @@ Acceptance criteria:
 Once the local kernel covers the major primitives, the project should compare behavior against Lean 4 systematically.  The comparison should be differential testing against small exported terms and declarations.  The local kernel remains specification-driven, so differences should become written divergences or fixed bugs.
 
 The comparison suite should include accepted and rejected examples.  Accepted examples should compare inferred types and normal forms where the local syntax can express them.  Rejected examples should target universe errors, forbidden eliminations, positivity failures, quotient misuse, malformed recursor applications, and opacity.  Each fixed divergence should become a regression test.
+
+Status: started with a source-level Lean corpus under `Faithfulness` and an executable runner named `leanleanfaith`.  The first corpus covers accepted universe-polymorphic definitions, recursor computation, proposition eliminators, equality, quotients, mutual inductives, and nested mutual inductives.  It also covers rejected positivity, ambiguous universe, forbidden proposition elimination, opacity, and quotient relation examples, with matching local bridge tests in the kernel regression suite.
 
 Acceptance criteria:
 
@@ -162,4 +170,4 @@ Acceptance criteria:
 
 ## Immediate Next Work
 
-Ordinary universe polymorphism now covers inference, conversion, axioms, definitions, inductive declarations, generated constructors, and generated recursors.  The kernel reserves `Sort 0` for `Prop`, uses symbolic `imax` for dependent function sorts, applies proof irrelevance to terms with the same normalized proposition type, and supports proposition-valued inductives with a conservative subsingleton large-elimination rule.  The next implementation work should specify the full indexed subsingleton-elimination criterion before quotient primitives expand the trusted rules.
+Ordinary universe polymorphism now covers inference, conversion, axioms, transparent and opaque definitions, inductive blocks, generated constructors, generated recursors, and low-level quotient primitives.  The kernel reserves `Sort 0` for `Prop`, uses symbolic `imax` for dependent function sorts, applies proof irrelevance to terms with the same normalized proposition type, supports proposition-valued inductives with the indexed syntactic subsingleton-elimination rule, admits mutual inductive blocks atomically, records primitive metadata in the environment, and has a first executable faithfulness corpus.  The next implementation work should use that corpus as a guard while extending the declaration model toward structures and projections.

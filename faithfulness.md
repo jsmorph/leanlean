@@ -1,0 +1,9 @@
+# Faithfulness Harness
+
+The faithfulness harness compares the local kernel fragment against observed Lean 4 behavior on small source examples.  It does not make Lean 4 the project specification, because the local specification remains the authority for this repository.  It records agreement and disagreement with Lean 4 as evidence, and every resulting decision still needs a written rule in `spec.md`.
+
+The first corpus lives under `Faithfulness`.  `Accepted.lean` contains Lean source that the installed Lean compiler must accept, including universe-polymorphic definitions, inductive recursors, proposition-valued recursors, equality elimination, low-level quotients, mutual inductives, nested mutual inductives, transparent definitions, and opaque constants.  The files under `Faithfulness/Rejected` contain Lean source that the installed Lean compiler must reject, including a non-positive inductive, an ambiguous `Sort u` inductive result, forbidden eliminations from propositions into data, an opacity-sensitive `rfl`, and a quotient relation mismatch.
+
+The executable `lake exe leanleanfaith` runs the corpus through the installed `lean` command.  The accepted file must exit successfully, and each rejected file must fail with an expected diagnostic fragment.  The environment variable `LEANLEAN_LEAN` can name a specific Lean binary when the default command does not select the intended compiler.
+
+The local bridge lives in the ordinary regression suite.  It checks the corresponding local expressions for the same behavioral classes rather than trying to translate arbitrary Lean source.  This keeps the first harness small and explicit: source elaboration, name resolution, notation, and export parsing remain outside the current kernel boundary.
