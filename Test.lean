@@ -434,20 +434,57 @@ def kernelInductiveDeclTests : Result Unit := do
     "kernel-style constructors must repeat the block parameters"
     (addDeclaration env (.kernelInductive badCtorDecl))
 
+def reducibilityHintTests : Result Unit := do
+  let env ← addInductive [] boolSpec
+  let env ← addAbbrev env "abbrevTrue" boolType boolTrue
+  match env.find? "abbrevTrue" with
+  | some info =>
+      match info.kind with
+      | .defn .transparent .abbrev => pure ()
+      | _ => .error "abbrevTrue should carry an abbrev reducibility hint"
+  | none => .error "abbrevTrue should be present in the environment"
+  let abbrevTrueNf ← normalize env (const0 "abbrevTrue")
+  let _ ← expectExprEq "abbrev definitions unfold" abbrevTrueNf boolTrue
+  let env ←
+    addDefinitionWithHint
+      env
+      "hintOpaqueFalse"
+      boolType
+      boolFalse
+      .opaque
+  match env.find? "hintOpaqueFalse" with
+  | some info =>
+      match info.kind with
+      | .defn .transparent .opaque => pure ()
+      | _ => .error "hintOpaqueFalse should carry an opaque reducibility hint"
+  | none => .error "hintOpaqueFalse should be present in the environment"
+  let hintOpaqueFalseNf ← normalize env (const0 "hintOpaqueFalse")
+  let _ ← expectExprEq "opaque reducibility hints do not block kernel unfolding" hintOpaqueFalseNf boolFalse
+  let env ←
+    addDeclaration
+      env
+      (.definitionWithHint "regularTrue" [] (.regular 7) boolType boolTrue)
+  match env.find? "regularTrue" with
+  | some info =>
+      match info.kind with
+      | .defn .transparent (.regular 7) => pure ()
+      | _ => .error "regularTrue should carry its regular reducibility height"
+  | none => .error "regularTrue should be present in the environment"
+
 def environmentTests : Result Unit := do
   let env ← sampleEnv
   match env.find? "one" with
   | some info =>
       let _ ← expect "definitions carry transparent values" info.valueExpr?.isSome
       match info.kind with
-      | .defn .transparent => pure ()
+      | .defn .transparent (.regular 0) => pure ()
       | _ => .error "one should be recorded as a definition"
   | none => .error "one should be present in the environment"
   match env.find? "opaqueTrue" with
   | some info =>
       let _ ← expect "opaque definitions keep stored values" info.valueExpr?.isSome
       match info.kind with
-      | .defn .opaque => pure ()
+      | .defn .opaque .opaque => pure ()
       | _ => .error "opaqueTrue should be recorded as an opaque definition"
   | none => .error "opaqueTrue should be present in the environment"
   let opaqueTrueTy ← infer env [] opaqueTrue
@@ -676,6 +713,7 @@ def kernelRegressionTests : Result Unit := do
   let _ ← generatedValidationTests
   let _ ← declarationScriptTests
   let _ ← kernelInductiveDeclTests
+  let _ ← reducibilityHintTests
   let _ ← environmentTests
   let _ ← projectionTests
   let _ ← faithfulnessBridgeTests
@@ -690,6 +728,7 @@ def testReport : Result (List String) := do
   let _ ← generatedValidationTests
   let _ ← declarationScriptTests
   let _ ← kernelInductiveDeclTests
+  let _ ← reducibilityHintTests
   let _ ← environmentTests
   let _ ← projectionTests
   let _ ← faithfulnessBridgeTests
@@ -703,6 +742,7 @@ def testReport : Result (List String) := do
       "generated declaration validation rejects malformed generated types",
       "declaration scripts use the checked admission path",
       "kernel-style inductive declarations map to checked blocks",
+      "reducibility hints are recorded as definition metadata",
       "environment declaration metadata checks",
       "projection typing, reduction, and eta checks",
       "faithfulness bridge checks local expressions against the Lean corpus",

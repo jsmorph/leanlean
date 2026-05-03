@@ -169,9 +169,15 @@ inductive DefinitionTransparency where
   | opaque : DefinitionTransparency
   deriving DecidableEq, Repr, Inhabited
 
+inductive ReducibilityHint where
+  | regular : Nat → ReducibilityHint
+  | abbrev : ReducibilityHint
+  | opaque : ReducibilityHint
+  deriving DecidableEq, Repr, Inhabited
+
 inductive ConstantKind where
   | axiom : ConstantKind
-  | defn : DefinitionTransparency → ConstantKind
+  | defn : DefinitionTransparency → ReducibilityHint → ConstantKind
   | thm : ConstantKind
   | inductive : InductiveInfo → ConstantKind
   | ctor : Name → ConstantKind
@@ -209,6 +215,7 @@ structure KernelInductiveDecl where
 inductive Declaration where
   | axiom : Name → LevelContext → Expr → Declaration
   | definition : Name → LevelContext → Expr → Expr → Declaration
+  | definitionWithHint : Name → LevelContext → ReducibilityHint → Expr → Expr → Declaration
   | opaqueDefinition : Name → LevelContext → Expr → Expr → Declaration
   | theorem : Name → LevelContext → Expr → Expr → Declaration
   | inductive : InductiveSpec → Declaration
@@ -223,11 +230,18 @@ namespace ConstantInfo
 def mkAxiom (name : Name) (levelParams : List Name) (type : Expr) : ConstantInfo :=
   { name, levelParams, typeExpr := type, kind := .axiom }
 
+def mkDefnWithHint
+    (name : Name)
+    (levelParams : List Name)
+    (type value : Expr)
+    (hint : ReducibilityHint) : ConstantInfo :=
+  { name, levelParams, typeExpr := type, valueExpr? := some value, kind := .defn .transparent hint }
+
 def mkDefn (name : Name) (levelParams : List Name) (type value : Expr) : ConstantInfo :=
-  { name, levelParams, typeExpr := type, valueExpr? := some value, kind := .defn .transparent }
+  mkDefnWithHint name levelParams type value (.regular 0)
 
 def mkOpaqueDefn (name : Name) (levelParams : List Name) (type value : Expr) : ConstantInfo :=
-  { name, levelParams, typeExpr := type, valueExpr? := some value, kind := .defn .opaque }
+  { name, levelParams, typeExpr := type, valueExpr? := some value, kind := .defn .opaque .opaque }
 
 def mkTheorem (name : Name) (levelParams : List Name) (type value : Expr) : ConstantInfo :=
   { name, levelParams, typeExpr := type, valueExpr? := some value, kind := .thm }
@@ -297,7 +311,7 @@ def type (info : ConstantInfo) (levels : List Level) (levelParams : LevelContext
 def value? (info : ConstantInfo) (levels : List Level) (levelParams : LevelContext := []) :
     Result (Option Expr) :=
   match info.kind, info.valueExpr? with
-  | .defn .transparent, some value =>
+  | .defn .transparent _, some value =>
       some <$> instantiateExpr info.name "value" info.levelParams levelParams levels value
   | .projection _, some value =>
       some <$> instantiateExpr info.name "value" info.levelParams levelParams levels value
@@ -1939,11 +1953,12 @@ def addAxiomWithLevels (env : Env) (name : Name) (levelParams : LevelContext) (t
 def addAxiom (env : Env) (name : Name) (type : Expr) : Result Env :=
   addAxiomWithLevels env name [] type
 
-def addDefinitionWithLevels
+def addDefinitionWithHintWithLevels
     (env : Env)
     (name : Name)
     (levelParams : LevelContext)
-    (type value : Expr) : Result Env := do
+    (type value : Expr)
+    (hint : ReducibilityHint) : Result Env := do
   let _ ← checkLevelParamsUnique levelParams
   let _ ← checkFreshName env name
   let _ ← checkClosedIn levelParams s!"definition {name} type" type
@@ -1951,10 +1966,34 @@ def addDefinitionWithLevels
   let _ ← inferSort env [] type (levelParams := levelParams)
   let valueTy ← infer env [] value (levelParams := levelParams)
   let _ ← checkDefEq env valueTy type (levelParams := levelParams)
-  pure (ConstantInfo.mkDefn name levelParams type value :: env)
+  pure (ConstantInfo.mkDefnWithHint name levelParams type value hint :: env)
+
+def addDefinitionWithLevels
+    (env : Env)
+    (name : Name)
+    (levelParams : LevelContext)
+    (type value : Expr) : Result Env :=
+  addDefinitionWithHintWithLevels env name levelParams type value (.regular 0)
 
 def addDefinition (env : Env) (name : Name) (type value : Expr) : Result Env :=
   addDefinitionWithLevels env name [] type value
+
+def addDefinitionWithHint
+    (env : Env)
+    (name : Name)
+    (type value : Expr)
+    (hint : ReducibilityHint) : Result Env :=
+  addDefinitionWithHintWithLevels env name [] type value hint
+
+def addAbbrevWithLevels
+    (env : Env)
+    (name : Name)
+    (levelParams : LevelContext)
+    (type value : Expr) : Result Env :=
+  addDefinitionWithHintWithLevels env name levelParams type value .abbrev
+
+def addAbbrev (env : Env) (name : Name) (type value : Expr) : Result Env :=
+  addAbbrevWithLevels env name [] type value
 
 def addOpaqueDefinitionWithLevels
     (env : Env)
@@ -2372,6 +2411,8 @@ def addDeclaration (env : Env) : Declaration → Result Env
   | .axiom name levelParams type => addAxiomWithLevels env name levelParams type
   | .definition name levelParams type value =>
       addDefinitionWithLevels env name levelParams type value
+  | .definitionWithHint name levelParams hint type value =>
+      addDefinitionWithHintWithLevels env name levelParams type value hint
   | .opaqueDefinition name levelParams type value =>
       addOpaqueDefinitionWithLevels env name levelParams type value
   | .theorem name levelParams type value => addTheoremWithLevels env name levelParams type value

@@ -10,6 +10,11 @@ example : transparentId true = true := rfl
 
 example : transparentId (α := Type) Bool = Bool := rfl
 
+abbrev abbrevTrue : Bool :=
+  true
+
+example : abbrevTrue = true := rfl
+
 opaque opaqueTrue : Bool := true
 
 example : (opaqueTrue : Bool) = opaqueTrue := rfl
