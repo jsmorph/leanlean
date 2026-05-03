@@ -44,7 +44,8 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Add universe contexts for inference, conversion, axioms, and definitions.
 - [x] Extend universe polymorphism to inductive declarations and generated recursors.
 - [x] Rebase the data fragment so `Sort 0` is reserved for `Prop` and data inductives live above it.
-- [ ] Specify the Prop-specific function-sort, elimination, and proof-irrelevance rules.
+- [x] Add the known-Prop function-sort rule.
+- [ ] Specify proposition-valued inductives, elimination restrictions, and proof irrelevance.
 
 ## Current Decisions
 
@@ -72,4 +73,6 @@ Constructor fields now form dependent telescopes.  The checker validates each fi
 
 Indexed inductive families now use explicit constructor result targets.  The primary recursor's motive quantifies over the indices before the target term, while constructor minor premises compute their motive arguments from each constructor's declared result target.  Root indices are target locals for the final recursor application but not uniform minor-premise locals; helper targets still bind their schema locals uniformly.  The examples now cover Type-valued equality, vectors, a recursive height-indexed tree, and rejection of a recursor call whose target index disagrees with the constructor result.
 
-Universe-polymorphic definitions and inductives now have checked paths through the kernel.  `addDefinitionWithLevels` and `addAxiomWithLevels` reject duplicate universe parameters and reject level variables outside the declared universe context, while `addInductive` applies the same discipline to inductive result universes, constructor types, and generated recursor types.  The raw public entry points still reject open universe levels.  The examples `polyId.{u}` and `PolyBox.{u}` instantiate at both `Type 0` and `Type 1`, with `PolyBox` using Lean's `Type u` convention as `Sort (u + 1)`.  The focused regression tests cover symbolic level ordering, universe-context closure, generated recursor level ordering, rejection of proposition-valued data inductives, and iota rejection for constructor targets at mismatched universe levels.
+Universe-polymorphic definitions and inductives now have checked paths through the kernel.  `addDefinitionWithLevels` and `addAxiomWithLevels` reject duplicate universe parameters and reject level variables outside the declared universe context, while `addInductive` applies the same discipline to inductive result universes, constructor types, and generated recursor types.  The raw public entry points still reject open universe levels.  The examples `polyId.{u}` and `PolyBox.{u}` instantiate at both `Type 0` and `Type 1`, with `PolyBox` using Lean's `Type u` convention as `Sort (u + 1)`.  The focused regression tests cover symbolic level ordering, universe-context closure, generated recursor level ordering, rejection of proposition-valued data inductives, the known-Prop function-sort rule, and iota rejection for constructor targets at mismatched universe levels.
+
+The Prop work has started at the function-sort boundary.  Axioms may now introduce propositions and proofs, and `∀ x : A, B` lives in `Prop` when the codomain has sort `Prop`.  The kernel still lacks proposition-valued inductives, elimination restrictions, proof irrelevance, and a symbolic `imax` level former for universe-polymorphic codomain levels.

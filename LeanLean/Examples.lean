@@ -32,6 +32,9 @@ def type0Sort : Expr :=
 def type1Sort : Expr :=
   .sort type1Level
 
+def propSort : Expr :=
+  .sort propLevel
+
 def recConstAt (level : Level) (name : Name) : Expr :=
   .const name [level]
 
@@ -505,6 +508,18 @@ def polyBoxSpec : InductiveSpec :=
       ]
   }
 
+def pProp : Expr :=
+  const0 "P"
+
+def pProof : Expr :=
+  const0 "pProof"
+
+def qProof : Expr :=
+  const0 "qProof"
+
+def propSelfImpType : Expr :=
+  .forallE "h" pProp pProp
+
 def sampleEnv : Result Env := do
   let env ← addInductive [] boolSpec
   let env ← addInductive env natSpec
@@ -520,7 +535,10 @@ def sampleEnv : Result Env := do
   let env ← addInductive env polyBoxSpec
   let one := Expr.mkApps (const0 "Nat.succ") [const0 "Nat.zero"]
   let env ← addDefinition env "one" natType one
-  addDefinitionWithLevels env "polyId" ["u"] polyIdType polyIdValue
+  let env ← addDefinitionWithLevels env "polyId" ["u"] polyIdType polyIdValue
+  let env ← addAxiom env "P" propSort
+  let env ← addAxiom env "pProof" pProp
+  addAxiom env "qProof" pProp
 
 def natSucc (value : Expr) : Expr :=
   Expr.mkApps (const0 "Nat.succ") [value]
@@ -1031,6 +1049,12 @@ def demoReport : Result (List String) := do
   let _ ← checkDefEq env polyBoxTypeRecTy type0Sort
   let polyBoxTypeRecNf ← normalize env polyBoxRecOnBoolType
   let _ ← checkDefEq env polyBoxTypeRecNf boolType
+  let pTy ← infer env [] pProp
+  let _ ← checkDefEq env pTy propSort
+  let pProofTy ← infer env [] pProof
+  let _ ← checkDefEq env pProofTy pProp
+  let propSelfImpTy ← infer env [] propSelfImpType
+  let _ ← checkDefEq env propSelfImpTy propSort
   let _ ← infer env [] (recConst "Nat.rec")
   let natRecPartialTy ← infer env [] natRecPartial
   let _ ←
@@ -1203,6 +1227,7 @@ def demoReport : Result (List String) := do
       "definition one : Nat checks",
       "polymorphic definitions instantiate at data and type universes",
       "polymorphic inductives instantiate at data and type universes",
+      "basic Prop constants and proposition-valued functions check",
       "recursor constants type-check and support partial application",
       "Nat.rec on one normalizes to Bool.false",
       "List Bool constructor application checks",

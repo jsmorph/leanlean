@@ -8,7 +8,7 @@ The subset follows the shape of Lean's core language described in the Lean refer
 
 The first subset covers transparent definitions, axioms, and single inductive declarations.  It supports level-polymorphic axioms, definitions, and inductive declarations, parameters and indices on inductive types, dependent constructor-field telescopes, strictly positive constructor fields, generated recursor families, and the reduction rules required to compute through those recursors.  It excludes the parts of Lean 4 that would force a larger theory before the inductive fragment is stable, such as quotient types, mutual inductives, structure projections, and proof irrelevance.
 
-The subset remains a data fragment.  `Sort 0` is reserved for `Prop`, and ordinary data types begin at `Sort 1`, corresponding to Lean's `Type 0`.  Inductive result universes are predicative level expressions closed under the inductive declaration's universe parameters, and data inductive declarations must have result levels that stay above `Sort 0` under every universe instantiation.  The implementation still omits proposition-valued inductives and the Prop-specific elimination rules.  The term language carries explicit universe arguments on constants, because generated recursors need a motive universe parameter in order to exist as ordinary primitive constants rather than as a typing special case.
+The subset now includes `Prop` as `Sort 0` for axioms and proposition-valued function types.  Ordinary data types begin at `Sort 1`, corresponding to Lean's `Type 0`.  Inductive result universes are predicative level expressions closed under the inductive declaration's universe parameters, and data inductive declarations must have result levels that stay above `Sort 0` under every universe instantiation.  The implementation still omits proposition-valued inductives, proof irrelevance, and the Prop-specific elimination rules for inductive recursors.  The term language carries explicit universe arguments on constants, because generated recursors need a motive universe parameter in order to exist as ordinary primitive constants rather than as a typing special case.
 
 ## Terms and Declarations
 
@@ -40,7 +40,7 @@ The kernel derives a family of primitive recursors from the inductive type and t
 
 ## Conversion and Typing
 
-Typing follows the ordinary rules for a dependently typed lambda calculus.  `Sort u` has type `Sort (u + 1)`, so `Prop` has type `Type 0`.  The current data fragment assigns a dependent function type `∀ x : A, B` to `Sort (max u v)` when `A : Sort u` and `B : Sort v`; the Lean-specific `imax` rule belongs to the Prop phase.  Primitive recursors type-check through those same ordinary rules once their explicit universe argument is supplied, because the kernel stores them as ordinary constants with ordinary dependent function types.  Conversion uses normalization-based definitional equality in the first implementation.
+Typing follows the ordinary rules for a dependently typed lambda calculus.  `Sort u` has type `Sort (u + 1)`, so `Prop` has type `Type 0`.  A dependent function type `∀ x : A, B` lives in `Prop` when `B : Prop`; otherwise it lives in `Sort (max u v)` when `A : Sort u` and `B : Sort v`.  The full symbolic `imax` level former remains future work for cases where the codomain universe is not known to be `Prop` or a data universe.  Primitive recursors type-check through those same ordinary rules once their explicit universe argument is supplied, because the kernel stores them as ordinary constants with ordinary dependent function types.  Conversion uses normalization-based definitional equality in the first implementation.
 
 The conversion relation includes beta, delta, zeta, and iota reduction.  Beta reduction substitutes an argument into a lambda body.  Delta reduction unfolds transparent definitions.  Zeta reduction substitutes the bound value of a `let`.  Iota reduction applies a saturated recursor case to a constructor target and recursively computes the induction hypotheses for recursive fields.  Unsaturated recursor constants do not reduce, but they still type-check as ordinary constants.
 
@@ -48,7 +48,7 @@ The conversion relation includes beta, delta, zeta, and iota reduction.  Beta re
 
 | Feature | Status in first subset | Reason |
 | --- | --- | --- |
-| `Prop`, proof irrelevance, and large elimination | Omitted | They change both conversion and recursor formation. |
+| Proposition-valued inductives, proof irrelevance, and large elimination | Omitted | They change both conversion and recursor formation. |
 | Quotients | Omitted | They add a primitive type former and an additional reduction rule. |
 | Mutual inductives | Omitted | They enlarge the positivity and recursor-generation rules immediately. |
 

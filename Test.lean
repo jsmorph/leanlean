@@ -76,6 +76,14 @@ def universeTests : Result Unit := do
   let _ ← expectExprEq "Prop has type Type 0" propTy type0Sort
   let boolSort ← infer env [] boolType
   let _ ← expectExprEq "Bool lives in Type 0" boolSort type0Sort
+  let pTy ← infer env [] pProp
+  let _ ← expectExprEq "proposition constants have type Prop" pTy propSort
+  let propSelfImpTy ← infer env [] propSelfImpType
+  let _ ←
+    expectExprEq
+      "dependent functions into propositions live in Prop"
+      propSelfImpTy
+      propSort
   let polyIdBoolTy ← infer env [] polyIdBool
   let _ ← expectExprEq "polymorphic definition instantiates at Type 0" polyIdBoolTy boolType
   let polyIdTypeTy ← infer env [] polyIdTypeArg

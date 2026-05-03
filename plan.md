@@ -162,4 +162,4 @@ Acceptance criteria:
 
 ## Immediate Next Work
 
-Ordinary universe polymorphism now covers inference, conversion, axioms, definitions, inductive declarations, generated constructors, and generated recursors.  The data fragment also reserves `Sort 0` for `Prop` and rejects proposition-valued data inductives.  The next implementation work should specify and add the Prop-specific function-sort rule, proposition-valued inductives, elimination restrictions, and proof irrelevance before quotient primitives expand the trusted rules.
+Ordinary universe polymorphism now covers inference, conversion, axioms, definitions, inductive declarations, generated constructors, and generated recursors.  The kernel reserves `Sort 0` for `Prop`, rejects proposition-valued data inductives, and implements the known-Prop function-sort rule.  The next implementation work should specify and add proposition-valued inductives, elimination restrictions, proof irrelevance, and a symbolic `imax` level former before quotient primitives expand the trusted rules.
