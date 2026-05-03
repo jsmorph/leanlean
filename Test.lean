@@ -349,6 +349,32 @@ def declarationScriptTests : Result Unit := do
     "declaration scripts reject malformed declarations"
     (addDeclarations env [.theorem "badScriptTheorem" [] boolType boolTrue])
 
+def declarationReplayTests : Result Unit := do
+  let replayBoolSpec : InductiveSpec :=
+    {
+      name := "ReplayBool"
+      params := []
+      level := type0Level
+      ctors :=
+        [
+          { name := "ReplayBool.false", fields := [] },
+          { name := "ReplayBool.true", fields := [] }
+        ]
+    }
+  let declarations : List Declaration :=
+    [
+      .definition "replayTrue" [] (const0 "ReplayBool") (const0 "ReplayBool.true"),
+      .inductive replayBoolSpec
+    ]
+  let env ← replayDeclarations [] declarations
+  let replayTrueTy ← infer env [] (const0 "replayTrue")
+  let _ ← checkDefEq env replayTrueTy (const0 "ReplayBool")
+  let replayTrueNf ← normalize env (const0 "replayTrue")
+  let _ ← expectExprEq "dependency replay admits declarations in dependency order" replayTrueNf (const0 "ReplayBool.true")
+  expectError
+    "dependency replay rejects unresolved constants"
+    (replayDeclarations [] [.axiom "badReplay" [] (const0 "MissingReplayType")])
+
 def kernelInductiveDeclTests : Result Unit := do
   let kernelBoolDecl : KernelInductiveDecl :=
     {
@@ -817,6 +843,7 @@ def kernelRegressionTests : Result Unit := do
   let _ ← substitutionTests
   let _ ← generatedValidationTests
   let _ ← declarationScriptTests
+  let _ ← declarationReplayTests
   let _ ← kernelInductiveDeclTests
   let _ ← reducibilityHintTests
   let _ ← structureMetadataTests
@@ -833,6 +860,7 @@ def testReport : Result (List String) := do
   let _ ← substitutionTests
   let _ ← generatedValidationTests
   let _ ← declarationScriptTests
+  let _ ← declarationReplayTests
   let _ ← kernelInductiveDeclTests
   let _ ← reducibilityHintTests
   let _ ← structureMetadataTests
@@ -848,6 +876,7 @@ def testReport : Result (List String) := do
       "substitution invariants check",
       "generated declaration validation rejects malformed generated types",
       "declaration scripts use the checked admission path",
+      "dependency replay orders declaration scripts",
       "kernel-style inductive declarations and generated replay checks pass",
       "reducibility hints are recorded as definition metadata",
       "structure metadata records inherited fields",

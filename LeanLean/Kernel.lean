@@ -472,6 +472,32 @@ def quotientTypeExpr (level : Level) (elem rel : Expr) : Expr :=
 def quotientMkExpr (level : Level) (elem rel value : Expr) : Expr :=
   Expr.mkApps (.const "Quot.mk" [level]) [elem, rel, value]
 
+def appendNewNames (names extra : List Name) : List Name :=
+  extra.foldl
+    (fun names name =>
+      if names.contains name then
+        names
+      else
+        names ++ [name])
+    names
+
+partial def exprConstants (expr : Expr) : List Name :=
+  match expr with
+  | .bvar _ => []
+  | .sort _ => []
+  | .const name _ => [name]
+  | .app fn arg => appendNewNames (exprConstants fn) (exprConstants arg)
+  | .lam _ type body => appendNewNames (exprConstants type) (exprConstants body)
+  | .forallE _ type body => appendNewNames (exprConstants type) (exprConstants body)
+  | .proj typeName _ struct => appendNewNames [typeName] (exprConstants struct)
+  | .letE _ type value body =>
+      appendNewNames
+        (appendNewNames (exprConstants type) (exprConstants value))
+        (exprConstants body)
+
+def telescopeConstants (tele : Telescope) : List Name :=
+  tele.foldl (fun names binder => appendNewNames names (exprConstants binder.type)) []
+
 def inductiveSelfTarget (spec : InductiveSpec) (params : List Expr) : Expr :=
   inductiveTargetWithLevels spec.name (inductiveLevelArgs spec) params
 
@@ -2567,6 +2593,119 @@ def addDeclaration (env : Env) : Declaration → Result Env
   | .structureInfo info => registerStructure env info
   | .projection name structName index => addProjection env name structName index
   | .quotientPrimitives => addQuotPrimitives env
+
+namespace Declaration
+
+def inductiveDefinedNames (spec : InductiveSpec) : List Name :=
+  spec.name :: recursorName spec.name :: spec.ctors.map (·.name)
+
+def definedNames : Declaration → List Name
+  | .axiom name .. => [name]
+  | .definition name .. => [name]
+  | .definitionWithHint name .. => [name]
+  | .opaqueDefinition name .. => [name]
+  | .theorem name .. => [name]
+  | .inductive spec => inductiveDefinedNames spec
+  | .inductiveBlock block => block.specs.foldl (fun names spec => appendNewNames names (inductiveDefinedNames spec)) []
+  | .kernelInductive decl =>
+      decl.types.foldl
+        (fun names typeDecl =>
+          appendNewNames
+            names
+            (typeDecl.name :: recursorName typeDecl.name :: typeDecl.ctors.map (·.name)))
+        []
+  | .generatedConstructor .. => []
+  | .generatedRecursor .. => []
+  | .structureInfo .. => []
+  | .projection name .. => [name]
+  | .quotientPrimitives => ["Quot", "Quot.mk", "Quot.lift", "Quot.ind", "Quot.sound"]
+
+def constructorSpecConstants (ctor : ConstructorSpec) : List Name :=
+  let fieldConstants := telescopeConstants ctor.fields
+  match ctor.target? with
+  | some target => appendNewNames fieldConstants (exprConstants target)
+  | none => fieldConstants
+
+def inductiveSpecConstants (spec : InductiveSpec) : List Name :=
+  let base := appendNewNames (telescopeConstants spec.params) (telescopeConstants spec.indices)
+  spec.ctors.foldl
+    (fun names ctor => appendNewNames names (constructorSpecConstants ctor))
+    base
+
+def kernelInductiveTypeConstants (typeDecl : KernelInductiveTypeDecl) : List Name :=
+  typeDecl.ctors.foldl
+    (fun names ctor => appendNewNames names (exprConstants ctor.type))
+    (exprConstants typeDecl.type)
+
+def structureInfoConstants (info : StructureInfo) : List Name :=
+  let fieldConstants :=
+    info.fieldInfo.foldl
+      (fun names field =>
+        appendNewNames
+          names
+          (field.projFn :: field.subobject?.toList))
+      []
+  let parentConstants :=
+    info.parentInfo.foldl
+      (fun names parent => appendNewNames names [parent.structName, parent.projFn])
+      []
+  appendNewNames (info.structName :: fieldConstants) parentConstants
+
+def usedConstants : Declaration → List Name
+  | .axiom _ _ type => exprConstants type
+  | .definition _ _ type value => appendNewNames (exprConstants type) (exprConstants value)
+  | .definitionWithHint _ _ _ type value => appendNewNames (exprConstants type) (exprConstants value)
+  | .opaqueDefinition _ _ type value => appendNewNames (exprConstants type) (exprConstants value)
+  | .theorem _ _ type value => appendNewNames (exprConstants type) (exprConstants value)
+  | .inductive spec => inductiveSpecConstants spec
+  | .inductiveBlock block =>
+      block.specs.foldl (fun names spec => appendNewNames names (inductiveSpecConstants spec)) []
+  | .kernelInductive decl =>
+      decl.types.foldl (fun names typeDecl => appendNewNames names (kernelInductiveTypeConstants typeDecl)) []
+  | .generatedConstructor name _ type indName =>
+      appendNewNames [name, indName] (exprConstants type)
+  | .generatedRecursor name _ type =>
+      appendNewNames [name] (exprConstants type)
+  | .structureInfo info => structureInfoConstants info
+  | .projection _ structName _ => [structName]
+  | .quotientPrimitives => ["Eq"]
+
+end Declaration
+
+def declarationReady (env : Env) (decl : Declaration) : Bool :=
+  let localNames := decl.definedNames
+  decl.usedConstants.all fun name => env.contains name || localNames.contains name
+
+def declarationsDefinedNames (declarations : List Declaration) : List Name :=
+  declarations.foldl
+    (fun names declaration => appendNewNames names declaration.definedNames)
+    []
+
+partial def replayDeclarationsWithFuel
+    (fuel : Nat)
+    (env : Env)
+    (declarations : List Declaration) : Result Env := do
+  match declarations with
+  | [] => pure env
+  | _ =>
+      match fuel with
+      | 0 => .error s!"unresolved declaration dependencies: {repr (declarationsDefinedNames declarations)}"
+      | fuel + 1 =>
+          let mut env := env
+          let mut remaining : List Declaration := []
+          let mut progressed := false
+          for declaration in declarations do
+            if declarationReady env declaration then
+              env ← addDeclaration env declaration
+              progressed := true
+            else
+              remaining := remaining ++ [declaration]
+          if !progressed then
+            .error s!"unresolved declaration dependencies: {repr (declarationsDefinedNames remaining)}"
+          replayDeclarationsWithFuel fuel env remaining
+
+def replayDeclarations (env : Env) (declarations : List Declaration) : Result Env :=
+  replayDeclarationsWithFuel (declarations.length + 1) env declarations
 
 def addDeclarations : Env → List Declaration → Result Env
   | env, [] => pure env
