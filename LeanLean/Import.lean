@@ -337,5 +337,81 @@ def translateConstantInfoSnapshot (infos : List Lean.ConstantInfo) : Result (Lis
 def replayConstantInfoSnapshot (env : Env) (infos : List Lean.ConstantInfo) : Result Env := do
   replayDeclarations env (← translateConstantInfoSnapshot infos)
 
+def appendLeanNames (names extra : List Lean.Name) : List Lean.Name :=
+  extra.foldl
+    (fun acc name =>
+      if acc.any fun existing => existing == name then
+        acc
+      else
+        acc ++ [name])
+    names
+
+def leanExprConstants (expr : Lean.Expr) : List Lean.Name :=
+  expr.getUsedConstants.toList
+
+def recursorRuleConstants (rule : Lean.RecursorRule) : List Lean.Name :=
+  leanExprConstants rule.rhs
+
+def recursorNames (names : List Lean.Name) : List Lean.Name :=
+  names.map Lean.mkRecName
+
+def constantInfoValueConstants : Lean.ConstantInfo → List Lean.Name
+  | .defnInfo value => leanExprConstants value.value
+  | .thmInfo value => leanExprConstants value.value
+  | .opaqueInfo value => leanExprConstants value.value
+  | .recInfo value =>
+      value.rules.foldl
+        (fun names rule => appendLeanNames names (recursorRuleConstants rule))
+        []
+  | _ => []
+
+def quotientPrimitiveNames : List Lean.Name :=
+  [``Quot, ``Quot.mk, ``Quot.lift, ``Quot.ind]
+
+def constantInfoMetadataConstants : Lean.ConstantInfo → List Lean.Name
+  | .inductInfo value =>
+      appendLeanNames
+        (appendLeanNames (inductiveGroupKey value) value.ctors)
+        (recursorNames (inductiveGroupKey value))
+  | .ctorInfo value => [value.induct]
+  | .recInfo value => value.all
+  | .quotInfo _ => ``Eq :: quotientPrimitiveNames
+  | _ => []
+
+def constantInfoDependencyNames (info : Lean.ConstantInfo) : List Lean.Name :=
+  appendLeanNames
+    (appendLeanNames (leanExprConstants info.type) (constantInfoValueConstants info))
+    (constantInfoMetadataConstants info)
+
+partial def collectConstantInfoClosureWith?
+    (lookup : Lean.Name → Option Lean.ConstantInfo)
+    (roots : List Lean.Name) : Result (List Lean.ConstantInfo) := do
+  let rec loop
+      (pending seen : List Lean.Name)
+      (infos : List Lean.ConstantInfo) : Result (List Lean.ConstantInfo) := do
+    match pending with
+    | [] => pure infos.reverse
+    | name :: rest =>
+        if seen.any fun existing => existing == name then
+          loop rest seen infos
+        else
+          let some info := lookup name
+            | .error s!"unknown Lean environment constant in import closure: {name}"
+          let dependencies := constantInfoDependencyNames info
+          let pending := appendLeanNames rest dependencies
+          loop pending (name :: seen) (info :: infos)
+  loop roots [] []
+
+def collectEnvironmentClosure
+    (env : Lean.Environment)
+    (roots : List Lean.Name) : Result (List Lean.ConstantInfo) :=
+  collectConstantInfoClosureWith? (fun name => env.find? name) roots
+
+def replayEnvironmentClosure
+    (env : Env)
+    (leanEnv : Lean.Environment)
+    (roots : List Lean.Name) : Result Env := do
+  replayConstantInfoSnapshot env (← collectEnvironmentClosure leanEnv roots)
+
 end Import
 end LeanLean

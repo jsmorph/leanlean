@@ -689,6 +689,24 @@ def importBridgeTests : Result Unit := do
     expectError
       "constant-info snapshots reject constructor index mismatches"
       (Import.translateConstantInfoSnapshot wrongIndexSnapshot)
+  let lookupInfo (name : Lean.Name) : Option Lean.ConstantInfo :=
+    infoSnapshot.find? fun info => info.name == name
+  let _ ←
+    expectError
+      "constant-info closure rejects unknown roots"
+      (Import.collectConstantInfoClosureWith? lookupInfo [Lean.Name.mkSimple "MissingInfoRoot"])
+  let closure ← Import.collectConstantInfoClosureWith? lookupInfo [infoTheoremName, infoBoolName]
+  let closureNames := closure.map (·.name)
+  let _ ←
+    expect
+      "constant-info closure includes theorem dependencies"
+      (closureNames.any (· == infoProofName) && closureNames.any (· == infoPropName))
+  let _ ←
+    expect
+      "constant-info closure includes generated inductive declarations"
+      (closureNames.any (· == infoFalseName) &&
+        closureNames.any (· == infoTrueName) &&
+        closureNames.any (· == infoRecName))
   let env ← Import.replayConstantInfoSnapshot [] infoSnapshot
   let infoTheoremTy ← infer env [] (const0 "infoTheorem")
   let _ ← checkDefEq env infoTheoremTy (const0 "InfoP")
@@ -699,6 +717,9 @@ def importBridgeTests : Result Unit := do
       let _ ← expect "constant-info snapshots replay generated recursors" (info.levelParams = ["u"])
       pure ()
   | none => .error "InfoBool.rec should be present after snapshot replay"
+  let closureEnv ← Import.replayConstantInfoSnapshot [] closure
+  let closureTheoremTy ← infer closureEnv [] (const0 "infoTheorem")
+  let _ ← checkDefEq closureEnv closureTheoremTy (const0 "InfoP")
 
   let metadataExpr : Lean.Expr := .mdata Lean.MData.empty (.sort .zero)
   let translatedMetadata ← Import.translateExpr metadataExpr
