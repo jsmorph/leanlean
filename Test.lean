@@ -503,6 +503,21 @@ def kernelInductiveDeclTests : Result Unit := do
               info.levelParams
               info.typeExpr
               { metadata with numMinors := 1 }))
+        expectError
+          "generated recursor replay rejects mismatched rule RHS"
+          (addDeclaration env
+            (.generatedRecursorWithInfo
+              "KernelBool.rec"
+              info.levelParams
+              info.typeExpr
+              {
+                metadata with
+                rules :=
+                  [
+                    { ctor := "KernelBool.false", nfields := 0, rhs? := some boolType },
+                    { ctor := "KernelBool.true", nfields := 0 }
+                  ]
+              }))
     | none => .error "KernelBool.rec should be present in the environment"
   let _ ←
     expectError
@@ -661,6 +676,34 @@ def importBridgeTests : Result Unit := do
             infoBoolConst
             (.app (.bvar 3) (.bvar 0))
             .default)
+            .default)
+        .default)
+      .default
+  let infoFalseRhs : Lean.Expr :=
+    .lam
+      (Lean.Name.mkSimple "motive")
+      (.forallE (Lean.Name.mkSimple "target") infoBoolConst (.sort motiveLevel) .default)
+      (.lam
+        (Lean.Name.mkSimple "falseCase")
+        (.app (.bvar 0) infoFalseConst)
+        (.lam
+          (Lean.Name.mkSimple "trueCase")
+          (.app (.bvar 1) infoTrueConst)
+          (.bvar 1)
+          .default)
+        .default)
+      .default
+  let infoTrueRhs : Lean.Expr :=
+    .lam
+      (Lean.Name.mkSimple "motive")
+      (.forallE (Lean.Name.mkSimple "target") infoBoolConst (.sort motiveLevel) .default)
+      (.lam
+        (Lean.Name.mkSimple "falseCase")
+        (.app (.bvar 0) infoFalseConst)
+        (.lam
+          (Lean.Name.mkSimple "trueCase")
+          (.app (.bvar 1) infoTrueConst)
+          (.bvar 0)
           .default)
         .default)
       .default
@@ -685,8 +728,8 @@ def importBridgeTests : Result Unit := do
           numMinors := 2
           rules :=
             [
-              { ctor := infoFalseName, nfields := 0, rhs := infoFalseConst },
-              { ctor := infoTrueName, nfields := 0, rhs := infoTrueConst }
+              { ctor := infoFalseName, nfields := 0, rhs := infoFalseRhs },
+              { ctor := infoTrueName, nfields := 0, rhs := infoTrueRhs }
             ]
           k := false
           isUnsafe := false

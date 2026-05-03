@@ -243,6 +243,7 @@ structure KernelInductiveDecl where
 structure GeneratedRecursorRuleInfo where
   ctor : Name
   nfields : Nat
+  rhs? : Option Expr := none
   deriving DecidableEq, Repr, Inhabited
 
 structure GeneratedRecursorInfo where
@@ -2680,6 +2681,107 @@ def generatedRecursorBlockNames (family : RecursorFamily) : List Name :=
         names)
     []
 
+def recursorCommonBinders (family : RecursorFamily) : Result Telescope := do
+  let motiveLevel : Level :=
+    match family.motiveLevelParam? with
+    | some motiveLevelParam => .param motiveLevelParam
+    | none => .zero
+  let paramCount := family.params.length
+  let motiveCount := family.targets.length
+  let minorEntries := familyMinorEntries family
+  let minorCount := minorEntries.length
+  let motiveBinders ←
+    (List.zip (List.range motiveCount) family.targets).mapM fun pair => do
+      let shift := pair.1
+      let paramVars := Expr.bvarArgs paramCount shift
+      let type ← motiveBinderType paramVars motiveLevel pair.2
+      pure { name := s!"motive_{pair.1 + 1}", type }
+  let minorBinders ←
+    (List.zip (List.range minorCount) minorEntries).mapM fun pair => do
+      let shift := motiveCount + pair.1
+      let paramVars := Expr.bvarArgs paramCount shift
+      let motiveVars := Expr.bvarArgs motiveCount pair.1
+      let minorTy ←
+        familyCtorMinorType
+          family
+          paramVars
+          motiveVars
+          pair.2.targetIndex
+          pair.2.target
+          pair.2.ctor
+      pure { name := s!"minor_{pair.1}", type := minorTy }
+  pure (family.params ++ motiveBinders ++ minorBinders)
+
+partial def expectedRecursorRuleRhs
+    (family : RecursorFamily)
+    (targetIndex : Nat)
+    (target : FamilyTarget)
+    (ctor : FamilyCtor) : Result Expr := do
+  if target.bindLocalsInMinors && !target.schema.locals.isEmpty then
+    .error s!"cannot synthesize recursor rule RHS for helper target with explicit locals: {target.recName}"
+  let commonBinders ← recursorCommonBinders family
+  let paramCount := family.params.length
+  let motiveCount := family.targets.length
+  let minorEntries := familyMinorEntries family
+  let minorCount := minorEntries.length
+  let levels := (recursorLevelParamsForFamily family).map Level.param
+  let rec bindFields
+      (paramVars motiveVars minorVars previousFields fieldVars : List Expr) :
+      List FamilyField → Result Expr
+    | [] => do
+        let some minor := lookupMinorExpr? family minorVars targetIndex ctor.name
+          | .error s!"internal error: missing minor premise for {ctor.name}"
+        let prefixArgs := paramVars ++ motiveVars ++ minorVars
+        let mut ihArgs : List Expr := []
+        let mut previousFields : List Expr := []
+        for pair in List.zip ctor.fields fieldVars do
+          let field := pair.1
+          let fieldArg := pair.2
+          if shapeHasIH field.shape then
+            let ih ←
+              ihTerm
+                family
+                levels
+                prefixArgs
+                paramVars
+                previousFields
+                field.shape
+                fieldArg
+            ihArgs := ihArgs ++ [ih]
+          previousFields := previousFields ++ [fieldArg]
+        pure (Expr.mkApps minor (fieldVars ++ ihArgs))
+    | field :: rest => do
+        let fieldTy := Expr.instantiateMany (paramVars ++ previousFields) field.binder.type
+        let body ←
+          bindFields
+            (paramVars.map (Expr.lift 1))
+            (motiveVars.map (Expr.lift 1))
+            (minorVars.map (Expr.lift 1))
+            (previousFields.map (Expr.lift 1) ++ [.bvar 0])
+            (fieldVars.map (Expr.lift 1) ++ [.bvar 0])
+            rest
+        pure (.lam field.binder.name fieldTy body)
+  let body ←
+    bindFields
+      (Expr.bvarArgs paramCount (motiveCount + minorCount))
+      (Expr.bvarArgs motiveCount minorCount)
+      (Expr.bvarArgs minorCount 0)
+      []
+      []
+      ctor.fields
+  pure (Telescope.bindLambda commonBinders body)
+
+def expectedRecursorRuleInfo
+    (family : RecursorFamily)
+    (targetIndex : Nat)
+    (target : FamilyTarget)
+    (ctor : FamilyCtor) : GeneratedRecursorRuleInfo :=
+  let rhs? :=
+    match expectedRecursorRuleRhs family targetIndex target ctor with
+    | .ok rhs => some rhs
+    | .error _ => none
+  { ctor := ctor.name, nfields := ctor.fields.length, rhs? }
+
 def expectedGeneratedRecursorInfo
     (targetIndex : Nat)
     (family : RecursorFamily) : Result GeneratedRecursorInfo := do
@@ -2692,11 +2794,15 @@ def expectedGeneratedRecursorInfo
       numIndices := target.schema.locals.length
       numMotives := family.targets.length
       numMinors := familyMinorCount family
-      rules := target.ctors.map fun ctor => { ctor := ctor.name, nfields := ctor.fields.length }
+      rules := target.ctors.map (expectedRecursorRuleInfo family targetIndex target)
     }
+
+def recursorRuleHeaderEq (left right : GeneratedRecursorRuleInfo) : Bool :=
+  left.ctor = right.ctor && left.nfields = right.nfields
 
 def checkGeneratedRecursorInfo
     (name : Name)
+    (actualLevelParams exportedLevelParams : LevelContext)
     (actual expected : GeneratedRecursorInfo) : Result Unit := do
   if actual.all != expected.all then
     .error s!"generated recursor {name} block members do not match"
@@ -2708,8 +2814,17 @@ def checkGeneratedRecursorInfo
     .error s!"generated recursor {name} motive count does not match"
   if actual.numMinors != expected.numMinors then
     .error s!"generated recursor {name} minor count does not match"
-  if actual.rules != expected.rules then
+  if actual.rules.length != expected.rules.length ||
+      !(List.zip actual.rules expected.rules).all (fun pair => recursorRuleHeaderEq pair.1 pair.2) then
     .error s!"generated recursor {name} rule headers do not match"
+  for pair in List.zip actual.rules expected.rules do
+    match pair.1.rhs?, pair.2.rhs? with
+    | some actualRhs, some expectedRhs =>
+        if !(← exportedGeneratedTypeMatches actualLevelParams exportedLevelParams expectedRhs actualRhs) then
+          .error s!"generated recursor {name} rule RHS for {pair.1.ctor} does not match"
+    | some _, none =>
+        .error s!"generated recursor {name} has no local RHS for {pair.1.ctor}"
+    | none, _ => pure ()
 
 def checkGeneratedRecursorWithInfo
     (env : Env)
@@ -2724,7 +2839,7 @@ def checkGeneratedRecursorWithInfo
       if !(← exportedGeneratedTypeMatches info.levelParams levelParams info.typeExpr type) then
         .error s!"generated recursor {name} type does not match"
       let expected ← expectedGeneratedRecursorInfo targetIndex family
-      let _ ← checkGeneratedRecursorInfo name metadata expected
+      let _ ← checkGeneratedRecursorInfo name info.levelParams levelParams metadata expected
       pure env
   | _ => .error s!"constant is not a generated recursor: {name}"
 

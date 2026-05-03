@@ -151,7 +151,14 @@ def translateGeneratedConstantInfo : Lean.ConstantInfo → Result Declaration
             numIndices := value.numIndices
             numMotives := value.numMotives
             numMinors := value.numMinors
-            rules := value.rules.map fun rule => { ctor := translateName rule.ctor, nfields := rule.nfields }
+            rules :=
+              (← value.rules.mapM fun rule => do
+                pure
+                  {
+                    ctor := translateName rule.ctor
+                    nfields := rule.nfields
+                    rhs? := some (← translateExpr rule.rhs)
+                  })
           })
   | info => .error s!"constant is not a generated constructor or recursor: {info.name}"
 
