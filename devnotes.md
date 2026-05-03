@@ -20,6 +20,7 @@ The first implementation target is a small data fragment.  It includes closed un
 | <https://lean-lang.org/doc/reference/latest/The-Type-System/Universes/> | Reviewed for the universe hierarchy and the scope of the omitted universe-polymorphic fragment. |
 | <https://lean-lang.org/doc/reference/latest/The-Type-System/Quotients/> | Reviewed for the low-level `Quot` primitives and the `Quot.lift` reduction rule. |
 | <https://github.com/nomeata/lean-mini-kernel/tree/master> | Reviewed for comparison.  The repository is a compact Lean-written checker for a Lean export fragment, and its README names deliberate omissions around mutual inductives, nested inductives, proof irrelevance checks, and projection checks. |
+| Local Lean 4.27.0 sources, `Lean/Expr.lean`, `Lean/ProjFns.lean`, and `Lean/Meta/Structure.lean` | Reviewed for projection representation.  Lean has core projection expressions and separately records projection-function metadata for auxiliary declarations. |
 
 ## Small Plan
 
@@ -58,6 +59,7 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Add opaque definitions as checked, non-unfolding declarations.
 - [x] Add low-level quotient primitives and the `Quot.lift` reduction rule.
 - [x] Add a first Lean 4 faithfulness corpus with accepted and rejected source examples.
+- [ ] Add core projection expressions and projection declarations for non-indexed one-constructor inductives.
 
 ## Current Decisions
 
@@ -96,3 +98,5 @@ Environment entries now use one declaration record with explicit kind metadata. 
 The quotient primitive subset follows the Lean reference's low-level `Quot` API rather than the derived setoid-based `Quotient` interface.  The local syntax makes the underlying type and relation explicit in `Quot`, `Quot.mk`, `Quot.lift`, `Quot.ind`, and `Quot.sound`.  Primitive declaration validation checks all five types before admission.  Reduction contains one quotient rule: a saturated `Quot.lift` whose target reduces to `Quot.mk` computes to the representative function applied to the representative, after the reducer checks universe, type, and relation agreement.
 
 The first faithfulness harness now lives under `Faithfulness`.  It runs small Lean source files through the installed Lean compiler and separates examples that Lean must accept from examples that Lean must reject.  The ordinary kernel regression suite contains matching local bridge tests for the same behavior classes, because the project does not yet translate Lean source or exported declarations into the local syntax.
+
+Projection work should follow Lean's representation split.  The core term language needs `proj S i s`, because treating projections as ordinary constants would hide a kernel reduction rule behind declaration names.  Projection functions should still be represented in the environment, with metadata recording the structure name, constructor name, number of parameters, and projection index.  The first implementation target is the non-indexed one-constructor case; indexed projections need an explicit mapping from Lean's projection index to the constructor argument selected after index arguments are removed.
