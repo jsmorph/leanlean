@@ -1,5 +1,19 @@
 # Plan for a Principled Lean Kernel
 
+## Status
+
+- [x] Phase 1: Stabilize the current core.
+- [x] Phase 2: Shared telescope core.
+- [x] Phase 3: Constructor field dependencies.
+- [x] Phase 4: Indexed inductive families.
+- [x] Phase 5: Universe polymorphism.
+- [x] Phase 6: `Prop`, proof irrelevance, and elimination restrictions.
+- [x] Phase 7: Mutual and nested mutual inductives.
+- [x] Phase 8: Low-level quotients and primitive equality support.
+- [ ] Phase 9: Definitions, opacity, and environment semantics.  Declaration records, opacity, theorems, projections, structure metadata, dependency-aware replay, closure extraction, and generated-declaration replay are implemented, but literal expressions, recursive-definition artifacts, unsafe declarations policy, and full exported environment behavior remain.
+- [ ] Phase 10: Faithfulness against Lean 4.  The source corpus, negative examples, importer smoke test, and selected real-environment closure import exist, but broad differential testing and documented full-fragment agreement remain.
+- [ ] Phase 11: Metatheory and paper-grade artifacts.  The repository has a growing specification, implementation, and faithfulness corpus, but it still needs a traceability map from specification clauses to implementation functions and tests.
+
 This plan describes a path from the current specification-driven proof of concept to a complete Lean 4 kernel.  The project has two operating standards.  Every trusted feature needs a written local specification before implementation work builds around it.  Every object admitted to the environment needs the same well-formedness discipline, whether the object came from user input or from kernel generation.
 
 The current kernel has a useful base.  It implements a small dependent type theory with universe-polymorphic axioms, transparent and opaque definitions, theorem declarations, inductive blocks, predicative inductive result universes, indices, dependent constructor-field telescopes, strict positivity, first-class recursor constants, nested helper recursors, telescope-aware helper targets, low-level quotient primitives, core projections, beta, delta, zeta, iota, projection, quotient, eta, and proof-irrelevance conversion, simultaneous substitution, and validation of generated constructor, recursor, projection, and primitive types.  The examples now use Lean's universe numbering: `Sort 0` is reserved for `Prop`, while ordinary data begins at `Sort 1`.  Lean 4 contains substantially more theory.  Recursive definition compilation, literals, unsafe declarations, structure-extension records, and broad faithfulness testing still affect the path to a complete kernel.
