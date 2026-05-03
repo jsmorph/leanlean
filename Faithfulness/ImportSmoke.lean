@@ -3,9 +3,20 @@ import LeanLean.Import
 
 namespace LeanLeanFaithfulness.ImportSmoke
 
+def expectReplayErrorPrefix
+    (env : Lean.Environment)
+    (root : Lean.Name)
+    (expectedPrefix : String) : Lean.Elab.Command.CommandElabM Unit := do
+  match LeanLean.Import.replayEnvironmentClosure [] env [root] with
+  | .ok _ => Lean.throwError m!"environment import unexpectedly succeeded: {root}"
+  | .error err =>
+      unless expectedPrefix.isPrefixOf err do
+        Lean.throwError
+          m!"environment import for {root} failed with the wrong error\nexpected prefix: {expectedPrefix}\nactual: {err}"
+
 run_cmd
   let env ← Lean.getEnv
-  let roots :=
+  let acceptedRoots :=
     [
       `LeanLeanFaithfulness.Accepted.transparentId,
       `LeanLeanFaithfulness.Accepted.abbrevTrue,
@@ -34,6 +45,24 @@ run_cmd
       `LeanLeanFaithfulness.Accepted.Parent,
       `LeanLeanFaithfulness.Accepted.Child
     ]
+  let broadCoreRoots :=
+    [
+      ``True,
+      ``False,
+      ``And,
+      ``Or,
+      ``Exists,
+      ``Subtype,
+      ``Sigma,
+      ``Prod,
+      ``Empty,
+      ``Option,
+      ``ULift,
+      ``PLift,
+      ``PSigma,
+      ``Decidable
+    ]
+  let roots := acceptedRoots ++ broadCoreRoots
   let localEnv ←
     match LeanLean.Import.replayEnvironmentClosure [] env roots with
     | .ok localEnv => pure localEnv
@@ -67,9 +96,20 @@ run_cmd
         `LeanLeanFaithfulness.Accepted.evenFlag,
         `LeanLeanFaithfulness.Accepted.oddFlag
       ] do
-    match LeanLean.Import.replayEnvironmentClosure [] env [recursiveRoot] with
-    | .ok _ => Lean.throwError m!"recursive definition import unexpectedly succeeded: {recursiveRoot}"
-    | .error _ => pure ()
+    expectReplayErrorPrefix
+      env
+      recursiveRoot
+      "recursive definition artifacts are outside the local environment importer:"
+  for sortPolymorphicRoot in #[``Unit, ``PUnit] do
+    expectReplayErrorPrefix
+      env
+      sortPolymorphicRoot
+      "inductive result universe is neither Prop nor a data universe:"
+  for recursiveCoreRoot in #[``Nat.add, ``List.map] do
+    expectReplayErrorPrefix
+      env
+      recursiveCoreRoot
+      "recursive definition artifacts are outside the local environment importer:"
 
 end LeanLeanFaithfulness.ImportSmoke
 

@@ -322,6 +322,31 @@ def universeTests : Result Unit := do
       level := .param "u"
       ctors := []
     }
+  let dependentFamilyParamInductive : InductiveSpec :=
+    {
+      name := "DependentFamilyParam"
+      levelParams := ["u", "v"]
+      params :=
+        [
+          { name := "α", type := .sort (typeLevel (.param "u")) },
+          {
+            name := "β"
+            type := .forallE "a" (.bvar 0) (.sort (typeLevel (.param "v")))
+          }
+        ]
+      level := .max (typeLevel (.param "u")) (typeLevel (.param "v"))
+      ctors :=
+        [
+          {
+            name := "DependentFamilyParam.mk"
+            fields :=
+              [
+                { name := "a", type := .bvar 1 },
+                { name := "b", type := .app (.bvar 1) (.bvar 0) }
+              ]
+          }
+        ]
+    }
   let _ ←
     expectError
       "universe-polymorphic definitions reject unbound level parameters"
@@ -345,6 +370,8 @@ def universeTests : Result Unit := do
     expectError
       "inductive result universe must be known as Prop or data"
       (addInductive [] badAmbiguousInductive)
+  let _ ←
+    addInductive [] dependentFamilyParamInductive
   expectError
     "recursor reduction rejects mismatched constructor universe arguments"
     (normalize env polyBoxRecCtorLevelMismatch)
@@ -1050,6 +1077,60 @@ def reducibilityHintTests : Result Unit := do
       | _ => .error "regularTrue should carry its regular reducibility height"
   | none => .error "regularTrue should be present in the environment"
 
+def recursorGenerationTests : Result Unit := do
+  let aliasNotType : Expr :=
+    .forallE "p" propSort propSort
+  let aliasNotValue : Expr :=
+    .lam "p" propSort (.forallE "h" (.bvar 0) (const0 "PFalse"))
+  let aliasDecSpec : InductiveSpec :=
+    {
+      name := "AliasDec"
+      params := [{ name := "p", type := propSort }]
+      level := type0Level
+      ctors :=
+        [
+          {
+            name := "AliasDec.mk"
+            fields := [{ name := "h", type := .app (const0 "AliasNot") (.bvar 0) }]
+          }
+        ]
+    }
+  let env ← sampleEnv
+  let env ← addDefinition env "AliasNot" aliasNotType aliasNotValue
+  let env ← addInductive env aliasDecSpec
+  let aliasDec (p : Expr) : Expr :=
+    .app (const0 "AliasDec") p
+  let aliasDecMk (p h : Expr) : Expr :=
+    Expr.mkApps (const0 "AliasDec.mk") [p, h]
+  let aliasNot (p : Expr) : Expr :=
+    .app (const0 "AliasNot") p
+  let expectedRecType : Expr :=
+    .forallE
+      "p"
+      propSort
+      (.forallE
+        "motive"
+        (.forallE "t" (aliasDec (.bvar 0)) (.sort (.param "u")))
+        (.forallE
+          "mk"
+          (.forallE
+            "h"
+            (aliasNot (.bvar 1))
+            (.app (.bvar 1) (aliasDecMk (.bvar 2) (.bvar 0))))
+          (.forallE
+            "t"
+            (aliasDec (.bvar 2))
+            (.app (.bvar 2) (.bvar 0)))))
+  match env.find? "AliasDec.rec" with
+  | some info =>
+      let _ ←
+        expectExprEq
+          "recursor generation preserves declared field types"
+          info.typeExpr
+          expectedRecType
+      pure ()
+  | none => .error "AliasDec.rec should be present in the environment"
+
 def structureMetadataTests : Result Unit := do
   let parentSpec : InductiveSpec :=
     {
@@ -1500,6 +1581,7 @@ def kernelRegressionTests : Result Unit := do
   let _ ← kernelInductiveDeclTests
   let _ ← importBridgeTests
   let _ ← reducibilityHintTests
+  let _ ← recursorGenerationTests
   let _ ← structureMetadataTests
   let _ ← environmentTests
   let _ ← projectionTests
@@ -1519,6 +1601,7 @@ def testReport : Result (List String) := do
   let _ ← kernelInductiveDeclTests
   let _ ← importBridgeTests
   let _ ← reducibilityHintTests
+  let _ ← recursorGenerationTests
   let _ ← structureMetadataTests
   let _ ← environmentTests
   let _ ← projectionTests
@@ -1537,6 +1620,7 @@ def testReport : Result (List String) := do
       "kernel-style inductive declarations and generated replay checks pass",
       "Lean declaration importer feeds the checked replay path",
       "reducibility hints are recorded as definition metadata",
+      "recursor generation preserves declared field types",
       "structure metadata records inherited fields",
       "environment declaration metadata checks",
       "projection typing, reduction, and eta checks",

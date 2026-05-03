@@ -1847,7 +1847,7 @@ def demoReportLines : List String :=
     "constructor targets must use the declared parameters",
     "minor premises bind fields before induction hypotheses",
     "constructorless inductives may sit below parameter universes",
-    "constructor and field universes are rejected when they exceed the result universe",
+    "field universes are rejected when they exceed the result universe",
     "recursor reduction rejects targets whose constructor parameters disagree",
     "recursor reduction rejects targets whose constructor indices disagree",
     "non-positive nested uses of inductive parameters are rejected"

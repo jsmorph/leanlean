@@ -2004,11 +2004,6 @@ partial def buildRecursorFamily
                 ctor.fields.map fun field =>
                   { field with type := Expr.instantiateLevels info.spec.levelParams levels field.type }
               let instantiated := Telescope.instantiateTypes targetParamArgs ctorFields
-              let specialized ←
-                instantiated.mapM fun field => do
-                  let type ←
-                    normalizeForInductiveAnalysis env field.type (levelParams := rootLevelParams)
-                  pure { field with type }
               let ctorTarget ← constructorTargetExpr info.spec ctor
               let ctorTarget :=
                 Expr.instantiateLevels info.spec.levelParams levels ctorTarget
@@ -2022,7 +2017,7 @@ partial def buildRecursorFamily
                   schema.locals
                 else
                   []
-              let (fields, currentSchemas) ← buildFields currentSchemas initialFieldLocals specialized
+              let (fields, currentSchemas) ← buildFields currentSchemas initialFieldLocals instantiated
               let (restCtors, currentSchemas) ← buildCtors currentSchemas rest
               pure ({ name := ctor.name, target, fields } :: restCtors, currentSchemas)
         let (ctors, currentSchemas) ← buildCtors schemas info.spec.ctors
@@ -2138,16 +2133,6 @@ partial def constructorFieldIsTargetIndexBool
     (target : Expr)
     (fieldIndex : Nat) : Result Bool := do
   pure (← constructorFieldIsTargetIndex env ctx spec ctor target fieldIndex).isSome
-
-partial def inferBinderUniverse
-    (env : Env)
-    (ctx : Context)
-    (type : Expr)
-    (levelParams : LevelContext := []) : Result Level := do
-  let reduced ← whnf env type (levelParams := levelParams)
-  match reduced with
-  | .sort level => pure level
-  | _ => inferSort env ctx type (levelParams := levelParams)
 
 def checkTelescopeFrom
     (env : Env)
@@ -2553,18 +2538,9 @@ def checkInductiveHeader
   let _ ← checkTelescopeFrom env paramCtx spec.indices (levelParams := block.levelParams)
 
 def checkDataUniverseBounds
-    (env : Env)
     (tempEnv : Env)
     (spec : InductiveSpec) : Result Unit := do
   let paramCtx := Telescope.toContext spec.params
-  if !spec.ctors.isEmpty && !inductiveIsProp spec then
-    let rec checkParamLevels (ctx : Context) : Telescope → Result Unit
-      | [] => pure ()
-      | binder :: rest => do
-          let level ← inferBinderUniverse env ctx binder.type (levelParams := spec.levelParams)
-          let _ ← checkLevelAtMost s!"parameter {binder.name}" level spec.level
-          checkParamLevels (Telescope.withBinder ctx binder) rest
-    let _ ← checkParamLevels [] spec.params
   if !inductiveIsProp spec then
     for ctor in spec.ctors do
       let rec checkFieldLevels (ctx : Context) : Telescope → Result Unit
@@ -2653,7 +2629,7 @@ def addInductiveBlock (env : Env) (block : InductiveBlockSpec) : Result Env := d
       (fun pair => ConstantInfo.mkInductive pair.1.name block.levelParams pair.2) ++ env
   for spec in block.specs do
     let _ ← checkConstructorTargets provisionalEnv spec
-    let _ ← checkDataUniverseBounds env provisionalEnv spec
+    let _ ← checkDataUniverseBounds provisionalEnv spec
   let positiveFacts ← computePositiveParamsInBlock provisionalEnv block.specs
   let finalInfos ←
     block.specs.mapM fun spec => do
