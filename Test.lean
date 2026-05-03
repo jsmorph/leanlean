@@ -56,6 +56,31 @@ def telescopeTests : Result Unit := do
         (Expr.app boolType (.bvar 0))
   | _ => .error "dependent telescope type instantiation changed telescope length"
 
+def universeTests : Result Unit := do
+  let _ ← expect "bound universe parameters are closed in their context" ((Level.param "u").closedIn ["u"])
+  let _ ← expect "unbound universe parameters are open outside their context" (!((Level.param "u").closedIn []))
+  let _ ←
+    expect
+      "symbolic universe ordering compares matching parameters"
+      (Level.le (.param "u") (.max (.param "u") (.param "v")))
+  let _ ←
+    expect
+      "symbolic universe ordering rejects unrelated parameters"
+      (!(Level.le (.param "u") (.param "v")))
+
+  let env ← sampleEnv
+  let polyIdBoolTy ← infer env [] polyIdBool
+  let _ ← expectExprEq "polymorphic definition instantiates at Type 0" polyIdBoolTy boolType
+  let polyIdTypeTy ← infer env [] polyIdTypeArg
+  let _ ← expectExprEq "polymorphic definition instantiates at Type 1" polyIdTypeTy (.sort 0)
+  let _ ←
+    expectError
+      "universe-polymorphic definitions reject unbound level parameters"
+      (addDefinitionWithLevels [] "badPoly" ["u"] (.sort (.param "v")) (.sort (.param "v")))
+  expectError
+    "universe-polymorphic definitions reject duplicate level parameters"
+    (addDefinitionWithLevels [] "badPolyDup" ["u", "u"] polyIdType polyIdValue)
+
 def substitutionTests : Result Unit := do
   let body := Expr.app (.bvar 1) (.bvar 0)
   let actual := Expr.instantiateMany [boolType, natType] body
@@ -88,6 +113,7 @@ def rawEntryTests : Result Unit := do
 
 def kernelRegressionTests : Result Unit := do
   let _ ← telescopeTests
+  let _ ← universeTests
   let _ ← substitutionTests
   let _ ← generatedValidationTests
   let _ ← rawEntryTests
@@ -96,6 +122,7 @@ def kernelRegressionTests : Result Unit := do
 
 def testReport : Result (List String) := do
   let _ ← telescopeTests
+  let _ ← universeTests
   let _ ← substitutionTests
   let _ ← generatedValidationTests
   let _ ← rawEntryTests
@@ -103,6 +130,7 @@ def testReport : Result (List String) := do
   pure
     [
       "telescope invariants check",
+      "universe-polymorphism invariants check",
       "substitution invariants check",
       "generated declaration validation rejects malformed generated types",
       "raw inference and normalization entry points reject malformed primitives",

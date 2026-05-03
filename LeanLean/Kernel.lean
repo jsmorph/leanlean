@@ -9,6 +9,7 @@ structure Binder where
 
 abbrev Telescope := List Binder
 abbrev Context := List Binder
+abbrev LevelContext := List Name
 abbrev Result := Except String
 
 namespace Telescope
@@ -153,49 +154,54 @@ def levelParams : ConstantInfo → List Name
   | .ctor _ params _ _ => params
   | .recursor _ params _ _ _ => params
 
-def checkLevels (info : ConstantInfo) (levels : List Level) : Result Unit := do
+def checkLevelsIn (info : ConstantInfo) (levelParams : LevelContext) (levels : List Level) : Result Unit := do
   let params := info.levelParams
   if levels.length != params.length then
     .error
       s!"constant {info.name} expects {params.length} universe arguments, \
          but got {levels.length}"
-  else if !levels.all Level.closed then
+  else if !levels.all (Level.closedIn levelParams) then
     .error s!"constant {info.name} requires closed universe arguments"
   else
     pure ()
+
+def checkLevels (info : ConstantInfo) (levels : List Level) : Result Unit :=
+  info.checkLevelsIn [] levels
 
 def instantiateExpr
     (constName : Name)
     (what : String)
     (params : List Name)
+    (levelParams : LevelContext)
     (levels : List Level)
     (expr : Expr) : Result Expr :=
   if levels.length != params.length then
     .error
       s!"constant {constName} expects {params.length} universe arguments in its {what}, \
          but got {levels.length}"
-  else if !levels.all Level.closed then
+  else if !levels.all (Level.closedIn levelParams) then
     .error s!"constant {constName} requires closed universe arguments in its {what}"
   else
     pure (Expr.instantiateLevels params levels expr)
 
-def type (info : ConstantInfo) (levels : List Level) : Result Expr :=
+def type (info : ConstantInfo) (levels : List Level) (levelParams : LevelContext := []) : Result Expr :=
   match info with
   | .axiom name params type =>
-      instantiateExpr name "type" params levels type
+      instantiateExpr name "type" params levelParams levels type
   | .defn name params type _ =>
-      instantiateExpr name "type" params levels type
+      instantiateExpr name "type" params levelParams levels type
   | .inductive name params indInfo =>
-      instantiateExpr name "type" params levels indInfo.type
+      instantiateExpr name "type" params levelParams levels indInfo.type
   | .ctor name params type _ =>
-      instantiateExpr name "type" params levels type
+      instantiateExpr name "type" params levelParams levels type
   | .recursor name params type _ _ =>
-      instantiateExpr name "type" params levels type
+      instantiateExpr name "type" params levelParams levels type
 
-def value? (info : ConstantInfo) (levels : List Level) : Result (Option Expr) :=
+def value? (info : ConstantInfo) (levels : List Level) (levelParams : LevelContext := []) :
+    Result (Option Expr) :=
   match info with
   | .defn name params _ value =>
-      some <$> instantiateExpr name "value" params levels value
+      some <$> instantiateExpr name "value" params levelParams levels value
   | _ => pure none
 
 end ConstantInfo
@@ -700,16 +706,23 @@ def lookupCtx : Context → Nat → Option Binder
 
 mutual
 
-partial def inferSort (env : Env) (ctx : Context) (expr : Expr) : Result Level := do
-  let inferred ← infer env ctx expr
-  let reduced ← whnf env inferred
+partial def inferSort
+    (env : Env)
+    (ctx : Context)
+    (expr : Expr)
+    (levelParams : LevelContext := []) : Result Level := do
+  let inferred ← infer env ctx expr (levelParams := levelParams)
+  let reduced ← whnf env inferred (levelParams := levelParams)
   match reduced with
   | .sort level => pure level
   | _ => .error s!"expected a type, got {repr reduced}"
 
-partial def checkDefEq (env : Env) (left right : Expr) : Result Unit := do
-  let leftNf ← normalize env left
-  let rightNf ← normalize env right
+partial def checkDefEq
+    (env : Env)
+    (left right : Expr)
+    (levelParams : LevelContext := []) : Result Unit := do
+  let leftNf ← normalize env left (levelParams := levelParams)
+  let rightNf ← normalize env right (levelParams := levelParams)
   if leftNf.alphaEq rightNf then
     pure ()
   else
@@ -718,13 +731,14 @@ partial def checkDefEq (env : Env) (left right : Expr) : Result Unit := do
 partial def checkRecursorTargetArgs
     (env : Env)
     (recName : Name)
-    (actual expected : List Expr) : Result Unit := do
+    (actual expected : List Expr)
+    (levelParams : LevelContext := []) : Result Unit := do
   if actual.length != expected.length then
     .error s!"internal error: mismatched target argument arity for {recName}"
   else
     for pair in List.zip actual expected do
       try
-        let _ ← checkDefEq env pair.1 pair.2
+        let _ ← checkDefEq env pair.1 pair.2 (levelParams := levelParams)
         pure ()
       catch _ =>
         .error s!"recursor target does not match its explicit schema arguments for {recName}"
@@ -733,14 +747,15 @@ partial def reduceRecursorApp
     (env : Env)
     (recName : Name)
     (levels : List Level)
-    (args : List Expr) : Result (Option Expr) := do
+    (args : List Expr)
+    (levelParams : LevelContext := []) : Result (Option Expr) := do
   let some (targetIndex, family) := env.findRecursor? recName
     | .error s!"unknown recursor: {recName}"
   let some split := splitFamilyRecursorArgs family targetIndex args
     | pure none
   let some targetInfo := listGet? family.targets targetIndex
     | .error s!"internal error: invalid recursor index for {recName}"
-  let targetWhnf ← whnf env split.target
+  let targetWhnf ← whnf env split.target (levelParams := levelParams)
   let head := targetWhnf.getAppFn
   let ctorArgs := targetWhnf.getAppArgs
   let .const ctorName ctorLevels := head
@@ -763,8 +778,20 @@ partial def reduceRecursorApp
           []
       let ctorTarget :=
         Expr.instantiateMany (split.params ++ minorLocalArgs ++ fieldArgs) ctor.target
-      let _ ← checkRecursorTargetArgs env recName targetArgs (targetExpr.getAppArgs.take targetInfo.paramCount)
-      let _ ← checkRecursorTargetArgs env recName ctorTarget.getAppArgs targetExpr.getAppArgs
+      let _ ←
+        checkRecursorTargetArgs
+          env
+          recName
+          targetArgs
+          (targetExpr.getAppArgs.take targetInfo.paramCount)
+          (levelParams := levelParams)
+      let _ ←
+        checkRecursorTargetArgs
+          env
+          recName
+          ctorTarget.getAppArgs
+          targetExpr.getAppArgs
+          (levelParams := levelParams)
       let prefixArgs := split.params ++ split.motives ++ split.minors
       let mut previousFields : List Expr := []
       let mut minorArgs := minorLocalArgs
@@ -788,12 +815,12 @@ partial def reduceRecursorApp
         | .error s!"internal error: missing minor premise for {ctor.name}"
       pure (some (Expr.mkApps minor minorArgs))
 
-partial def whnf (env : Env) (expr : Expr) : Result Expr := do
+partial def whnf (env : Env) (expr : Expr) (levelParams : LevelContext := []) : Result Expr := do
   match expr with
   | .app _ _ =>
       let head := expr.getAppFn
       let args := expr.getAppArgs
-      let headWhnf ← whnf env head
+      let headWhnf ← whnf env head (levelParams := levelParams)
       let rebuilt := Expr.mkApps headWhnf args
       match headWhnf with
       | .lam _ _ body =>
@@ -803,132 +830,144 @@ partial def whnf (env : Env) (expr : Expr) : Result Expr := do
       | .const name levels =>
           match env.find? name with
           | some info =>
-              let _ ← info.checkLevels levels
-              match ← info.value? levels with
-              | some value => whnf env (Expr.mkApps value args)
+              let _ ← info.checkLevelsIn levelParams levels
+              match ← info.value? levels (levelParams := levelParams) with
+              | some value => whnf env (Expr.mkApps value args) (levelParams := levelParams)
               | none =>
                   match info with
                   | .recursor _ _ _ _ _ =>
-                      match ← reduceRecursorApp env name levels args with
-                      | some reduced => whnf env reduced
+                      match ← reduceRecursorApp env name levels args (levelParams := levelParams) with
+                      | some reduced => whnf env reduced (levelParams := levelParams)
                       | none => pure rebuilt
                   | _ => pure rebuilt
           | none => .error s!"unknown constant: {name}"
       | .letE _ _ value body =>
-          whnf env (Expr.mkApps (Expr.instantiate1 value body) args)
+          whnf env (Expr.mkApps (Expr.instantiate1 value body) args) (levelParams := levelParams)
       | _ =>
           if rebuilt = expr then
             pure rebuilt
           else
-            whnf env rebuilt
-  | .letE _ _ value body => whnf env (Expr.instantiate1 value body)
+            whnf env rebuilt (levelParams := levelParams)
+  | .letE _ _ value body => whnf env (Expr.instantiate1 value body) (levelParams := levelParams)
   | .const name levels =>
       match env.find? name with
       | some info =>
-          let _ ← info.checkLevels levels
-          match ← info.value? levels with
-          | some value => whnf env value
+          let _ ← info.checkLevelsIn levelParams levels
+          match ← info.value? levels (levelParams := levelParams) with
+          | some value => whnf env value (levelParams := levelParams)
           | none => pure expr
       | _ => .error s!"unknown constant: {name}"
   | _ => pure expr
 
-partial def normalize (env : Env) (expr : Expr) : Result Expr := do
-  let reduced ← whnf env expr
+partial def normalize (env : Env) (expr : Expr) (levelParams : LevelContext := []) : Result Expr := do
+  let reduced ← whnf env expr (levelParams := levelParams)
   match reduced with
   | .bvar _ => pure reduced
   | .sort _ => pure reduced
   | .const _ _ => pure reduced
   | .lam name ty body => do
-      let ty' ← normalize env ty
-      let body' ← normalize env body
+      let ty' ← normalize env ty (levelParams := levelParams)
+      let body' ← normalize env body (levelParams := levelParams)
       pure (.lam name ty' body')
   | .forallE name ty body => do
-      let ty' ← normalize env ty
-      let body' ← normalize env body
+      let ty' ← normalize env ty (levelParams := levelParams)
+      let body' ← normalize env body (levelParams := levelParams)
       pure (.forallE name ty' body')
   | .letE name ty value body => do
-      let ty' ← normalize env ty
-      let value' ← normalize env value
-      let body' ← normalize env body
+      let ty' ← normalize env ty (levelParams := levelParams)
+      let value' ← normalize env value (levelParams := levelParams)
+      let body' ← normalize env body (levelParams := levelParams)
       let rebuilt := .letE name ty' value' body'
-      let whnfRebuilt ← whnf env rebuilt
+      let whnfRebuilt ← whnf env rebuilt (levelParams := levelParams)
       if whnfRebuilt = rebuilt then
         pure rebuilt
       else
-        normalize env whnfRebuilt
+        normalize env whnfRebuilt (levelParams := levelParams)
   | .app _ _ => do
       let head := reduced.getAppFn
       let args := reduced.getAppArgs
-      let head' ← normalize env head
-      let args' ← args.mapM (normalize env)
+      let head' ← normalize env head (levelParams := levelParams)
+      let args' ← args.mapM fun arg => normalize env arg (levelParams := levelParams)
       let rebuilt := Expr.mkApps head' args'
-      let whnfRebuilt ← whnf env rebuilt
+      let whnfRebuilt ← whnf env rebuilt (levelParams := levelParams)
       if whnfRebuilt = rebuilt then
         pure rebuilt
       else
-        normalize env whnfRebuilt
+        normalize env whnfRebuilt (levelParams := levelParams)
 
 partial def inferSpine
     (env : Env)
     (ctx : Context)
     (headTy : Expr)
-    (args : List Expr) : Result Expr := do
+    (args : List Expr)
+    (levelParams : LevelContext := []) : Result Expr := do
   let rec loop (type : Expr) (restArgs : List Expr) : Result Expr := do
     match restArgs with
     | [] => pure type
     | arg :: rest =>
-        let reduced ← whnf env type
+        let reduced ← whnf env type (levelParams := levelParams)
         match reduced with
         | .forallE _ domain body =>
-            let actual ← infer env ctx arg
-            let _ ← checkDefEq env actual domain
+            let actual ← infer env ctx arg (levelParams := levelParams)
+            let _ ← checkDefEq env actual domain (levelParams := levelParams)
             loop (Expr.instantiate1 arg body) rest
         | _ => .error s!"application expects a function, got {repr reduced}"
   loop headTy args
 
-partial def inferApp (env : Env) (ctx : Context) (expr : Expr) : Result Expr := do
+partial def inferApp
+    (env : Env)
+    (ctx : Context)
+    (expr : Expr)
+    (levelParams : LevelContext := []) : Result Expr := do
   let head := expr.getAppFn
   let args := expr.getAppArgs
-  let headTy ← infer env ctx head
-  inferSpine env ctx headTy args
+  let headTy ← infer env ctx head (levelParams := levelParams)
+  inferSpine env ctx headTy args (levelParams := levelParams)
 
-partial def infer (env : Env) (ctx : Context) (expr : Expr) : Result Expr := do
+partial def infer
+    (env : Env)
+    (ctx : Context)
+    (expr : Expr)
+    (levelParams : LevelContext := []) : Result Expr := do
   match expr with
   | .bvar index =>
       match lookupCtx ctx index with
       | some binder => pure (Expr.lift (index + 1) binder.type)
       | none => .error s!"unbound variable #{index}"
   | .sort level =>
-      if level.closed then
+      if level.closedIn levelParams then
         pure (.sort (.succ level))
       else
         .error s!"sort level must be closed: {repr level}"
   | .const name levels =>
       match env.find? name with
       | some info =>
-          let _ ← info.checkLevels levels
-          info.type levels
+          let _ ← info.checkLevelsIn levelParams levels
+          info.type levels (levelParams := levelParams)
       | none => .error s!"unknown constant: {name}"
-  | .app _ _ => inferApp env ctx expr
+  | .app _ _ => inferApp env ctx expr (levelParams := levelParams)
   | .lam name type body => do
-      let _ ← inferSort env ctx type
-      let bodyTy ← infer env ({ name, type } :: ctx) body
+      let _ ← inferSort env ctx type (levelParams := levelParams)
+      let bodyTy ← infer env ({ name, type } :: ctx) body (levelParams := levelParams)
       pure (.forallE name type bodyTy)
   | .forallE name domain body => do
-      let domainLevel ← inferSort env ctx domain
-      let bodyLevel ← inferSort env ({ name, type := domain } :: ctx) body
+      let domainLevel ← inferSort env ctx domain (levelParams := levelParams)
+      let bodyLevel ← inferSort env ({ name, type := domain } :: ctx) body (levelParams := levelParams)
       pure (.sort (inferSortOfPi domainLevel bodyLevel))
   | .letE name type value body => do
-      let _ ← inferSort env ctx type
-      let valueTy ← infer env ctx value
-      let _ ← checkDefEq env valueTy type
-      let bodyTy ← infer env ({ name, type } :: ctx) body
+      let _ ← inferSort env ctx type (levelParams := levelParams)
+      let valueTy ← infer env ctx value (levelParams := levelParams)
+      let _ ← checkDefEq env valueTy type (levelParams := levelParams)
+      let bodyTy ← infer env ({ name, type } :: ctx) body (levelParams := levelParams)
       pure (Expr.instantiate1 value bodyTy)
 
 end
 
-def normalizeForInductiveAnalysis (env : Env) (expr : Expr) : Result Expr :=
-  normalize env expr
+def normalizeForInductiveAnalysis
+    (env : Env)
+    (expr : Expr)
+    (levelParams : LevelContext := []) : Result Expr :=
+  normalize env expr (levelParams := levelParams)
 
 partial def positiveParamOccurrence
     (env : Env)
@@ -1164,15 +1203,28 @@ def checkClosed (what : String) (expr : Expr) : Result Unit :=
   else
     .error s!"{what} must be closed"
 
+def checkClosedIn (levelParams : LevelContext) (what : String) (expr : Expr) : Result Unit :=
+  if expr.closedIn levelParams then
+    pure ()
+  else
+    .error s!"{what} must be closed under its universe parameters"
+
+def checkLevelParamsUnique : LevelContext → Result Unit
+  | [] => pure ()
+  | param :: rest =>
+      if rest.contains param then
+        .error s!"duplicate universe parameter: {param}"
+      else
+        checkLevelParamsUnique rest
+
 def validateGeneratedType
     (env : Env)
     (what : String)
     (levelParams : List Name)
     (type : Expr) : Result Unit := do
-  let levels := List.replicate levelParams.length (0 : Level)
-  let instantiated := Expr.instantiateLevels levelParams levels type
-  let _ ← checkClosed what instantiated
-  let _ ← inferSort env [] instantiated
+  let _ ← checkLevelParamsUnique levelParams
+  let _ ← checkClosedIn levelParams what type
+  let _ ← inferSort env [] type (levelParams := levelParams)
 
 def checkFreshName (env : Env) (name : Name) : Result Unit :=
   if env.contains name then
@@ -1193,39 +1245,60 @@ def checkLevelAtMost
 partial def inferBinderUniverse
     (env : Env)
     (ctx : Context)
-    (type : Expr) : Result Level := do
-  let reduced ← whnf env type
+    (type : Expr)
+    (levelParams : LevelContext := []) : Result Level := do
+  let reduced ← whnf env type (levelParams := levelParams)
   match reduced with
   | .sort level => pure level
-  | _ => inferSort env ctx type
+  | _ => inferSort env ctx type (levelParams := levelParams)
 
-def checkTelescopeFrom (env : Env) (ctx : Context) (tele : Telescope) : Result Context := do
+def checkTelescopeFrom
+    (env : Env)
+    (ctx : Context)
+    (tele : Telescope)
+    (levelParams : LevelContext := []) : Result Context := do
   let rec loop (ctx : Context) (remaining : Telescope) : Result Context := do
     match remaining with
     | [] => pure ctx
     | binder :: rest =>
-        let _ ← inferSort env ctx binder.type
+        let _ ← inferSort env ctx binder.type (levelParams := levelParams)
         loop (Telescope.withBinder ctx binder) rest
   loop ctx tele
 
-def checkTelescope (env : Env) (tele : Telescope) : Result Unit := do
-  let _ ← checkTelescopeFrom env [] tele
+def checkTelescope
+    (env : Env)
+    (tele : Telescope)
+    (levelParams : LevelContext := []) : Result Unit := do
+  let _ ← checkTelescopeFrom env [] tele (levelParams := levelParams)
   pure ()
 
-def addAxiom (env : Env) (name : Name) (type : Expr) : Result Env := do
+def addAxiomWithLevels (env : Env) (name : Name) (levelParams : LevelContext) (type : Expr) :
+    Result Env := do
+  let _ ← checkLevelParamsUnique levelParams
   let _ ← checkFreshName env name
-  let _ ← checkClosed s!"axiom {name}" type
-  let _ ← inferSort env [] type
-  pure (.axiom name [] type :: env)
+  let _ ← checkClosedIn levelParams s!"axiom {name}" type
+  let _ ← inferSort env [] type (levelParams := levelParams)
+  pure (.axiom name levelParams type :: env)
 
-def addDefinition (env : Env) (name : Name) (type value : Expr) : Result Env := do
+def addAxiom (env : Env) (name : Name) (type : Expr) : Result Env :=
+  addAxiomWithLevels env name [] type
+
+def addDefinitionWithLevels
+    (env : Env)
+    (name : Name)
+    (levelParams : LevelContext)
+    (type value : Expr) : Result Env := do
+  let _ ← checkLevelParamsUnique levelParams
   let _ ← checkFreshName env name
-  let _ ← checkClosed s!"definition {name} type" type
-  let _ ← checkClosed s!"definition {name} value" value
-  let _ ← inferSort env [] type
-  let valueTy ← infer env [] value
-  let _ ← checkDefEq env valueTy type
-  pure (.defn name [] type value :: env)
+  let _ ← checkClosedIn levelParams s!"definition {name} type" type
+  let _ ← checkClosedIn levelParams s!"definition {name} value" value
+  let _ ← inferSort env [] type (levelParams := levelParams)
+  let valueTy ← infer env [] value (levelParams := levelParams)
+  let _ ← checkDefEq env valueTy type (levelParams := levelParams)
+  pure (.defn name levelParams type value :: env)
+
+def addDefinition (env : Env) (name : Name) (type value : Expr) : Result Env :=
+  addDefinitionWithLevels env name [] type value
 
 def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
   if !spec.level.closed then

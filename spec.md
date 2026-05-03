@@ -6,15 +6,15 @@ The subset follows the shape of Lean's core language described in the Lean refer
 
 ## Scope
 
-The first subset covers transparent definitions, axioms, and single inductive declarations.  It supports parameters and indices on inductive types, dependent constructor-field telescopes, strictly positive constructor fields, generated recursor families, and the reduction rules required to compute through those recursors.  It excludes the parts of Lean 4 that would force a larger theory before the inductive fragment is stable, such as quotient types, mutual inductives, structure projections, proof irrelevance, and general user-declared universe polymorphism.
+The first subset covers transparent definitions, axioms, and single inductive declarations.  It supports level-polymorphic axioms and definitions, parameters and indices on inductive types, dependent constructor-field telescopes, strictly positive constructor fields, generated recursor families, and the reduction rules required to compute through those recursors.  It excludes the parts of Lean 4 that would force a larger theory before the inductive fragment is stable, such as quotient types, mutual inductives, structure projections, and proof irrelevance.
 
 The subset remains a data fragment.  Inductive result universes are predicative and closed, and the implementation still omits `Prop`.  The term language nevertheless carries explicit universe arguments on constants, because generated recursors need a motive universe parameter in order to exist as ordinary primitive constants rather than as a typing special case.
 
 ## Terms and Declarations
 
-Expressions have seven forms: bound variables, sorts, constants, application, lambda abstraction, dependent function types, and `let` bindings.  Bound variables use de Bruijn indices.  Constants carry explicit universe instantiations, and the environment stores the corresponding level-parameterized primitive types.  A constant application is well formed only when its universe instantiation has the arity prescribed by the declaration and each supplied level is closed.  User-facing declarations in the first subset remain closed and monomorphic, but generated recursors introduce a controlled use of level parameters inside the kernel.
+Expressions have seven forms: bound variables, sorts, constants, application, lambda abstraction, dependent function types, and `let` bindings.  Bound variables use de Bruijn indices.  Constants carry explicit universe instantiations, and the environment stores the corresponding level-parameterized primitive types.  A constant application is well formed only when its universe instantiation has the arity prescribed by the declaration and each supplied level is closed under the current universe context.  User-facing axioms and definitions may bind explicit universe parameters.  A declaration body may mention only those level parameters, and raw kernel entry points continue to reject open universe levels when no universe context is present.
 
-The environment admits three user-facing declarations.  An axiom adds a closed constant with a closed type.  A definition adds a closed constant with a closed type and a closed value whose inferred type is definitionally equal to the declared type.  An inductive declaration adds a type constructor, one constant for each constructor, and a family of primitive recursors.  The kernel checks the derived constructor and recursor types before it admits them, so generated declarations do not bypass the ordinary well-formedness discipline.
+The environment admits three user-facing declarations.  An axiom adds a constant with a type closed under its declared universe parameters.  A definition adds a constant with a type and value closed under its declared universe parameters, and the inferred value type must be definitionally equal to the declared type under that same universe context.  An inductive declaration adds a type constructor, one constant for each constructor, and a family of primitive recursors.  The kernel checks the derived constructor and recursor types before it admits them, so generated declarations do not bypass the ordinary well-formedness discipline.
 
 ## Contexts and Substitution
 
@@ -46,7 +46,7 @@ The conversion relation includes beta, delta, zeta, and iota reduction.  Beta re
 
 | Feature | Status in first subset | Reason |
 | --- | --- | --- |
-| General user-declared universe polymorphism | Omitted | The subset admits only closed inductive universes and a single generated motive level parameter on primitive recursors. |
+| Universe-polymorphic inductive declarations | Omitted | Axioms and definitions have explicit universe parameters, but inductive declarations still use closed result universes. |
 | `Prop`, proof irrelevance, and large elimination | Omitted | They change both conversion and recursor formation. |
 | Quotients | Omitted | They add a primitive type former and an additional reduction rule. |
 | Mutual inductives | Omitted | They enlarge the positivity and recursor-generation rules immediately. |

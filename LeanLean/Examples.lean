@@ -451,6 +451,18 @@ def badParamTargetSpec : InductiveSpec :=
       ]
   }
 
+def polyIdType : Expr :=
+  .forallE
+    "α"
+    (.sort (.param "u"))
+    (.forallE "x" (.bvar 0) (.bvar 1))
+
+def polyIdValue : Expr :=
+  .lam
+    "α"
+    (.sort (.param "u"))
+    (.lam "x" (.bvar 0) (.bvar 0))
+
 def sampleEnv : Result Env := do
   let env ← addInductive [] boolSpec
   let env ← addInductive env natSpec
@@ -464,7 +476,8 @@ def sampleEnv : Result Env := do
   let env ← addInductive env natListTreeSpec
   let env ← addInductive env letTreeSpec
   let one := Expr.mkApps (const0 "Nat.succ") [const0 "Nat.zero"]
-  addDefinition env "one" natType one
+  let env ← addDefinition env "one" natType one
+  addDefinitionWithLevels env "polyId" ["u"] polyIdType polyIdValue
 
 def natSucc (value : Expr) : Expr :=
   Expr.mkApps (const0 "Nat.succ") [value]
@@ -483,6 +496,15 @@ def listNil (elem : Expr) : Expr :=
 
 def listCons (elem head tail : Expr) : Expr :=
   Expr.mkApps (const0 "List.cons") [elem, head, tail]
+
+def polyId (level : Level) (type value : Expr) : Expr :=
+  Expr.mkApps (.const "polyId" [level]) [type, value]
+
+def polyIdBool : Expr :=
+  polyId 0 boolType boolTrue
+
+def polyIdTypeArg : Expr :=
+  polyId 1 (.sort 0) boolType
 
 def eqType (elem lhs rhs : Expr) : Expr :=
   Expr.mkApps (const0 "Eq") [elem, lhs, rhs]
@@ -892,6 +914,14 @@ def demoReport : Result (List String) := do
   let env ← sampleEnv
   let oneTy ← infer env [] (const0 "one")
   let _ ← checkDefEq env oneTy natType
+  let polyIdBoolTy ← infer env [] polyIdBool
+  let _ ← checkDefEq env polyIdBoolTy boolType
+  let polyIdBoolNf ← normalize env polyIdBool
+  let _ ← checkDefEq env polyIdBoolNf boolTrue
+  let polyIdTypeTy ← infer env [] polyIdTypeArg
+  let _ ← checkDefEq env polyIdTypeTy (.sort 0)
+  let polyIdTypeNf ← normalize env polyIdTypeArg
+  let _ ← checkDefEq env polyIdTypeNf boolType
   let _ ← infer env [] (recConst "Nat.rec")
   let natRecPartialTy ← infer env [] natRecPartial
   let _ ←
@@ -1053,9 +1083,13 @@ def demoReport : Result (List String) := do
   match infer env [] (.sort (.param "u")) with
   | .ok _ => .error "Sort expressions should reject open universe levels"
   | .error _ => pure ()
+  match infer env [] (.const "polyId" [.param "u"]) with
+  | .ok _ => .error "raw constants should reject open universe arguments"
+  | .error _ => pure ()
   pure
     [
       "definition one : Nat checks",
+      "polymorphic definitions instantiate at data and type universes",
       "recursor constants type-check and support partial application",
       "Nat.rec on one normalizes to Bool.false",
       "List Bool constructor application checks",

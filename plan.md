@@ -2,7 +2,7 @@
 
 This plan describes a path from the current specification-driven proof of concept to a complete Lean 4 kernel.  The project has two operating standards.  Every trusted feature needs a written local specification before implementation work builds around it.  Every object admitted to the environment needs the same well-formedness discipline, whether the object came from user input or from kernel generation.
 
-The current kernel has a useful base.  It implements a small dependent type theory with closed predicative universes, axioms, transparent definitions, single inductive declarations, indices, dependent constructor-field telescopes, strict positivity, first-class recursor constants, nested helper recursors, telescope-aware helper targets, beta, delta, zeta, and iota reduction, simultaneous substitution, and validation of generated constructor and recursor types.  Lean 4 contains substantially more theory.  Universe polymorphism, `Prop`, quotient reduction, mutual inductives, irrelevance, opacity, and the full declaration model all affect typing or conversion.
+The current kernel has a useful base.  It implements a small dependent type theory with universe-polymorphic axioms and definitions, closed predicative inductive universes, transparent definitions, single inductive declarations, indices, dependent constructor-field telescopes, strict positivity, first-class recursor constants, nested helper recursors, telescope-aware helper targets, beta, delta, zeta, and iota reduction, simultaneous substitution, and validation of generated constructor and recursor types.  Lean 4 contains substantially more theory.  Universe-polymorphic inductives, `Prop`, quotient reduction, mutual inductives, irrelevance, opacity, and the full declaration model all affect typing or conversion.
 
 ## Principles
 
@@ -162,4 +162,4 @@ Acceptance criteria:
 
 ## Immediate Next Work
 
-The stabilization, shared-telescope, constructor-field, and indexed-family phases are complete for the single-inductive, closed-universe fragment.  The next implementation phase should add user-declared universe polymorphism.  This is the next hard foundation change because `Prop`, quotient primitives, realistic equality, and exported Lean declarations all depend on a faithful account of level parameters and level substitution.
+Universe contexts now cover inference, conversion, axioms, and definitions.  The next implementation work should extend the same universe-polymorphic discipline to inductive declarations, generated constructors, and generated recursors.  This completes the ordinary universe-polymorphism phase before `Prop`, quotient primitives, and exported Lean declarations add their own rules.

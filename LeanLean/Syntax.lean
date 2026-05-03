@@ -29,6 +29,12 @@ def closed : Level → Bool
   | .succ level => closed level
   | .max left right => closed left && closed right
 
+def closedIn (params : List Name) : Level → Bool
+  | .zero => true
+  | .param name => params.contains name
+  | .succ level => closedIn params level
+  | .max left right => closedIn params left && closedIn params right
+
 def bumpSummands : List Summand → List Summand :=
   List.map fun summand => { summand with offset := summand.offset + 1 }
 
@@ -81,10 +87,18 @@ def defEq (left right : Level) : Bool :=
   leftN.length = rightN.length &&
     leftN.all fun summand => rightN.any fun other => other = summand
 
+def summandLe (left right : Summand) : Bool :=
+  match left.name?, right.name? with
+  | none, none => left.offset <= right.offset
+  | none, some _ => left.offset = 0 || left.offset <= right.offset
+  | some leftName, some rightName => leftName = rightName && left.offset <= right.offset
+  | some _, none => false
+
 def le (left right : Level) : Bool :=
-  match closedEval? left, closedEval? right with
-  | some leftValue, some rightValue => leftValue <= rightValue
-  | _, _ => false
+  let leftN := normalizeSummands left
+  let rightN := normalizeSummands right
+  leftN.all fun leftSummand =>
+    rightN.any fun rightSummand => summandLe leftSummand rightSummand
 
 def instantiate (params : List Name) (values : List Level) : Level → Level
   | .zero => .zero
@@ -141,6 +155,19 @@ def closedAt (depth : Nat) : Expr → Bool
 
 def closed (expr : Expr) : Bool :=
   closedAt 0 expr
+
+def closedAtIn (params : List Name) (depth : Nat) : Expr → Bool
+  | .bvar index => index < depth
+  | .sort level => level.closedIn params
+  | .const _ levels => levels.all (Level.closedIn params)
+  | .app fn arg => closedAtIn params depth fn && closedAtIn params depth arg
+  | .lam _ ty body => closedAtIn params depth ty && closedAtIn params (depth + 1) body
+  | .forallE _ ty body => closedAtIn params depth ty && closedAtIn params (depth + 1) body
+  | .letE _ ty val body =>
+      closedAtIn params depth ty && closedAtIn params depth val && closedAtIn params (depth + 1) body
+
+def closedIn (params : List Name) (expr : Expr) : Bool :=
+  closedAtIn params 0 expr
 
 def alphaEq : Expr → Expr → Bool
   | .bvar left, .bvar right => left = right
