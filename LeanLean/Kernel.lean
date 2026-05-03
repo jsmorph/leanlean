@@ -641,6 +641,26 @@ def containsBVarAt (targetIndex depth : Nat) (expr : Expr) : Bool :=
       containsBVarAt targetIndex (depth + 1) body
 termination_by expr
 
+def containsLocalBVarAt (localCount depth : Nat) (expr : Expr) : Bool :=
+  match expr with
+  | .bvar index => depth <= index && index < depth + localCount
+  | .sort _ => false
+  | .const _ _ => false
+  | .app fn arg => containsLocalBVarAt localCount depth fn || containsLocalBVarAt localCount depth arg
+  | .lam _ ty body =>
+      containsLocalBVarAt localCount depth ty || containsLocalBVarAt localCount (depth + 1) body
+  | .forallE _ ty body =>
+      containsLocalBVarAt localCount depth ty || containsLocalBVarAt localCount (depth + 1) body
+  | .proj _ _ struct => containsLocalBVarAt localCount depth struct
+  | .letE _ ty val body =>
+      containsLocalBVarAt localCount depth ty ||
+        containsLocalBVarAt localCount depth val ||
+        containsLocalBVarAt localCount (depth + 1) body
+termination_by expr
+
+def containsLocalBVar (localCount : Nat) (expr : Expr) : Bool :=
+  containsLocalBVarAt localCount 0 expr
+
 def usedLocalPrefixLength (locals : Telescope) (expr : Expr) : Nat :=
   let localCount := locals.length
   let rec loop (sourceIndex : Nat) (used : Nat) : Nat :=
@@ -1816,6 +1836,9 @@ partial def analyzeRecursiveShape
         if containsAnyExprAt recursiveTargets locals.length arg then
           .error s!"recursive occurrence appears in an index argument of {headName}"
       if found then
+        for arg in args.take info.spec.params.length do
+          if containsLocalBVar locals.length arg then
+            .error s!"nested inductive parameters cannot contain local variables in {headName}"
         pure (.nested { locals, target := expr, headName })
       else
         pure .none

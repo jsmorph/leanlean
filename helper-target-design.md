@@ -2,9 +2,9 @@
 
 ## Problem
 
-The current inductive kernel represents a nested helper target as a closed expression.  That representation works for shapes such as `List T`, because the helper target depends only on the inductive parameters.  It fails for shapes such as `(n : Nat) → WrapAt n T`, because the nested target depends on a local binder that cannot be lowered out of the field context without loss.
+The earlier inductive kernel represented a nested helper target as a closed expression.  That representation worked for shapes such as `List T`, because the helper target depended only on the inductive parameters.  It failed to express the context needed for indexed targets, helper-target locals, and faithful rejection of nested inductive parameters that contain local variables.
 
-This is not a peripheral omission.  The same representation boundary will reappear when constructor fields become dependent and when indexed inductive families enter the subset.  The redesign therefore replaces the helper-target representation itself, not the treatment of one rejected example.
+Lean 4 rejects examples such as `(n : Nat) → WrapAt n T` when `n` appears in a nested inductive parameter.  The target-schema representation still matters, but it must support that rejection rather than admit the example.  The redesign therefore replaces the helper-target representation itself while keeping Lean's boundary on local variables in nested parameters.
 
 ## Proposed Representation
 
@@ -49,13 +49,13 @@ Those invariants make family lookup structural.  The current kernel uses repeate
 
 If the family target at index `i` has schema `Δ ⊢ U`, the corresponding motive type should be `∀ Δ, U → Sort u`.  The helper recursor `rec_i` should therefore take the common parameter telescope, the full vector of family motives, the full vector of family minor premises, the local telescope `Δ`, and then a target term `t : U`.  Its result type should be the application of motive `i` to the local variables and `t`.
 
-Minor-premise generation should use the same schema.  For a constructor of target `U`, the minor premise should quantify first over `Δ`, then over the constructor fields specialized by the root parameters and the local variables, then over the induction hypotheses determined by the specialized field shapes, and finally return the motive for that constructor application.  This change is the point where helper recursors become faithful to binder-dependent nested targets rather than only to closed ones.
+Minor-premise generation should use the same schema.  For a constructor of target `U`, the minor premise should quantify first over `Δ`, then over the constructor fields specialized by the root parameters and the local variables, then over the induction hypotheses determined by the specialized field shapes, and finally return the motive for that constructor application.  This representation keeps the motive and reduction rules explicit while the positivity checker rejects nested inductive parameters that mention local variables.
 
 ## Induction Hypotheses
 
 The surrounding `FieldShape.pi` constructors already describe the local function binders that appear in a recursive field.  After interning, a nested field shape `nested i` should be interpreted relative to that surrounding telescope.  The schema at family index `i` is required to match that telescope, so induction-hypothesis typing can apply motive `i` to the local variables and the recursive field term without reconstructing the target by syntactic search.
 
-This gives the expected result for the previously rejected example.  If a field has type `(n : Nat) → WrapAt n T`, its induction hypothesis becomes `(n : Nat) → motive_wrapAt n (f n)`, and the corresponding helper recursor application becomes `WrapAt.rec_helper ... n (f n)`.  No lowering step is required, because the helper target remains contextual all the way through motive formation and reduction.
+The local telescope is still needed for recursive function fields.  If a field has type `(n : Nat) → List T`, its induction hypothesis becomes `(n : Nat) → motive_list (f n)`, and the corresponding helper recursor application keeps the function binder explicit.  The stricter parameter rule rejects `(n : Nat) → WrapAt n T` because `n` appears in a parameter of the nested inductive type.
 
 ## Reduction
 

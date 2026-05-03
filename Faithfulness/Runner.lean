@@ -72,6 +72,11 @@ def cases : List Case :=
       label := "computed-index Prop elimination rejection"
       path := "Faithfulness/Rejected/ShiftedIndexPropElim.lean"
       expectation := .rejects ["expected to have type", "ShiftedIndexProp", "Prop"]
+    },
+    {
+      label := "nested parameter local-variable rejection"
+      path := "Faithfulness/Rejected/NestedParamLocal.lean"
+      expectation := .rejects ["nested inductive datatypes parameters", "local variables"]
     }
   ]
 

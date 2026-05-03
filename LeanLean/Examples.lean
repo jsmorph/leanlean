@@ -1841,13 +1841,11 @@ def demoReportLines : List String :=
     "WrapAt.rec respects inductive parameters",
     "let-bound field types are normalized before positivity analysis",
     "helper-recursion targets are deduplicated by canonical form",
-    "helper recursors support binder-dependent nested targets",
-    "helper recursors support targets that depend on parameters and local binders",
+    "nested inductive parameters reject local variables",
     "constructor fields may depend on earlier fields",
     "ill-scoped field dependencies are rejected",
     "constructor targets must use the declared parameters",
     "minor premises bind fields before induction hypotheses",
-    "helper recursors support targets that depend on constructor fields",
     "constructorless inductives may sit below parameter universes",
     "constructor and field universes are rejected when they exceed the result universe",
     "recursor reduction rejects targets whose constructor parameters disagree",
@@ -2050,63 +2048,19 @@ def demoGeneratedInductiveChecks (env : Env) : Result Unit := do
   let _ ← checkDefEq env wrapAtRecTy natType
   let wrapAtRecNf ← normalize env wrapAtRecOnTrueZero
   let _ ← checkDefEq env wrapAtRecNf natZero
-  let env ← addInductive env depNestSpec
-  let env ← addAxiom env depNestSeedName depNestType
-  let _ ← infer env [] (recConst "DepNest.rec_1")
-  match env.findRecursor? "DepNest.rec" with
-  | some (_, family) =>
-      if family.targets.length != 2 then
-        .error s!"DepNest should have exactly two family targets, got {family.targets.length}"
-      else
-        match listGet? family.targets 1 with
-        | some target =>
-            if target.schema.locals.length != 1 then
-              .error
-                s!"DepNest helper target should carry one local binder, got {target.schema.locals.length}"
-            else
-              pure ()
-        | none => .error "DepNest should expose a helper recursor target"
-  | none => .error "DepNest.rec should be present in the environment"
-  let depNestHelperTy ← infer env [] depNestHelperRecOnSeed
-  let _ ← checkDefEq env depNestHelperTy boolType
-  let depNestHelperNf ← normalize env depNestHelperRecOnSeed
-  if depNestHelperNf != boolTrue then
-    .error s!"unexpected normal form for DepNest.rec_1 example: {repr depNestHelperNf}"
-  else
-    pure ()
-  let env ← addInductive env depNestPSpec
-  let env ← addAxiom env depNestPSeedName depNestPBoolType
-  let depNestPHelperTy ← infer env [] depNestPHelperRecOnSeed
-  let _ ← checkDefEq env depNestPHelperTy boolType
-  let depNestPHelperNf ← normalize env depNestPHelperRecOnSeed
-  if depNestPHelperNf != boolTrue then
-    .error s!"unexpected normal form for DepNestP.rec_1 example: {repr depNestPHelperNf}"
-  else
-    pure ()
+  match addInductive env depNestSpec with
+  | .ok _ => .error "DepNest should reject local variables in nested inductive parameters"
+  | .error _ => pure ()
+  match addInductive env depNestPSpec with
+  | .ok _ => .error "DepNestP should reject local variables in nested inductive parameters"
+  | .error _ => pure ()
   let env ← addInductive env depAfterRecSpec
   let env ← addAxiom env depAfterRecSeedName depAfterRecType
   let depAfterRecTy ← infer env [] depAfterRecOnSeed
   let _ ← checkDefEq env depAfterRecTy natType
-  let env ← addInductive env depFieldTreeSpec
-  let env ← addAxiom env depFieldTreeSeedName depFieldTreeType
-  match env.findRecursor? "DepFieldTree.rec" with
-  | some (_, family) =>
-      if family.targets.length != 2 then
-        .error s!"DepFieldTree should have exactly two family targets, got {family.targets.length}"
-      else
-        match listGet? family.targets 1 with
-        | some target =>
-            if target.schema.locals.length != 1 then
-              .error
-                s!"DepFieldTree helper target should carry one local binder, got {target.schema.locals.length}"
-            else
-              pure ()
-        | none => .error "DepFieldTree should expose a helper recursor target"
-  | none => .error "DepFieldTree.rec should be present in the environment"
-  let depFieldTreeTy ← infer env [] depFieldTreeRecOnNode
-  let _ ← checkDefEq env depFieldTreeTy natType
-  let depFieldTreeNf ← normalize env depFieldTreeRecOnNode
-  let _ ← checkDefEq env depFieldTreeNf natZero
+  match addInductive env depFieldTreeSpec with
+  | .ok _ => .error "DepFieldTree should reject local variables in nested inductive parameters"
+  | .error _ => pure ()
   pure ()
 
 def demoMalformedEntryChecks (env : Env) : Result Unit := do
