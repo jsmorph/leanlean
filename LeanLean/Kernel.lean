@@ -121,7 +121,7 @@ structure FamilyTarget where
 structure RecursorFamily where
   rootName : Name
   levelParams : LevelContext
-  motiveLevelParam : Name
+  motiveLevelParam? : Option Name
   params : Telescope
   targets : List FamilyTarget
   deriving DecidableEq, Repr, Inhabited
@@ -260,7 +260,12 @@ def recursorMotiveLevelParam (spec : InductiveSpec) : Name :=
   freshNameAvoiding spec.levelParams recursorLevelParam
 
 def recursorLevelParamsForFamily (family : RecursorFamily) : List Name :=
-  family.levelParams ++ [family.motiveLevelParam]
+  match family.motiveLevelParam? with
+  | some motiveLevelParam => family.levelParams ++ [motiveLevelParam]
+  | none => family.levelParams
+
+def inductiveIsProp (spec : InductiveSpec) : Bool :=
+  Level.defEq spec.level .zero
 
 def inductiveLevelArgs (spec : InductiveSpec) : List Level :=
   spec.levelParams.map Level.param
@@ -691,7 +696,10 @@ def motiveBinderType
 partial def buildRecursorType
     (family : RecursorFamily)
     (targetIndex : Nat) : Result Expr := do
-  let motiveLevel : Level := .param family.motiveLevelParam
+  let motiveLevel : Level :=
+    match family.motiveLevelParam? with
+    | some motiveLevelParam => .param motiveLevelParam
+    | none => .zero
   let paramCount := family.params.length
   let motiveCount := family.targets.length
   let minorEntries := familyMinorEntries family
@@ -1313,7 +1321,11 @@ partial def buildRecursorFamily
     {
       rootName := root.spec.name
       levelParams := root.spec.levelParams
-      motiveLevelParam := recursorMotiveLevelParam root.spec
+      motiveLevelParam? :=
+        if inductiveIsProp root.spec then
+          none
+        else
+          some (recursorMotiveLevelParam root.spec)
       params := root.spec.params
       targets
     }
@@ -1425,8 +1437,8 @@ def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
   let _ ← checkLevelParamsUnique spec.levelParams
   if !spec.level.closedIn spec.levelParams then
     .error s!"inductive result universe must be closed under its universe parameters: {repr spec.level}"
-  if !spec.level.definitelyPositive then
-    .error s!"Prop-valued inductives are not supported yet: {repr spec.level}"
+  if !inductiveIsProp spec && !spec.level.definitelyPositive then
+    .error s!"inductive result universe is neither Prop nor a data universe: {repr spec.level}"
   let _ ← checkFreshName env spec.name
   let _ ← checkFreshName env (recursorName spec.name)
   let mut seenNames := [spec.name, recursorName spec.name]
@@ -1446,7 +1458,7 @@ def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
       positiveParams := List.replicate spec.params.length true
     }
   let tempEnv := .inductive spec.name spec.levelParams provisionalInfo :: env
-  if !spec.ctors.isEmpty then
+  if !spec.ctors.isEmpty && !inductiveIsProp spec then
     let rec checkParamLevels (ctx : Context) : Telescope → Result Unit
       | [] => pure ()
       | binder :: rest => do

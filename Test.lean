@@ -86,6 +86,20 @@ def universeTests : Result Unit := do
       "dependent functions into propositions live in Prop"
       propSelfImpTy
       propSort
+  let pTrueTy ← infer env [] pTrueType
+  let _ ← expectExprEq "Prop inductive types live in Prop" pTrueTy propSort
+  let pTrueRecTy ← infer env [] pTrueRecOnIntro
+  let _ ← checkDefEq env pTrueRecTy pProp
+  let pTrueRecNf ← normalize env pTrueRecOnIntro
+  let _ ← expectExprEq "Prop inductive recursors reduce in Prop" pTrueRecNf pProof
+  let _ ←
+    expectError
+      "Prop inductive recursors reject data-valued motives"
+      (infer env [] pTrueRecToBool)
+  let _ ←
+    expectError
+      "Prop inductive recursors do not take motive universe arguments"
+      (infer env [] (.const "PTrue.rec" [type0Level]))
   let polyIdBoolTy ← infer env [] polyIdBool
   let _ ← expectExprEq "polymorphic definition instantiates at Type 0" polyIdBoolTy boolType
   let polyIdTypeTy ← infer env [] polyIdTypeArg
@@ -153,11 +167,12 @@ def universeTests : Result Unit := do
           }
         ]
     }
-  let badPropInductive : InductiveSpec :=
+  let badAmbiguousInductive : InductiveSpec :=
     {
-      name := "BadPropInductive"
+      name := "BadAmbiguousInductive"
+      levelParams := ["u"]
       params := []
-      level := propLevel
+      level := .param "u"
       ctors := []
     }
   let _ ←
@@ -181,8 +196,8 @@ def universeTests : Result Unit := do
       (addInductive [] badTargetLevelInductive)
   let _ ←
     expectError
-      "data fragment rejects Prop-valued inductives"
-      (addInductive [] badPropInductive)
+      "inductive result universe must be known as Prop or data"
+      (addInductive [] badAmbiguousInductive)
   expectError
     "recursor reduction rejects mismatched constructor universe arguments"
     (normalize env polyBoxRecCtorLevelMismatch)
