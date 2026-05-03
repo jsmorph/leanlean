@@ -82,6 +82,7 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Add a first differential term harness comparing Lean-inferred types and reduced values with local checking.
 - [x] Expand the faithfulness corpus around literals, lifts, dependent pairs, subtypes, primitive recursors, and module-boundary imports.
 - [x] Add differential comparisons for natural literals and selected projection terms.
+- [x] List the known Lean 4 divergence boundaries in the specification with reasons.
 
 ## Current Decisions
 
