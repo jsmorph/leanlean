@@ -871,6 +871,34 @@ def importBridgeTests : Result Unit := do
     expectError
       "importer rejects unsafe generated recursors"
       (Import.translateGeneratedConstantInfo unsafeRecInfo)
+  let unsafeCtorInfo : Lean.ConstantInfo :=
+    .ctorInfo
+      {
+        name := Lean.Name.mkSimple "unsafeCtor"
+        levelParams := []
+        type := .sort .zero
+        induct := Lean.Name.mkSimple "UnsafeInd"
+        cidx := 0
+        numParams := 0
+        numFields := 0
+        isUnsafe := true
+      }
+  let _ ←
+    expectError
+      "trusted importer rejects unsafe generated constructors"
+      (Import.translateGeneratedConstantInfo unsafeCtorInfo)
+  let unsafeInfoAxiom : Lean.ConstantInfo :=
+    .axiomInfo
+      {
+        name := Lean.Name.mkSimple "unsafeInfoAxiom"
+        levelParams := []
+        type := .sort .zero
+        isUnsafe := true
+      }
+  let _ ←
+    expectError
+      "constant-info snapshots reject unsafe ordinary declarations"
+      (Import.translateConstantInfoSnapshot [unsafeInfoAxiom])
   let unsafeDecl : Lean.Declaration :=
     .defnDecl
       {
@@ -882,7 +910,7 @@ def importBridgeTests : Result Unit := do
         safety := .«unsafe»
       }
   expectError
-    "importer rejects unsafe definitions"
+    "trusted importer rejects unsafe definitions"
     (Import.translateDeclaration unsafeDecl)
 
 def reducibilityHintTests : Result Unit := do

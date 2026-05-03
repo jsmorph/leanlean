@@ -73,6 +73,7 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Add a first importer from Lean declaration data into local declaration entries.
 - [x] Reconstruct declaration entries from finite Lean `ConstantInfo` snapshots.
 - [x] Add root-name dependency closure extraction for Lean environments.
+- [x] Record and enforce the safe-only trusted replay policy for unsafe Lean declarations.
 
 ## Current Decisions
 
@@ -113,6 +114,8 @@ Export replay now has checks for generated constructors and recursors.  These ch
 Dependency-aware replay now computes the constants mentioned by declaration entries and admits entries once their external dependencies are present.  The rule allows a declaration to refer to names it defines itself, which covers mutual inductive blocks and constructor targets.  It rejects a collection when a pass makes no progress, rather than trying to repair missing dependencies with axioms or placeholders.
 
 The first importer from Lean kernel data now translates Lean `Declaration` values into local declaration entries.  Safe axioms, safe definitions, theorem declarations, safe opaque definitions, quotient declarations, and inductive declarations become ordinary script entries, while generated constructor and recursor `ConstantInfo` values become replay checks against regenerated local declarations.  The importer erases binder annotations, expression metadata, and the `let` nondependence flag, following the Lean source comments that those fields do not affect kernel typing or conversion.  It rejects level metavariables, free variables, term metavariables, literals, unsafe declarations, partial definitions, and mutual-definition declarations because the local kernel has no rule for admitting those objects.
+
+Trusted Lean replay is safe-only.  The importer rejects unsafe flags on ordinary declarations, inductive declarations, generated constructors, and generated recursors before any declaration reaches local replay.  Partial definitions remain rejected for the separate reason that direct recursive-definition artifacts do not yet have a local kernel-facing rule.  Local declaration scripts still exist as kernel-facing inputs, but Lean import data must pass through the safe-only boundary.
 
 The importer can now translate finite `ConstantInfo` snapshots.  It groups inductive type formers by their `all` field, requires every group member and every listed constructor record to be present, checks that the grouped members share universe parameters and parameter counts, and then emits a kernel-style inductive declaration plus generated constructor and recursor replay checks.  The snapshot path rejects incomplete groups instead of inventing missing constructor declarations from names alone.
 

@@ -58,14 +58,14 @@ def translateReducibilityHints : Lean.ReducibilityHints → ReducibilityHint
   | .abbrev => .abbrev
   | .opaque => .opaque
 
-def checkSafeDefinition (name : Lean.Name) : Lean.DefinitionSafety → Result Unit
+def checkTrustedDefinitionSafety (name : Lean.Name) : Lean.DefinitionSafety → Result Unit
   | .safe => pure ()
-  | .«unsafe» => .error s!"unsafe definition is outside the local importer: {name}"
+  | .«unsafe» => .error s!"trusted replay rejects unsafe definition: {name}"
   | .«partial» => .error s!"partial definition is outside the local importer: {name}"
 
-def checkSafeFlag (kind : String) (name : Lean.Name) (isUnsafe : Bool) : Result Unit :=
+def checkTrustedUnsafeFlag (kind : String) (name : Lean.Name) (isUnsafe : Bool) : Result Unit :=
   if isUnsafe then
-    .error s!"unsafe {kind} is outside the local importer: {name}"
+    .error s!"trusted replay rejects unsafe {kind}: {name}"
   else
     pure ()
 
@@ -86,14 +86,14 @@ def translateInductiveType (typeDecl : Lean.InductiveType) : Result KernelInduct
 
 def translateDeclaration : Lean.Declaration → Result Declaration
   | .axiomDecl value => do
-      checkSafeFlag "axiom" value.name value.isUnsafe
+      checkTrustedUnsafeFlag "axiom" value.name value.isUnsafe
       pure
         (.axiom
           (translateName value.name)
           (translateLevelParams value.levelParams)
           (← translateExpr value.type))
   | .defnDecl value => do
-      checkSafeDefinition value.name value.safety
+      checkTrustedDefinitionSafety value.name value.safety
       pure
         (.definitionWithHint
           (translateName value.name)
@@ -109,7 +109,7 @@ def translateDeclaration : Lean.Declaration → Result Declaration
           (← translateExpr value.type)
           (← translateExpr value.value))
   | .opaqueDecl value => do
-      checkSafeFlag "opaque definition" value.name value.isUnsafe
+      checkTrustedUnsafeFlag "opaque definition" value.name value.isUnsafe
       pure
         (.opaqueDefinition
           (translateName value.name)
@@ -121,7 +121,7 @@ def translateDeclaration : Lean.Declaration → Result Declaration
       .error s!"mutual definition declarations are outside the local importer: {repr (values.map (·.name))}"
   | .inductDecl levelParams numParams types isUnsafe => do
       if isUnsafe then
-        .error s!"unsafe inductive declaration is outside the local importer: {repr (types.map (·.name))}"
+        .error s!"trusted replay rejects unsafe inductive declaration: {repr (types.map (·.name))}"
       pure
         (.kernelInductive
           {
@@ -132,6 +132,7 @@ def translateDeclaration : Lean.Declaration → Result Declaration
 
 def translateGeneratedConstantInfo : Lean.ConstantInfo → Result Declaration
   | .ctorInfo value => do
+      checkTrustedUnsafeFlag "constructor" value.name value.isUnsafe
       pure
         (.generatedConstructor
           (translateName value.name)
@@ -139,7 +140,7 @@ def translateGeneratedConstantInfo : Lean.ConstantInfo → Result Declaration
           (← translateExpr value.type)
           (translateName value.induct))
   | .recInfo value => do
-      checkSafeFlag "recursor" value.name value.isUnsafe
+      checkTrustedUnsafeFlag "recursor" value.name value.isUnsafe
       pure
         (.generatedRecursorWithInfo
           (translateName value.name)
@@ -208,6 +209,7 @@ def translateConstructorFromInfo
     (numParams expectedIndex : Nat) : Result KernelConstructorDecl := do
   let some ctor ← pure (findConstructorInfo? infos ctorName)
     | .error s!"missing constructor info for inductive snapshot: {ctorName}"
+  checkTrustedUnsafeFlag "constructor" ctor.name ctor.isUnsafe
   if ctor.induct != inductiveName then
     .error s!"constructor {ctorName} belongs to {ctor.induct}, not {inductiveName}"
   if ctor.cidx != expectedIndex then
@@ -239,7 +241,7 @@ def translateInductiveInfo
   let some value ← pure (findInductiveInfo? infos name)
     | .error s!"missing inductive info for snapshot group member: {name}"
   if value.isUnsafe then
-    .error s!"unsafe inductive declaration is outside the local importer: {name}"
+    .error s!"trusted replay rejects unsafe inductive declaration: {name}"
   if !nameListsEq (inductiveGroupKey value) groupNames then
     .error s!"inductive snapshot group has inconsistent member list: {name}"
   if !nameListsEq value.levelParams levelParams then
@@ -262,7 +264,7 @@ def translateInductiveGroup
   let some first ← pure (findInductiveInfo? infos firstName)
     | .error s!"missing inductive info for snapshot group root: {firstName}"
   if first.isUnsafe then
-    .error s!"unsafe inductive declaration is outside the local importer: {first.name}"
+    .error s!"trusted replay rejects unsafe inductive declaration: {first.name}"
   let groupNames := inductiveGroupKey first
   if !nameListsEq groupNames names then
     .error s!"inductive snapshot group has inconsistent member list: {repr names}"
@@ -277,7 +279,7 @@ def translateInductiveGroup
 
 def translateOrdinaryConstantInfo? : Lean.ConstantInfo → Result (Option Declaration)
   | .axiomInfo value => do
-      checkSafeFlag "axiom" value.name value.isUnsafe
+      checkTrustedUnsafeFlag "axiom" value.name value.isUnsafe
       pure
         (some
           (.axiom
@@ -285,7 +287,7 @@ def translateOrdinaryConstantInfo? : Lean.ConstantInfo → Result (Option Declar
             (translateLevelParams value.levelParams)
             (← translateExpr value.type)))
   | .defnInfo value => do
-      checkSafeDefinition value.name value.safety
+      checkTrustedDefinitionSafety value.name value.safety
       pure
         (some
           (.definitionWithHint
@@ -303,7 +305,7 @@ def translateOrdinaryConstantInfo? : Lean.ConstantInfo → Result (Option Declar
             (← translateExpr value.type)
             (← translateExpr value.value)))
   | .opaqueInfo value => do
-      checkSafeFlag "opaque definition" value.name value.isUnsafe
+      checkTrustedUnsafeFlag "opaque definition" value.name value.isUnsafe
       pure
         (some
           (.opaqueDefinition
