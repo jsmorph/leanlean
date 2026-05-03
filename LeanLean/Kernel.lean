@@ -1469,18 +1469,19 @@ def addInductive (env : Env) (spec : InductiveSpec) : Result Env := do
               spec.level
           checkParamLevels (Telescope.withBinder ctx binder) rest
     let _ ← checkParamLevels [] spec.params
-  for ctor in spec.ctors do
-    let rec checkFieldLevels (ctx : Context) : Telescope → Result Unit
-      | [] => pure ()
-      | field :: rest => do
-          let level ← inferSort tempEnv ctx field.type (levelParams := spec.levelParams)
-          let _ ←
-            checkLevelAtMost
-              s!"field {ctor.name}.{field.name}"
-              level
-              spec.level
-          checkFieldLevels (Telescope.withBinder ctx field) rest
-    let _ ← checkFieldLevels paramCtx ctor.fields
+  if !inductiveIsProp spec then
+    for ctor in spec.ctors do
+      let rec checkFieldLevels (ctx : Context) : Telescope → Result Unit
+        | [] => pure ()
+        | field :: rest => do
+            let level ← inferSort tempEnv ctx field.type (levelParams := spec.levelParams)
+            let _ ←
+              checkLevelAtMost
+                s!"field {ctor.name}.{field.name}"
+                level
+                spec.level
+            checkFieldLevels (Telescope.withBinder ctx field) rest
+      let _ ← checkFieldLevels paramCtx ctor.fields
   let allowsLargeElim ←
     if !inductiveIsProp spec then
       pure true

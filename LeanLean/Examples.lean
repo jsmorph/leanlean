@@ -102,7 +102,7 @@ def eqSpec : InductiveSpec :=
         { name := "lhs", type := .bvar 0 },
         { name := "rhs", type := .bvar 1 }
       ]
-    level := type0Level
+    level := propLevel
     ctors :=
       [
         {

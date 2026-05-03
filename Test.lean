@@ -104,6 +104,8 @@ def universeTests : Result Unit := do
       propSort
   let pTrueTy ← infer env [] pTrueType
   let _ ← expectExprEq "Prop inductive types live in Prop" pTrueTy propSort
+  let eqBoolTy ← infer env [] (eqType boolType boolTrue boolTrue)
+  let _ ← expectExprEq "equality lives in Prop" eqBoolTy propSort
   let pTrueRecTy ← infer env [] pTrueRecOnIntro
   let _ ← checkDefEq env pTrueRecTy pProp
   let pTrueRecNf ← normalize env pTrueRecOnIntro
