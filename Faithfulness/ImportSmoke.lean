@@ -16,6 +16,8 @@ run_cmd
       `LeanLeanFaithfulness.Accepted.PTrue,
       `LeanLeanFaithfulness.Accepted.POr,
       `LeanLeanFaithfulness.Accepted.MutEven,
+      `LeanLeanFaithfulness.Accepted.MutNestA,
+      `LeanLeanFaithfulness.Accepted.MutNestB,
       `LeanLeanFaithfulness.Accepted.ProofBox,
       `LeanLeanFaithfulness.Accepted.rel,
       `LeanLeanFaithfulness.Accepted.q,

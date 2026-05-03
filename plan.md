@@ -101,7 +101,7 @@ Mutual inductives require positivity, recursor generation, and iota reduction to
 
 Positivity should compute a joint fixed point over the mutual block.  Constructor and recursor generation should validate every generated type in an environment that contains the whole block.  The generated environment should avoid accidental dependence on declaration order inside the block.  Any required ordering should appear in the specification.
 
-Status: implemented for blocks whose members share universe parameters and a parameter telescope.  The regression suite covers ordinary mutual recursion, nested mutual recursion through `List`, and rejection of a negative mutual occurrence.  The singleton inductive API now routes through block admission.
+Status: implemented for blocks whose members share universe parameters and a parameter telescope.  Recursor metadata now uses one shared family per block, names block-member recursors by their own inductive names, and names nested helper recursors under the first block member, matching Lean's exported nested-mutual declarations.  Minor premises bind all constructor fields before induction hypotheses.  The regression suite covers ordinary mutual recursion, nested mutual recursion through `List`, correct helper names, and rejection of a negative mutual occurrence.  The singleton inductive API now routes through block admission.
 
 Acceptance criteria:
 

@@ -1180,7 +1180,7 @@ def mutEvenRecOnTwo : Expr :=
 
 def mutEvenRecOnOddOne : Expr :=
   Expr.mkApps
-    (recConst "MutEven.rec_1")
+    (recConst "MutOdd.rec")
     [
       mutEvenMotive,
       mutOddMotive,
@@ -1237,12 +1237,12 @@ def mutNestConsCase : Expr :=
     "head"
     mutNestBType
     (.lam
-      "ihHead"
-      natType
+      "tail"
+      (listType mutNestBType)
       (.lam
-        "tail"
-        (listType mutNestBType)
-        (.lam "ihTail" natType (.bvar 2))))
+        "ihHead"
+        natType
+        (.lam "ihTail" natType (.bvar 1))))
 
 def mutNestBCase : Expr :=
   .lam "child" mutNestAType (.lam "ih" natType (natSucc (.bvar 0)))
@@ -1596,11 +1596,11 @@ def natListTreeConsCase : Expr :=
     "head"
     natListTreeType
     (.lam
-      "ihHead"
-      natType
+      "tail"
+      (listType natListTreeType)
       (.lam
-        "tail"
-        (listType natListTreeType)
+        "ihHead"
+        natType
         (.lam "ihTail" natType (natSucc (.bvar 0)))))
 
 def natListTreeRecOnNode : Expr :=
@@ -1754,9 +1754,9 @@ def depAfterRecCase : Expr :=
       "child"
       depAfterRecType
       (.lam
-        "ih"
-        natType
-        (.lam "box" (wrapAtType (.bvar 2) boolType) (.bvar 1))))
+        "box"
+        (wrapAtType (.bvar 1) boolType)
+        (.lam "ih" natType (.bvar 0))))
 
 def depAfterRecSeedName : Name :=
   "depAfterRecSeed"
@@ -1846,7 +1846,7 @@ def demoReportLines : List String :=
     "constructor fields may depend on earlier fields",
     "ill-scoped field dependencies are rejected",
     "constructor targets must use the declared parameters",
-    "minor premises insert induction hypotheses at recursive fields",
+    "minor premises bind fields before induction hypotheses",
     "helper recursors support targets that depend on constructor fields",
     "constructorless inductives may sit below parameter universes",
     "constructor and field universes are rejected when they exceed the result universe",

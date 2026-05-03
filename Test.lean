@@ -36,6 +36,13 @@ def telescopeTests : Result Unit := do
       "independent telescope binding lifts binder types but not the body"
       independentActual
       independentExpected
+  let liftedBodyActual := Telescope.bindIndependentForallLiftingBody [x, y] (.bvar 2)
+  let liftedBodyExpected := .forallE "x" (.bvar 0) (.forallE "y" (.bvar 1) (.bvar 4))
+  let _ ←
+    expectExprEq
+      "independent telescope binding can also lift the body"
+      liftedBodyActual
+      liftedBodyExpected
 
   match Telescope.instantiateTypes [boolType, natType] [{ name := "z", type := Expr.app (.bvar 1) (.bvar 0) }] with
   | [{ type := actual, .. }] =>
@@ -129,25 +136,59 @@ def universeTests : Result Unit := do
       "Quot.lift reduction checks quotient relation agreement"
       (normalize env boolQuotLiftRelationMismatch)
   match env.findRecursor? "MutEven.rec" with
-  | some (_, family) =>
+  | some (targetIndex, family) =>
       let _ ←
         expect
           "mutual recursor families contain both block targets"
           (family.targets.length = 2)
+      let _ ←
+        expect
+          "mutual recursor names follow block members"
+          (targetIndex = 0 && family.targets.map (·.recName) = ["MutEven.rec", "MutOdd.rec"])
       pure ()
   | none => .error "MutEven.rec should be present in the environment"
+  match env.findRecursor? "MutOdd.rec" with
+  | some (targetIndex, family) =>
+      let _ ←
+        expect
+          "second mutual recursor uses the shared family"
+          (targetIndex = 1 && family.targets.map (·.recName) = ["MutEven.rec", "MutOdd.rec"])
+      pure ()
+  | none => .error "MutOdd.rec should be present in the environment"
+  let _ ←
+    expect
+      "ordinary mutual blocks do not create helper recursors"
+      (env.find? "MutEven.rec_1" = none)
   let mutEvenRecTy ← infer env [] mutEvenRecOnTwo
   let _ ← checkDefEq env mutEvenRecTy natType
   let mutEvenRecNf ← normalize env mutEvenRecOnTwo
   let _ ← expectExprEq "mutual recursors reduce across block members" mutEvenRecNf (natSucc (natSucc natZero))
   match env.findRecursor? "MutNestA.rec" with
-  | some (_, family) =>
+  | some (targetIndex, family) =>
       let _ ←
         expect
           "nested mutual recursor families include helper targets"
           (family.targets.length = 3)
+      let _ ←
+        expect
+          "nested mutual helper recursors use Lean names"
+          (targetIndex = 0 &&
+            family.targets.map (·.recName) = ["MutNestA.rec", "MutNestB.rec", "MutNestA.rec_1"])
       pure ()
   | none => .error "MutNestA.rec should be present in the environment"
+  match env.findRecursor? "MutNestA.rec_1" with
+  | some (targetIndex, family) =>
+      let _ ←
+        expect
+          "nested helper recursor uses the shared family"
+          (targetIndex = 2 &&
+            family.targets.map (·.recName) = ["MutNestA.rec", "MutNestB.rec", "MutNestA.rec_1"])
+      pure ()
+  | none => .error "MutNestA.rec_1 should be present in the environment"
+  let _ ←
+    expect
+      "nested mutual blocks do not create root-relative helper aliases"
+      (env.find? "MutNestA.rec_2" = none && env.find? "MutNestB.rec_1" = none)
   let mutNestRecNf ← normalize env mutNestARecOnOne
   let _ ←
     expectExprEq

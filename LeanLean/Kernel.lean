@@ -35,6 +35,14 @@ def bindIndependentForall (tele : Telescope) (body : Expr) : Expr :=
         .forallE binder.name (Expr.lift shift binder.type) (loop (shift + 1) rest)
   loop 0 tele
 
+def bindIndependentForallLiftingBody (tele : Telescope) (body : Expr) : Expr :=
+  let rec loop (shift : Nat) (remaining : Telescope) : Expr :=
+    match remaining with
+    | [] => Expr.lift shift body
+    | binder :: rest =>
+        .forallE binder.name (Expr.lift shift binder.type) (loop (shift + 1) rest)
+  loop 0 tele
+
 def bindLambda (tele : Telescope) (body : Expr) : Expr :=
   let rec loop : Telescope → Expr
     | [] => body
@@ -791,18 +799,22 @@ def familyRecName (rootName : Name) (index : Nat) : Name :=
   else
     helperRecursorName rootName index
 
-def familyTargetName (rootName : Name) (schemas : List TargetSchema) (index : Nat) : Name :=
+def familyTargetName
+    (blockRootName : Name)
+    (recursiveNames : List Name)
+    (schemas : List TargetSchema)
+    (index : Nat) : Name :=
   match listGet? schemas index with
-  | none => recursorName rootName
+  | none => recursorName blockRootName
   | some schema =>
-      if schema.headName = rootName then
-        recursorName rootName
+      if recursiveNames.contains schema.headName then
+        recursorName schema.headName
       else
         let helperIndex :=
           (schemas.take (index + 1)).foldl
-            (fun count schema => if schema.headName = rootName then count else count + 1)
+            (fun count schema => if recursiveNames.contains schema.headName then count else count + 1)
             0
-        helperRecursorName rootName helperIndex
+        helperRecursorName blockRootName helperIndex
 
 def familyRootTargetIndex? (family : RecursorFamily) : Option Nat :=
   let rec loop : Nat → List FamilyTarget → Option Nat
@@ -957,62 +969,69 @@ partial def familyCtorMinorBody
     (targetIndex : Nat)
     (target : FamilyTarget)
     (ctor : FamilyCtor) : Result Expr := do
-  let rec loop
+  let rec ihBinders
+      (motives : List Expr)
+      (paramVars : List Expr)
+      (schemaVars : List Expr)
       (ihIndex : Nat)
+      (previousFields : List Expr) :
+      List FamilyField → List Expr → Result Telescope
+    | [], [] => pure []
+    | field :: rest, fieldExpr :: restExprs => do
+        let nextIndex := if shapeHasIH field.shape then ihIndex + 1 else ihIndex
+        let restBinders ←
+          ihBinders motives paramVars schemaVars nextIndex (previousFields ++ [fieldExpr]) rest restExprs
+        if shapeHasIH field.shape then
+          let ihTy ←
+            ihTypeExpr
+              family
+              motives
+              paramVars
+              (schemaVars ++ previousFields)
+              field.shape
+              fieldExpr
+          pure ({ name := s!"ih{ihIndex}", type := ihTy } :: restBinders)
+        else
+          pure restBinders
+    | _, _ => .error "internal error: minor-premise field arity mismatch"
+  let minorResult
+      (motives : List Expr)
+      (paramVars : List Expr)
+      (schemaVars : List Expr)
+      (fieldVars : List Expr) : Result Expr := do
+    let some motive := listGet? motives targetIndex
+      | .error s!"internal error: missing motive for target #{targetIndex}"
+    let ctorTarget := Expr.instantiateMany (paramVars ++ schemaVars ++ fieldVars) ctor.target
+    let ctorParamArgs := ctorTarget.getAppArgs.take target.paramCount
+    let ctorApp := Expr.mkApps (.const ctor.name target.levels) (ctorParamArgs ++ fieldVars)
+    let motiveArgs :=
+      if target.bindLocalsInMinors then
+        schemaVars
+      else
+        ctorTarget.getAppArgs.drop target.paramCount
+    pure (Expr.mkApps motive (motiveArgs ++ [ctorApp]))
+  let rec bindFields
       (motives : List Expr)
       (paramVars : List Expr)
       (schemaVars : List Expr)
       (fieldVars : List Expr) :
       List FamilyField → Result Expr
     | [] => do
-        let some motive := listGet? motives targetIndex
-          | .error s!"internal error: missing motive for target #{targetIndex}"
-        let ctorTarget := Expr.instantiateMany (paramVars ++ schemaVars ++ fieldVars) ctor.target
-        let ctorParamArgs := ctorTarget.getAppArgs.take target.paramCount
-        let ctorApp := Expr.mkApps (.const ctor.name target.levels) (ctorParamArgs ++ fieldVars)
-        let motiveArgs :=
-          if target.bindLocalsInMinors then
-            schemaVars
-          else
-            ctorTarget.getAppArgs.drop target.paramCount
-        pure (Expr.mkApps motive (motiveArgs ++ [ctorApp]))
+        let binders ← ihBinders motives paramVars schemaVars 0 [] ctor.fields fieldVars
+        let body ← minorResult motives paramVars schemaVars fieldVars
+        pure (Telescope.bindIndependentForallLiftingBody binders body)
     | field :: rest => do
         let fieldTy :=
           Expr.instantiateMany (paramVars ++ schemaVars ++ fieldVars) field.binder.type
-        let motivesAfterField := motives.map (Expr.lift 1)
-        let paramVarsAfterField := paramVars.map (Expr.lift 1)
-        let schemaVarsAfterField := schemaVars.map (Expr.lift 1)
-        let previousFieldVarsAfterField := fieldVars.map (Expr.lift 1)
-        let fieldVarsAfterField := previousFieldVarsAfterField ++ [.bvar 0]
         let body ←
-          if shapeHasIH field.shape then
-            let ihTy ←
-              ihTypeExpr
-                family
-                motivesAfterField
-                paramVarsAfterField
-                (schemaVarsAfterField ++ previousFieldVarsAfterField)
-                field.shape
-                (.bvar 0)
-            let body ←
-              loop
-                (ihIndex + 1)
-                (motivesAfterField.map (Expr.lift 1))
-                (paramVarsAfterField.map (Expr.lift 1))
-                (schemaVarsAfterField.map (Expr.lift 1))
-                (fieldVarsAfterField.map (Expr.lift 1))
-                rest
-            pure (.forallE s!"ih{ihIndex}" ihTy body)
-          else
-            loop
-              ihIndex
-              motivesAfterField
-              paramVarsAfterField
-              schemaVarsAfterField
-              fieldVarsAfterField
-              rest
+          bindFields
+            (motives.map (Expr.lift 1))
+            (paramVars.map (Expr.lift 1))
+            (schemaVars.map (Expr.lift 1))
+            (fieldVars.map (Expr.lift 1) ++ [.bvar 0])
+            rest
         pure (.forallE field.binder.name fieldTy body)
-  loop 0 motives paramVars schemaVars [] ctor.fields
+  bindFields motives paramVars schemaVars [] ctor.fields
 
 partial def familyCtorMinorType
     (family : RecursorFamily)
@@ -1359,11 +1378,10 @@ partial def reduceRecursorApp
           (levelParams := levelParams)
       let prefixArgs := split.params ++ split.motives ++ split.minors
       let mut previousFields : List Expr := []
-      let mut minorArgs := minorLocalArgs
+      let mut ihArgs : List Expr := []
       for pair in List.zip ctor.fields fieldArgs do
         let field := pair.1
         let fieldArg := pair.2
-        minorArgs := minorArgs ++ [fieldArg]
         if shapeHasIH field.shape then
           let ih ←
             ihTerm
@@ -1374,10 +1392,11 @@ partial def reduceRecursorApp
               (minorLocalArgs ++ previousFields)
               field.shape
               fieldArg
-          minorArgs := minorArgs ++ [ih]
+          ihArgs := ihArgs ++ [ih]
         previousFields := previousFields ++ [fieldArg]
       let some minor := lookupMinorExpr? family split.minors targetIndex ctor.name
         | .error s!"internal error: missing minor premise for {ctor.name}"
+      let minorArgs := minorLocalArgs ++ fieldArgs ++ ihArgs
       pure (some (Expr.mkApps minor minorArgs))
 
 partial def reduceQuotLiftApp
@@ -1849,6 +1868,8 @@ partial def buildRecursorFamily
     (root : InductiveInfo)
     (recursiveInfos : List InductiveInfo) : Result RecursorFamily := do
   let rootLevelParams := root.spec.levelParams
+  let blockRootName := root.spec.name
+  let recursiveNames := recursiveInfos.map (·.spec.name)
   let initialSchemas ←
     recursiveInfos.mapM fun info => do
       let target ←
@@ -1871,9 +1892,9 @@ partial def buildRecursorFamily
         .error s!"internal error: family target head mismatch for {repr schema.target}"
       else
         let index := built.length
-        let targetName := familyTargetName root.spec.name schemas index
+        let targetName := familyTargetName blockRootName recursiveNames schemas index
         let targetParamCount := info.spec.params.length
-        let bindLocalsInMinors := schema.headName != root.spec.name
+        let bindLocalsInMinors := !(recursiveNames.contains schema.headName)
         let targetParamArgs :=
           if bindLocalsInMinors then
             args.take targetParamCount
@@ -2466,14 +2487,17 @@ def addInductiveBlock (env : Env) (block : InductiveBlockSpec) : Result Env := d
   let infoEnv :=
     (List.zip block.specs finalInfos).map
       (fun pair => ConstantInfo.mkInductive pair.1.name block.levelParams pair.2) ++ env
-  let families ← finalInfos.mapM fun info => buildRecursorFamily infoEnv info finalInfos
-  for family in families do
-    for target in family.targets do
-      if target.recName != recursorName family.rootName then
-        if seenNames.contains target.recName then
-          .error s!"duplicate name in inductive block: {target.recName}"
-        let _ ← checkFreshName env target.recName
-        seenNames := target.recName :: seenNames
+  let blockFamily ←
+    match finalInfos with
+    | [] => .error "inductive block must contain at least one inductive"
+    | rootInfo :: _ => buildRecursorFamily infoEnv rootInfo finalInfos
+  let recursiveNames := finalInfos.map (·.spec.name)
+  for target in blockFamily.targets do
+    if !(recursiveNames.contains target.schema.headName) then
+      if seenNames.contains target.recName then
+        .error s!"duplicate name in inductive block: {target.recName}"
+      let _ ← checkFreshName env target.recName
+      seenNames := target.recName :: seenNames
   let mut ctorInfos : List ConstantInfo := []
   for spec in block.specs do
     for ctor in spec.ctors do
@@ -2487,18 +2511,17 @@ def addInductiveBlock (env : Env) (block : InductiveBlockSpec) : Result Env := d
       ctorInfos := ConstantInfo.mkCtor ctor.name block.levelParams ctorType spec.name :: ctorInfos
   let ctorEnv := ctorInfos ++ infoEnv
   let mut recInfos : List ConstantInfo := []
-  for family in families do
-    for pair in List.zip (List.range family.targets.length) family.targets do
-      let recType ← buildRecursorType family pair.1
-      let recLevelParams := recursorLevelParamsForFamily family
-      let _ ←
-        validateGeneratedType
-          ctorEnv
-          s!"generated recursor {pair.2.recName} type"
-          recLevelParams
-          recType
-      recInfos :=
-        ConstantInfo.mkRecursor pair.2.recName recLevelParams recType pair.1 family :: recInfos
+  for pair in List.zip (List.range blockFamily.targets.length) blockFamily.targets do
+    let recType ← buildRecursorType blockFamily pair.1
+    let recLevelParams := recursorLevelParamsForFamily blockFamily
+    let _ ←
+      validateGeneratedType
+        ctorEnv
+        s!"generated recursor {pair.2.recName} type"
+        recLevelParams
+        recType
+    recInfos :=
+      ConstantInfo.mkRecursor pair.2.recName recLevelParams recType pair.1 blockFamily :: recInfos
   let inductiveInfos :=
     (List.zip block.specs finalInfos).map
       (fun pair => ConstantInfo.mkInductive pair.1.name block.levelParams pair.2)
