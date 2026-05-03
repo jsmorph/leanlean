@@ -138,6 +138,25 @@ structure RecursorFamily where
   targets : List FamilyTarget
   deriving DecidableEq, Repr, Inhabited
 
+structure StructureFieldInfo where
+  fieldName : Name
+  projFn : Name
+  subobject? : Option Name := none
+  deriving DecidableEq, Repr, Inhabited
+
+structure StructureParentInfo where
+  structName : Name
+  subobject : Bool
+  projFn : Name
+  deriving DecidableEq, Repr, Inhabited
+
+structure StructureInfo where
+  structName : Name
+  fieldNames : List Name := []
+  fieldInfo : List StructureFieldInfo := []
+  parentInfo : List StructureParentInfo := []
+  deriving DecidableEq, Repr, Inhabited
+
 structure InductiveInfo where
   type : Expr
   spec : InductiveSpec
@@ -145,6 +164,7 @@ structure InductiveInfo where
   allowsLargeElim : Bool := true
   projectionFields : List Nat := []
   indexFields : List (Nat × Nat) := []
+  structureInfo? : Option StructureInfo := none
   deriving DecidableEq, Repr, Inhabited
 
 structure ProjectionInfo where
@@ -221,6 +241,7 @@ inductive Declaration where
   | inductive : InductiveSpec → Declaration
   | inductiveBlock : InductiveBlockSpec → Declaration
   | kernelInductive : KernelInductiveDecl → Declaration
+  | structureInfo : StructureInfo → Declaration
   | projection : Name → Name → Nat → Declaration
   | quotientPrimitives : Declaration
   deriving DecidableEq, Repr, Inhabited
@@ -319,6 +340,13 @@ def value? (info : ConstantInfo) (levels : List Level) (levelParams : LevelConte
 
 end ConstantInfo
 
+namespace StructureInfo
+
+def fieldInfoFor? (info : StructureInfo) (fieldName : Name) : Option StructureFieldInfo :=
+  info.fieldInfo.find? fun field => field.fieldName = fieldName
+
+end StructureInfo
+
 namespace Env
 
 def find? : Env → Name → Option ConstantInfo
@@ -351,6 +379,44 @@ def findProjection? (env : Env) (target : Name) : Option ProjectionInfo :=
   match find? env target with
   | some { kind := .projection info, .. } => some info
   | _ => none
+
+def findStructure? (env : Env) (target : Name) : Option StructureInfo :=
+  match findInductive? env target with
+  | some { structureInfo? := some info, .. } => some info
+  | _ => none
+
+def updateInductiveInfo (env : Env) (target : Name) (f : InductiveInfo → InductiveInfo) :
+    Result Env :=
+  match env with
+  | [] => .error s!"unknown inductive: {target}"
+  | info :: rest =>
+      if ConstantInfo.name info = target then
+        match info.kind with
+        | .inductive indInfo =>
+            pure ({ info with kind := .inductive (f indInfo) } :: rest)
+        | _ => .error s!"constant is not an inductive: {target}"
+      else
+        (fun rest => info :: rest) <$> updateInductiveInfo rest target f
+
+partial def structureFieldsFlattened
+    (env : Env)
+    (structName : Name)
+    (includeSubobjectFields : Bool := true) : Result (List Name) := do
+  let some info := env.findStructure? structName
+    | .error s!"unknown structure: {structName}"
+  let mut fields : List Name := []
+  for fieldName in info.fieldNames do
+    let some fieldInfo := info.fieldInfoFor? fieldName
+      | .error s!"structure {structName} has no field info for {fieldName}"
+    match fieldInfo.subobject? with
+    | some parentName =>
+        if includeSubobjectFields then
+          fields := fields ++ [fieldName]
+        let parentFields ← structureFieldsFlattened env parentName includeSubobjectFields
+        fields := fields ++ parentFields
+    | none =>
+        fields := fields ++ [fieldName]
+  pure fields
 
 end Env
 
@@ -1866,6 +1932,14 @@ def checkFreshName (env : Env) (name : Name) : Result Unit :=
   else
     pure ()
 
+def checkNameListUnique (what : String) : List Name → Result Unit
+  | [] => pure ()
+  | name :: rest =>
+      if rest.contains name then
+        .error s!"duplicate name in {what}: {name}"
+      else
+        checkNameListUnique what rest
+
 def checkLevelAtMost
     (what : String)
     (actual bound : Level) : Result Unit :=
@@ -2045,6 +2119,36 @@ def addProjection (env : Env) (name structName : Name) (index : Nat) : Result En
   let valueTy ← infer env [] value (levelParams := levelParams)
   let _ ← checkDefEq env valueTy type (levelParams := levelParams)
   pure (ConstantInfo.mkProjection name levelParams type value projection :: env)
+
+def registerStructure (env : Env) (info : StructureInfo) : Result Env := do
+  let some indInfo := env.findInductive? info.structName
+    | .error s!"unknown structure inductive: {info.structName}"
+  match indInfo.spec.ctors with
+  | [_] => pure ()
+  | _ => .error s!"structure {info.structName} must have exactly one constructor"
+  let _ ← checkNameListUnique s!"structure {info.structName} fields" info.fieldNames
+  let _ ← checkNameListUnique s!"structure {info.structName} field info" (info.fieldInfo.map (·.fieldName))
+  let _ ← checkNameListUnique s!"structure {info.structName} parents" (info.parentInfo.map (·.structName))
+  for fieldName in info.fieldNames do
+    let some fieldInfo := info.fieldInfoFor? fieldName
+      | .error s!"structure {info.structName} has no field info for {fieldName}"
+    if !env.contains fieldInfo.projFn then
+      .error s!"structure field projection is unknown: {fieldInfo.projFn}"
+    match fieldInfo.subobject? with
+    | some parentName =>
+        if (env.findStructure? parentName).isNone then
+          .error s!"structure field parent is unknown: {parentName}"
+    | none => pure ()
+  for fieldInfo in info.fieldInfo do
+    if !info.fieldNames.contains fieldInfo.fieldName then
+      .error s!"structure field info is not listed as a field: {fieldInfo.fieldName}"
+  for parentInfo in info.parentInfo do
+    if (env.findStructure? parentInfo.structName).isNone then
+      .error s!"structure parent is unknown: {parentInfo.structName}"
+    if !env.contains parentInfo.projFn then
+      .error s!"structure parent projection is unknown: {parentInfo.projFn}"
+  Env.updateInductiveInfo env info.structName fun indInfo =>
+    { indInfo with structureInfo? := some info }
 
 def quotientRelationType : Expr :=
   .forallE "a" (.bvar 0) (.forallE "b" (.bvar 1) (.sort .zero))
@@ -2419,6 +2523,7 @@ def addDeclaration (env : Env) : Declaration → Result Env
   | .inductive spec => addInductive env spec
   | .inductiveBlock block => addInductiveBlock env block
   | .kernelInductive decl => addKernelInductive env decl
+  | .structureInfo info => registerStructure env info
   | .projection name structName index => addProjection env name structName index
   | .quotientPrimitives => addQuotPrimitives env
 

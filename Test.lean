@@ -471,6 +471,93 @@ def reducibilityHintTests : Result Unit := do
       | _ => .error "regularTrue should carry its regular reducibility height"
   | none => .error "regularTrue should be present in the environment"
 
+def structureMetadataTests : Result Unit := do
+  let parentSpec : InductiveSpec :=
+    {
+      name := "ParentS"
+      params := []
+      level := type0Level
+      ctors := [{ name := "ParentS.mk", fields := [{ name := "a", type := natType }] }]
+    }
+  let childSpec : InductiveSpec :=
+    {
+      name := "ChildS"
+      params := []
+      level := type0Level
+      ctors :=
+        [
+          {
+            name := "ChildS.mk"
+            fields :=
+              [
+                { name := "toParent", type := const0 "ParentS" },
+                { name := "b", type := boolType }
+              ]
+          }
+        ]
+    }
+  let env ← addInductive [] natSpec
+  let env ← addInductive env boolSpec
+  let env ← addInductive env parentSpec
+  let env ← addProjection env "ParentS.a" "ParentS" 0
+  let env ←
+    registerStructure
+      env
+      {
+        structName := "ParentS"
+        fieldNames := ["a"]
+        fieldInfo := [{ fieldName := "a", projFn := "ParentS.a" }]
+      }
+  let env ← addInductive env childSpec
+  let env ← addProjection env "ChildS.toParent" "ChildS" 0
+  let env ← addProjection env "ChildS.b" "ChildS" 1
+  let env ←
+    addDeclaration
+      env
+      (.structureInfo
+        {
+          structName := "ChildS"
+          fieldNames := ["toParent", "b"]
+          fieldInfo :=
+            [
+              { fieldName := "toParent", projFn := "ChildS.toParent", subobject? := some "ParentS" },
+              { fieldName := "b", projFn := "ChildS.b" }
+            ]
+          parentInfo := [{ structName := "ParentS", subobject := true, projFn := "ChildS.toParent" }]
+        })
+  let flattenedWithSubobjects ← env.structureFieldsFlattened "ChildS" true
+  let _ ← expect "structure metadata flattens subobject fields" (flattenedWithSubobjects = ["toParent", "a", "b"])
+  let flattenedFields ← env.structureFieldsFlattened "ChildS" false
+  let _ ← expect "structure metadata flattens inherited fields" (flattenedFields = ["a", "b"])
+  let parentValue := Expr.mkApps (const0 "ParentS.mk") [natZero]
+  let childValue := Expr.mkApps (const0 "ChildS.mk") [parentValue, boolTrue]
+  let parentProjNf ← normalize env (Expr.mkApps (const0 "ChildS.toParent") [childValue])
+  let _ ← expectExprEq "parent projections reduce through inherited structures" parentProjNf parentValue
+  let inheritedFieldNf ← normalize env (Expr.mkApps (const0 "ParentS.a") [Expr.mkApps (const0 "ChildS.toParent") [childValue]])
+  let _ ← expectExprEq "inherited field projections reduce through parent projections" inheritedFieldNf natZero
+  let env ← addAxiom env "childSeedS" (const0 "ChildS")
+  let childSeed := const0 "childSeedS"
+  let childEta := Expr.mkApps (const0 "ChildS.mk") [Expr.mkApps (const0 "ChildS.toParent") [childSeed], Expr.mkApps (const0 "ChildS.b") [childSeed]]
+  let _ ← checkDefEq env childEta childSeed
+  expectError
+    "structure metadata rejects unknown parents"
+    (registerStructure
+      env
+      {
+        structName := "ChildS"
+        fieldNames := ["badParent"]
+        fieldInfo := [{ fieldName := "badParent", projFn := "ChildS.toParent", subobject? := some "MissingParentS" }]
+      })
+  expectError
+    "structure metadata rejects duplicate fields"
+    (registerStructure
+      env
+      {
+        structName := "ParentS"
+        fieldNames := ["a", "a"]
+        fieldInfo := [{ fieldName := "a", projFn := "ParentS.a" }]
+      })
+
 def environmentTests : Result Unit := do
   let env ← sampleEnv
   match env.find? "one" with
@@ -714,6 +801,7 @@ def kernelRegressionTests : Result Unit := do
   let _ ← declarationScriptTests
   let _ ← kernelInductiveDeclTests
   let _ ← reducibilityHintTests
+  let _ ← structureMetadataTests
   let _ ← environmentTests
   let _ ← projectionTests
   let _ ← faithfulnessBridgeTests
@@ -729,6 +817,7 @@ def testReport : Result (List String) := do
   let _ ← declarationScriptTests
   let _ ← kernelInductiveDeclTests
   let _ ← reducibilityHintTests
+  let _ ← structureMetadataTests
   let _ ← environmentTests
   let _ ← projectionTests
   let _ ← faithfulnessBridgeTests
@@ -743,6 +832,7 @@ def testReport : Result (List String) := do
       "declaration scripts use the checked admission path",
       "kernel-style inductive declarations map to checked blocks",
       "reducibility hints are recorded as definition metadata",
+      "structure metadata records inherited fields",
       "environment declaration metadata checks",
       "projection typing, reduction, and eta checks",
       "faithfulness bridge checks local expressions against the Lean corpus",

@@ -66,6 +66,7 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Add an ordered declaration-script admission path over the checked declaration APIs.
 - [x] Add a kernel-style inductive declaration adapter over type-former and constructor types.
 - [x] Record reducibility hints on transparent definitions without changing the opaque-declaration rule.
+- [x] Add structure metadata for direct fields, parent subobjects, and flattened inherited fields.
 
 ## Current Decisions
 
@@ -106,3 +107,5 @@ The quotient primitive subset follows the Lean reference's low-level `Quot` API 
 The first faithfulness harness now lives under `Faithfulness`.  It runs small Lean source files through the installed Lean compiler and separates examples that Lean must accept from examples that Lean must reject.  The ordinary kernel regression suite contains matching local bridge tests for the same behavior classes, because the project does not yet translate Lean source or exported declarations into the local syntax.
 
 Projection work follows Lean's representation split.  The core term language now has `proj S i s`, because treating projections as ordinary constants would hide a kernel reduction rule behind declaration names.  Projection functions are represented in the environment, with metadata recording the structure name, constructor name, number of parameters, projection index, and constructor-field index.  The implementation covers one-constructor inductives, dependent field types through earlier projections, projection functions as checked declarations, Prop projection rejection for computational fields, indexed projection maps that skip whole-index fields, and eta for non-recursive data structures whose constructor target matches the major premise type.
+
+Structure metadata follows Lean's split between kernel declarations and elaborator structure information.  A structure record in the local environment records direct fields, projection names, direct parents, and subobject fields, while parent projections remain ordinary checked projection declarations.  Flattened inherited-field lookup is metadata over those declarations; it does not add a reduction rule beyond the existing projection and delta rules.

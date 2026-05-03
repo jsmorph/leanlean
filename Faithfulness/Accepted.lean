@@ -102,6 +102,18 @@ example :
 example (x : Pair) :
     Pair.mk x.fst x.snd = x := rfl
 
+structure Parent where
+  a : Nat
+
+structure Child extends Parent where
+  b : Bool
+
+example (x : Child) :
+    Child.mk x.toParent x.b = x := rfl
+
+example (x : Child) :
+    Parent.mk x.toParent.a = x.toParent := rfl
+
 structure SigmaBox where
   α : Type
   value : α
