@@ -106,14 +106,14 @@ structure TargetSchema where
 
 inductive RawFieldShape where
   | none : RawFieldShape
-  | direct : RawFieldShape
+  | direct : TargetSchema → RawFieldShape
   | pi : Binder → RawFieldShape → RawFieldShape
   | nested : TargetSchema → RawFieldShape
   deriving DecidableEq, Repr, Inhabited
 
 inductive FieldShape where
   | none : FieldShape
-  | direct : FieldShape
+  | direct : TargetSchema → FieldShape
   | pi : Binder → FieldShape → FieldShape
   | nested : Nat → FieldShape
   deriving DecidableEq, Repr, Inhabited
@@ -142,6 +142,7 @@ structure RecursorFamily where
   rootName : Name
   levelParams : LevelContext
   motiveLevelParam? : Option Name
+  k : Bool := false
   params : Telescope
   targets : List FamilyTarget
   deriving DecidableEq, Repr, Inhabited
@@ -252,6 +253,7 @@ structure GeneratedRecursorInfo where
   numIndices : Nat
   numMotives : Nat
   numMinors : Nat
+  k : Bool := false
   rules : List GeneratedRecursorRuleInfo
   deriving DecidableEq, Repr, Inhabited
 
@@ -270,6 +272,7 @@ inductive Declaration where
   | structureInfo : StructureInfo → Declaration
   | projection : Name → Name → Nat → Declaration
   | quotientPrimitives : Declaration
+  | primitiveCheck : Name → LevelContext → Expr → PrimitiveInfo → Declaration
   deriving DecidableEq, Repr, Inhabited
 
 namespace ConstantInfo
@@ -476,6 +479,12 @@ def inductiveIsProp (spec : InductiveSpec) : Bool :=
 def inductiveIsData (spec : InductiveSpec) : Bool :=
   spec.level.definitelyPositive
 
+def inductiveSupportsK (spec : InductiveSpec) : Bool :=
+  inductiveIsProp spec &&
+    match spec.ctors with
+    | [ctor] => ctor.fields.isEmpty
+    | _ => false
+
 def inductiveIsSortPolymorphicSubsingleton (spec : InductiveSpec) : Bool :=
   !inductiveIsProp spec &&
     !inductiveIsData spec &&
@@ -592,19 +601,19 @@ def helperRecursorName (indName : Name) (index : Nat) : Name :=
 
 def rawShapeHasIH : RawFieldShape → Bool
   | .none => false
-  | .direct => true
+  | .direct _ => true
   | .pi _ body => rawShapeHasIH body
   | .nested _ => true
 
 def shapeHasIH : FieldShape → Bool
   | .none => false
-  | .direct => true
+  | .direct _ => true
   | .pi _ body => shapeHasIH body
   | .nested _ => true
 
 def rawShapeSchemas : RawFieldShape → List TargetSchema
   | .none => []
-  | .direct => []
+  | .direct _ => []
   | .pi _ body => rawShapeSchemas body
   | .nested schema => [schema]
 
@@ -877,11 +886,44 @@ def familyRootTargetIndex? (family : RecursorFamily) : Option Nat :=
           loop (index + 1) rest
   loop 0 family.targets
 
+def familyTargetIndexByHead? (family : RecursorFamily) (headName : Name) : Option Nat :=
+  let rec loop : Nat → List FamilyTarget → Option Nat
+    | _, [] => none
+    | index, target :: rest =>
+        if target.schema.headName = headName then
+          some index
+        else
+          loop (index + 1) rest
+  loop 0 family.targets
+
 def instantiateTargetSchema
     (params : List Expr)
     (locals : List Expr)
     (schema : TargetSchema) : Expr :=
   Expr.instantiateMany (params ++ locals) schema.target
+
+def directOccurrenceMotiveArgs
+    (family : RecursorFamily)
+    (paramVars : List Expr)
+    (localVars : List Expr)
+    (schema : TargetSchema) : Result (Nat × FamilyTarget × Expr × List Expr) := do
+  if schema.locals.length > localVars.length then
+    .error
+      s!"internal error: direct recursive target {schema.headName} expects at \
+         least {schema.locals.length} locals, got {localVars.length}"
+  let some targetIndex := familyTargetIndexByHead? family schema.headName
+    | .error s!"internal error: unknown recursive target {schema.headName}"
+  let some target := listGet? family.targets targetIndex
+    | .error s!"internal error: invalid recursive target index {targetIndex}"
+  let targetExpr := instantiateTargetSchema paramVars (localVars.take schema.locals.length) schema
+  let .const headName _ := targetExpr.getAppFn
+    | .error s!"internal error: direct recursive target is not a constant application: {repr targetExpr}"
+  if headName != schema.headName then
+    .error s!"internal error: direct recursive target head mismatch for {repr targetExpr}"
+  let targetArgs := targetExpr.getAppArgs
+  if targetArgs.length < target.paramCount then
+    .error s!"internal error: direct recursive target has too few arguments: {repr targetExpr}"
+  pure (targetIndex, target, targetExpr, targetArgs.drop target.paramCount)
 
 structure RecursorSplit where
   params : List Expr
@@ -889,6 +931,7 @@ structure RecursorSplit where
   minors : List Expr
   locals : List Expr
   target : Expr
+  extraArgs : List Expr
 
 structure MinorEntry where
   targetIndex : Nat
@@ -913,18 +956,21 @@ def splitFamilyRecursorArgs
   let motiveCount := family.targets.length
   let minorCount := familyMinorCount family
   let localCount := targetInfo.schema.locals.length
-  if args.length != paramCount + motiveCount + minorCount + localCount + 1 then
+  let redexArgCount := paramCount + motiveCount + minorCount + localCount + 1
+  if args.length < redexArgCount then
     none
   else
-    let params := args.take paramCount
-    let rest := args.drop paramCount
+    let redexArgs := args.take redexArgCount
+    let extraArgs := args.drop redexArgCount
+    let params := redexArgs.take paramCount
+    let rest := redexArgs.drop paramCount
     let motives := rest.take motiveCount
     let rest := rest.drop motiveCount
     let minors := rest.take minorCount
     let rest := rest.drop minorCount
     let locals := rest.take localCount
     match rest.drop localCount with
-    | [target] => some { params, motives, minors, locals, target }
+    | [target] => some { params, motives, minors, locals, target, extraArgs }
     | _ => none
 
 def lookupMinorExpr?
@@ -946,12 +992,12 @@ partial def ihTypeExpr
     (fieldExpr : Expr) : Result Expr := do
   match shape with
   | .none => .error "internal error: missing induction hypothesis"
-  | .direct =>
-      let some targetIndex := familyRootTargetIndex? family
-        | .error "internal error: missing root target"
+  | .direct schema =>
+      let (targetIndex, _, _, motiveArgs) ←
+        directOccurrenceMotiveArgs family paramVars localVars schema
       let some motive := listGet? motives targetIndex
-        | .error s!"internal error: missing root motive #{targetIndex}"
-      pure (.app motive fieldExpr)
+        | .error s!"internal error: missing motive #{targetIndex}"
+      pure (Expr.mkApps motive (motiveArgs ++ [fieldExpr]))
   | .nested targetIndex =>
       let some target := listGet? family.targets targetIndex
         | .error s!"internal error: unknown nested target index {targetIndex}"
@@ -984,12 +1030,10 @@ partial def ihTerm
     (fieldExpr : Expr) : Result Expr := do
   match shape with
   | .none => .error "internal error: missing induction hypothesis term"
-  | .direct =>
-      let some targetIndex := familyRootTargetIndex? family
-        | .error "internal error: missing root target"
-      let some firstTarget := listGet? family.targets targetIndex
-        | .error "internal error: missing root target"
-      pure (Expr.mkApps (.const firstTarget.recName levels) (prefixArgs ++ [fieldExpr]))
+  | .direct schema =>
+      let (_, target, _, motiveArgs) ←
+        directOccurrenceMotiveArgs family paramVars localVars schema
+      pure (Expr.mkApps (.const target.recName levels) (prefixArgs ++ motiveArgs ++ [fieldExpr]))
   | .nested targetIndex =>
       let some target := listGet? family.targets targetIndex
         | .error s!"internal error: unknown nested target index {targetIndex}"
@@ -1304,62 +1348,257 @@ partial def isStructureEtaExpansion
                       pure ()
                     catch _ =>
                       ok := false
-                | none =>
-                    match indexPositionForField? info.indexFields pair.1 with
-                    | some indexPosition =>
-                        match listGet? otherIndices indexPosition with
-                        | some indexValue =>
-                            try
-                              let _ ← checkDefEqIn env ctx pair.2 indexValue (levelParams := levelParams)
-                              pure ()
-                            catch _ =>
-                              ok := false
+                    | none =>
+                        match indexPositionForField? info.indexFields pair.1 with
+                        | some indexPosition =>
+                            match listGet? otherIndices indexPosition with
+                            | some indexValue =>
+                                try
+                                  let _ ← checkDefEqIn env ctx pair.2 indexValue (levelParams := levelParams)
+                                  pure ()
+                                catch _ =>
+                                  ok := false
+                            | none => ok := false
                         | none => ok := false
-                    | none => ok := false
               pure ok
         | none => pure false
     | _ => pure false
+
+partial def proofIrrelevantAlphaEqIn
+    (env : Env)
+    (ctx : Context)
+    (left right : Expr)
+    (levelParams : LevelContext := []) : Result Unit := do
+  if left.alphaEq right then
+    pure ()
+  else
+    match left, right with
+    | .sort leftLevel, .sort rightLevel =>
+        if Level.defEq leftLevel rightLevel then pure () else .error "sort levels differ"
+    | .const leftName leftLevels, .const rightName rightLevels =>
+        if leftName = rightName &&
+            leftLevels.length = rightLevels.length &&
+            (List.zip leftLevels rightLevels).all fun pair => Level.defEq pair.1 pair.2 then
+          pure ()
+        else
+          checkProofIrrelevantExprEq env ctx left right (levelParams := levelParams)
+    | .lit leftLit, .lit rightLit =>
+        if leftLit = rightLit then pure () else .error "literals differ"
+    | .app leftFn leftArg, .app rightFn rightArg =>
+        let _ ← proofIrrelevantAlphaEqIn env ctx leftFn rightFn (levelParams := levelParams)
+        proofIrrelevantAlphaEqIn env ctx leftArg rightArg (levelParams := levelParams)
+    | .lam name leftTy leftBody, .lam _ rightTy rightBody =>
+        let _ ← proofIrrelevantAlphaEqIn env ctx leftTy rightTy (levelParams := levelParams)
+        proofIrrelevantAlphaEqIn
+          env
+          ({ name, type := leftTy } :: ctx)
+          leftBody
+          rightBody
+          (levelParams := levelParams)
+    | .forallE name leftTy leftBody, .forallE _ rightTy rightBody =>
+        let _ ← proofIrrelevantAlphaEqIn env ctx leftTy rightTy (levelParams := levelParams)
+        proofIrrelevantAlphaEqIn
+          env
+          ({ name, type := leftTy } :: ctx)
+          leftBody
+          rightBody
+          (levelParams := levelParams)
+    | .proj leftName leftIndex leftStruct, .proj rightName rightIndex rightStruct =>
+        if leftName = rightName && leftIndex = rightIndex then
+          proofIrrelevantAlphaEqIn env ctx leftStruct rightStruct (levelParams := levelParams)
+        else
+          checkProofIrrelevantExprEq env ctx left right (levelParams := levelParams)
+    | .letE name leftTy leftVal leftBody, .letE _ rightTy rightVal rightBody =>
+        let _ ← proofIrrelevantAlphaEqIn env ctx leftTy rightTy (levelParams := levelParams)
+        let _ ← proofIrrelevantAlphaEqIn env ctx leftVal rightVal (levelParams := levelParams)
+        proofIrrelevantAlphaEqIn
+          env
+          ({ name, type := leftTy } :: ctx)
+          leftBody
+          rightBody
+          (levelParams := levelParams)
+    | .bvar leftIndex, .bvar rightIndex =>
+        if leftIndex = rightIndex then
+          pure ()
+        else
+          checkProofIrrelevantExprEq env ctx left right (levelParams := levelParams)
+    | _, _ =>
+        checkProofIrrelevantExprEq env ctx left right (levelParams := levelParams)
+
+partial def checkProofIrrelevantExprEq
+    (env : Env)
+    (ctx : Context)
+    (left right : Expr)
+    (levelParams : LevelContext := []) : Result Unit := do
+  let leftTy ← infer env ctx left (levelParams := levelParams)
+  let rightTy ← infer env ctx right (levelParams := levelParams)
+  let leftLevel ← inferSort env ctx leftTy (levelParams := levelParams)
+  let rightLevel ← inferSort env ctx rightTy (levelParams := levelParams)
+  if Level.defEq leftLevel .zero && Level.defEq rightLevel .zero then
+    let _ ← checkDefEqIn env ctx leftTy rightTy (levelParams := levelParams)
+    pure ()
+  else
+    .error "not proof irrelevant"
+
+partial def checkFunctionEtaExpansion
+    (env : Env)
+    (ctx : Context)
+    (expanded other : Expr)
+    (levelParams : LevelContext := []) : Result Unit := do
+  match expanded with
+  | .lam name domain body =>
+      let otherTy ← infer env ctx other (levelParams := levelParams)
+      match ← whnf env otherTy (levelParams := levelParams) with
+      | .forallE _ expectedDomain _ =>
+          let _ ← checkDefEqIn env ctx domain expectedDomain (levelParams := levelParams)
+          let etaBody := .app (Expr.lift 1 other) (.bvar 0)
+          checkDefEqIn
+            env
+            ({ name, type := domain } :: ctx)
+            body
+            etaBody
+            (levelParams := levelParams)
+      | _ => .error "eta target is not a function"
+  | _ => .error "eta expansion is not a lambda"
+
+partial def natValue?
+    (env : Env)
+    (expr : Expr)
+    (levelParams : LevelContext := []) : Result (Option Nat) := do
+  match ← whnf env expr (levelParams := levelParams) with
+  | .lit (.natVal value) => pure (some value)
+  | .const "Nat.zero" [] => pure (some 0)
+  | .app (.const "Nat.succ" []) pred => do
+      match ← natValue? env pred (levelParams := levelParams) with
+      | some value => pure (some (value + 1))
+      | none => pure none
+  | _ => pure none
+
+partial def checkStructuralDefEqIn
+    (env : Env)
+    (ctx : Context)
+    (left right : Expr)
+    (levelParams : LevelContext := []) : Result Unit := do
+  match ← natValue? env left (levelParams := levelParams), ← natValue? env right (levelParams := levelParams) with
+  | some leftValue, some rightValue =>
+      if leftValue = rightValue then pure () else .error "natural literal values differ"
+  | _, _ =>
+      match left, right with
+      | .bvar leftIndex, .bvar rightIndex =>
+          if leftIndex = rightIndex then pure () else .error "bound variables differ"
+      | .sort leftLevel, .sort rightLevel =>
+          if Level.defEq leftLevel rightLevel then pure () else .error "sort levels differ"
+      | .const leftName leftLevels, .const rightName rightLevels =>
+          if leftName = rightName &&
+              leftLevels.length = rightLevels.length &&
+              (List.zip leftLevels rightLevels).all fun pair => Level.defEq pair.1 pair.2 then
+            pure ()
+          else
+            .error "constants differ"
+      | .lit leftLit, .lit rightLit =>
+          if leftLit = rightLit then pure () else .error "literals differ"
+      | .app leftFn leftArg, .app rightFn rightArg =>
+          let _ ← checkDefEqIn env ctx leftFn rightFn (levelParams := levelParams)
+          checkDefEqIn env ctx leftArg rightArg (levelParams := levelParams)
+      | .lam name leftTy leftBody, .lam _ rightTy rightBody =>
+          let _ ← checkDefEqIn env ctx leftTy rightTy (levelParams := levelParams)
+          checkDefEqIn
+            env
+            ({ name, type := leftTy } :: ctx)
+            leftBody
+            rightBody
+            (levelParams := levelParams)
+      | .forallE name leftTy leftBody, .forallE _ rightTy rightBody =>
+          let _ ← checkDefEqIn env ctx leftTy rightTy (levelParams := levelParams)
+          checkDefEqIn
+            env
+            ({ name, type := leftTy } :: ctx)
+            leftBody
+            rightBody
+            (levelParams := levelParams)
+      | .proj leftName leftIndex leftStruct, .proj rightName rightIndex rightStruct =>
+          if leftName = rightName && leftIndex = rightIndex then
+            checkDefEqIn env ctx leftStruct rightStruct (levelParams := levelParams)
+          else
+            .error "projections differ"
+      | .letE name leftTy leftVal leftBody, .letE _ rightTy rightVal rightBody =>
+          let _ ← checkDefEqIn env ctx leftTy rightTy (levelParams := levelParams)
+          let _ ← checkDefEqIn env ctx leftVal rightVal (levelParams := levelParams)
+          checkDefEqIn
+            env
+            ({ name, type := leftTy } :: ctx)
+            leftBody
+            rightBody
+            (levelParams := levelParams)
+      | _, _ => .error "different expression forms"
 
 partial def checkDefEqIn
     (env : Env)
     (ctx : Context)
     (left right : Expr)
     (levelParams : LevelContext := []) : Result Unit := do
-  let leftNf ← normalize env left (levelParams := levelParams)
-  let rightNf ← normalize env right (levelParams := levelParams)
-  if leftNf.alphaEq rightNf then
+  if left.alphaEq right then
     pure ()
   else
-    let originalError := s!"definitional equality failed: {repr leftNf} vs {repr rightNf}"
-    let leftEta ← isStructureEtaExpansion env ctx leftNf rightNf (levelParams := levelParams)
-    if leftEta then
+    let leftWhnf ← whnf env left (levelParams := levelParams)
+    let rightWhnf ← whnf env right (levelParams := levelParams)
+    if leftWhnf.alphaEq rightWhnf then
       pure ()
     else
-      let rightEta ← isStructureEtaExpansion env ctx rightNf leftNf (levelParams := levelParams)
-      if rightEta then
+      let originalError := s!"definitional equality failed: {repr leftWhnf} vs {repr rightWhnf}"
+      let congruent := checkStructuralDefEqIn env ctx leftWhnf rightWhnf (levelParams := levelParams)
+      if congruent.isOk then
         pure ()
       else
-        try
-          let leftTy ← infer env ctx left (levelParams := levelParams)
-          let rightTy ← infer env ctx right (levelParams := levelParams)
-          let leftTyNf ← normalize env leftTy (levelParams := levelParams)
-          let rightTyNf ← normalize env rightTy (levelParams := levelParams)
-          if !leftTyNf.alphaEq rightTyNf then
-            .error originalError
+        let leftEta ← isStructureEtaExpansion env ctx leftWhnf rightWhnf (levelParams := levelParams)
+        if leftEta then
+          pure ()
+        else
+          let rightEta ← isStructureEtaExpansion env ctx rightWhnf leftWhnf (levelParams := levelParams)
+          if rightEta then
+            pure ()
           else
-            let typeLevel ← inferSort env ctx leftTy (levelParams := levelParams)
-            if Level.defEq typeLevel .zero then
-              pure ()
-            else
-              .error originalError
-        catch _ =>
-          .error originalError
+            match checkFunctionEtaExpansion env ctx leftWhnf rightWhnf (levelParams := levelParams) with
+            | .ok _ => pure ()
+            | .error _ =>
+                match checkFunctionEtaExpansion env ctx rightWhnf leftWhnf (levelParams := levelParams) with
+                | .ok _ => pure ()
+                | .error _ =>
+                    match checkProofIrrelevantExprEq env ctx left right (levelParams := levelParams) with
+                    | .ok _ => pure ()
+                    | .error _ => .error originalError
 
 partial def checkDefEq
     (env : Env)
     (left right : Expr)
     (levelParams : LevelContext := []) : Result Unit :=
   checkDefEqIn env [] left right (levelParams := levelParams)
+
+partial def checkHasTypeIn
+    (env : Env)
+    (ctx : Context)
+    (expr expected : Expr)
+    (levelParams : LevelContext := []) : Result Unit := do
+  let expectedWhnf ← whnf env expected (levelParams := levelParams)
+  match expr, expectedWhnf with
+  | .lam name domain body, .forallE _ expectedDomain expectedBody =>
+      let _ ← inferSort env ctx domain (levelParams := levelParams)
+      let _ ← checkDefEqIn env ctx domain expectedDomain (levelParams := levelParams)
+      checkHasTypeIn
+        env
+        ({ name, type := domain } :: ctx)
+        body
+        expectedBody
+        (levelParams := levelParams)
+  | _, _ => do
+      let actual ← infer env ctx expr (levelParams := levelParams)
+      checkDefEqIn env ctx actual expected (levelParams := levelParams)
+
+partial def checkHasType
+    (env : Env)
+    (expr expected : Expr)
+    (levelParams : LevelContext := []) : Result Unit :=
+  checkHasTypeIn env [] expr expected (levelParams := levelParams)
 
 partial def checkRecursorTargetArgs
     (env : Env)
@@ -1388,67 +1627,123 @@ partial def reduceRecursorApp
     | pure none
   let some targetInfo := listGet? family.targets targetIndex
     | .error s!"internal error: invalid recursor index for {recName}"
-  let targetWhnf ← whnf env split.target (levelParams := levelParams)
-  let head := targetWhnf.getAppFn
-  let ctorArgs := targetWhnf.getAppArgs
-  let .const ctorName ctorLevels := head
-    | pure none
-  let some ctor := targetInfo.ctors.find? fun ctor => ctor.name = ctorName
-    | pure none
-  let expectedCtorLevels :=
-    targetInfo.levels.map (Level.instantiate (recursorLevelParamsForFamily family) levels)
-  if !levelsDefEq ctorLevels expectedCtorLevels then
-    .error s!"recursor target constructor universe arguments do not match for {recName}"
-  else
-    let targetExpr := instantiateTargetSchema split.params split.locals targetInfo.schema
-    if ctorArgs.length != targetInfo.paramCount + ctor.fields.length then
+  let reduceKLike : Result (Option Expr) := do
+    if !family.k then
       pure none
     else
-      let targetArgs := ctorArgs.take targetInfo.paramCount
-      let fieldArgs := ctorArgs.drop targetInfo.paramCount
-      let minorLocalArgs :=
-        if targetInfo.bindLocalsInMinors then
-          split.locals
-        else
-          []
-      let ctorTarget :=
-        Expr.instantiateMany (split.params ++ minorLocalArgs ++ fieldArgs) ctor.target
-      let _ ←
-        checkRecursorTargetArgs
-          env
-          recName
-          targetArgs
-          (targetExpr.getAppArgs.take targetInfo.paramCount)
-          (levelParams := levelParams)
-      let _ ←
-        checkRecursorTargetArgs
-          env
-          recName
-          ctorTarget.getAppArgs
-          targetExpr.getAppArgs
-          (levelParams := levelParams)
-      let prefixArgs := split.params ++ split.motives ++ split.minors
-      let mut previousFields : List Expr := []
-      let mut ihArgs : List Expr := []
-      for pair in List.zip ctor.fields fieldArgs do
-        let field := pair.1
-        let fieldArg := pair.2
-        if shapeHasIH field.shape then
-          let ih ←
-            ihTerm
-              family
-              levels
-              prefixArgs
-              split.params
-              (minorLocalArgs ++ previousFields)
-              field.shape
-              fieldArg
-          ihArgs := ihArgs ++ [ih]
-        previousFields := previousFields ++ [fieldArg]
-      let some minor := lookupMinorExpr? family split.minors targetIndex ctor.name
-        | .error s!"internal error: missing minor premise for {ctor.name}"
-      let minorArgs := minorLocalArgs ++ fieldArgs ++ ihArgs
-      pure (some (Expr.mkApps minor minorArgs))
+      match targetInfo.ctors with
+      | [ctor] =>
+          if !ctor.fields.isEmpty then
+            pure none
+          else
+            let targetExpr := instantiateTargetSchema split.params split.locals targetInfo.schema
+            let minorLocalArgs :=
+              if targetInfo.bindLocalsInMinors then
+                split.locals
+              else
+                []
+            let ctorTarget := Expr.instantiateMany (split.params ++ minorLocalArgs) ctor.target
+            if !ctorTarget.getAppFn.alphaEq targetExpr.getAppFn then
+              pure none
+            else
+              match
+                  checkRecursorTargetArgs
+                    env
+                    recName
+                    ctorTarget.getAppArgs
+                    targetExpr.getAppArgs
+                    (levelParams := levelParams) with
+              | .error _ => pure none
+              | .ok _ =>
+                  let some minor := lookupMinorExpr? family split.minors targetIndex ctor.name
+                    | .error s!"internal error: missing minor premise for {ctor.name}"
+                  pure (some (Expr.mkApps (Expr.mkApps minor minorLocalArgs) split.extraArgs))
+      | _ => pure none
+  let targetWhnf ← whnf env split.target (levelParams := levelParams)
+  let reduceCtorTarget
+      (ctor : FamilyCtor)
+      (ctorLevels : List Level)
+      (ctorArgs : List Expr) : Result (Option Expr) := do
+    let expectedCtorLevels :=
+      targetInfo.levels.map (Level.instantiate (recursorLevelParamsForFamily family) levels)
+    if !levelsDefEq ctorLevels expectedCtorLevels then
+      .error s!"recursor target constructor universe arguments do not match for {recName}"
+    else
+      let targetExpr := instantiateTargetSchema split.params split.locals targetInfo.schema
+      if ctorArgs.length != targetInfo.paramCount + ctor.fields.length then
+        pure none
+      else
+        let targetArgs := ctorArgs.take targetInfo.paramCount
+        let fieldArgs := ctorArgs.drop targetInfo.paramCount
+        let minorLocalArgs :=
+          if targetInfo.bindLocalsInMinors then
+            split.locals
+          else
+            []
+        let ctorTarget :=
+          Expr.instantiateMany (split.params ++ minorLocalArgs ++ fieldArgs) ctor.target
+        let _ ←
+          checkRecursorTargetArgs
+            env
+            recName
+            targetArgs
+            (targetExpr.getAppArgs.take targetInfo.paramCount)
+            (levelParams := levelParams)
+        let _ ←
+          checkRecursorTargetArgs
+            env
+            recName
+            ctorTarget.getAppArgs
+            targetExpr.getAppArgs
+            (levelParams := levelParams)
+        let prefixArgs := split.params ++ split.motives ++ split.minors
+        let mut previousFields : List Expr := []
+        let mut ihArgs : List Expr := []
+        for pair in List.zip ctor.fields fieldArgs do
+          let field := pair.1
+          let fieldArg := pair.2
+          if shapeHasIH field.shape then
+            let ih ←
+              ihTerm
+                family
+                levels
+                prefixArgs
+                split.params
+                (minorLocalArgs ++ previousFields)
+                field.shape
+                fieldArg
+            ihArgs := ihArgs ++ [ih]
+          previousFields := previousFields ++ [fieldArg]
+        let some minor := lookupMinorExpr? family split.minors targetIndex ctor.name
+          | .error s!"internal error: missing minor premise for {ctor.name}"
+        let minorArgs := minorLocalArgs ++ fieldArgs ++ ihArgs
+        pure (some (Expr.mkApps (Expr.mkApps minor minorArgs) split.extraArgs))
+  let reduceNatLiteralTarget (value : Nat) : Result (Option Expr) := do
+    if targetInfo.schema.headName != "Nat" then
+      pure none
+    else
+      match value with
+      | 0 =>
+          let some ctor := targetInfo.ctors.find? fun ctor => ctor.name = "Nat.zero"
+            | .error s!"internal error: missing Nat.zero minor premise for {recName}"
+          reduceCtorTarget ctor [] []
+      | pred + 1 =>
+          let some ctor := targetInfo.ctors.find? fun ctor => ctor.name = "Nat.succ"
+            | .error s!"internal error: missing Nat.succ minor premise for {recName}"
+          reduceCtorTarget ctor [] [.lit (.natVal pred)]
+  match targetWhnf with
+  | .lit (.natVal value) =>
+      match ← reduceNatLiteralTarget value with
+      | some reduced => pure (some reduced)
+      | none => reduceKLike
+  | _ =>
+    let head := targetWhnf.getAppFn
+    let ctorArgs := targetWhnf.getAppArgs
+    let .const ctorName ctorLevels := head
+      | reduceKLike
+    let some ctor := targetInfo.ctors.find? fun ctor => ctor.name = ctorName
+      | reduceKLike
+    reduceCtorTarget ctor ctorLevels ctorArgs
 
 partial def reduceQuotLiftApp
     (env : Env)
@@ -1477,6 +1772,152 @@ partial def reduceQuotLiftApp
           pure (some (.app fn value))
       | _ => pure none
 
+partial def natAddPrimitiveType : Expr :=
+  .forallE "a" (.const "Nat" []) (.forallE "b" (.const "Nat" []) (.const "Nat" []))
+
+partial def natBinaryNatPrimitiveType : Expr :=
+  .forallE "a" (.const "Nat" []) (.forallE "b" (.const "Nat" []) (.const "Nat" []))
+
+partial def natBinaryBoolPrimitiveType : Expr :=
+  .forallE "a" (.const "Nat" []) (.forallE "b" (.const "Nat" []) (.const "Bool" []))
+
+partial def checkNatAddPrimitiveDeclaration (info : ConstantInfo) : Result Unit := do
+  if !info.levelParams.isEmpty then
+    .error "Nat.add primitive reduction requires no universe parameters"
+  else if !info.typeExpr.alphaEq natAddPrimitiveType then
+    .error "Nat.add primitive reduction requires the specified Nat → Nat → Nat type"
+  else
+    match info.kind, info.valueExpr? with
+    | .defn .transparent _, some _ => pure ()
+    | _, _ => .error "Nat.add primitive reduction requires a transparent definition"
+
+partial def checkNatBinaryNatPrimitiveDeclaration (name : Name) (info : ConstantInfo) : Result Unit := do
+  if !info.levelParams.isEmpty then
+    .error s!"{name} primitive reduction requires no universe parameters"
+  else if !info.typeExpr.alphaEq natBinaryNatPrimitiveType then
+    .error s!"{name} primitive reduction requires the specified Nat → Nat → Nat type"
+  else
+    match info.kind, info.valueExpr? with
+    | .defn .transparent _, some _ => pure ()
+    | _, _ => .error s!"{name} primitive reduction requires a transparent definition"
+
+partial def checkNatBinaryBoolPrimitiveDeclaration (name : Name) (info : ConstantInfo) : Result Unit := do
+  if !info.levelParams.isEmpty then
+    .error s!"{name} primitive reduction requires no universe parameters"
+  else if !info.typeExpr.alphaEq natBinaryBoolPrimitiveType then
+    .error s!"{name} primitive reduction requires the specified Nat → Nat → Bool type"
+  else
+    match info.kind, info.valueExpr? with
+    | .defn .transparent _, some _ => pure ()
+    | _, _ => .error s!"{name} primitive reduction requires a transparent definition"
+
+partial def requireConstant (env : Env) (name : Name) : Result Unit :=
+  if env.contains name then
+    pure ()
+  else
+    .error s!"unknown constant required by primitive literal: {name}"
+
+partial def boolCtorExpr (env : Env) (value : Bool) : Result Expr := do
+  let name := if value then "Bool.true" else "Bool.false"
+  match env.findCtor? name with
+  | some "Bool" =>
+      let expr := .const name []
+      let ty ← infer env [] expr
+      let _ ← checkDefEq env ty (.const "Bool" [])
+      pure expr
+  | some indName =>
+      .error s!"{name} primitive reduction requires a Bool constructor, got {indName}"
+  | none =>
+      .error s!"{name} primitive reduction requires a Bool constructor"
+
+partial def reduceNatAddApp
+    (env : Env)
+    (info : ConstantInfo)
+    (levels : List Level)
+    (args : List Expr)
+    (levelParams : LevelContext := []) : Result (Option Expr) := do
+  if !levels.isEmpty || args.length != 2 then
+    pure none
+  else
+    let _ ← checkNatAddPrimitiveDeclaration info
+    let left := args[0]!
+    let right ← whnf env args[1]! (levelParams := levelParams)
+    match right with
+    | .lit (.natVal 0) => pure (some left)
+    | .lit (.natVal (pred + 1)) =>
+        pure (some (Expr.app (.const "Nat.succ" []) (Expr.mkApps (.const "Nat.add" []) [left, .lit (.natVal pred)])))
+    | _ =>
+        match right.getAppFn, right.getAppArgs with
+        | .const "Nat.zero" [], [] => pure (some left)
+        | .const "Nat.succ" [], [pred] =>
+            pure (some (Expr.app (.const "Nat.succ" []) (Expr.mkApps (.const "Nat.add" []) [left, pred])))
+        | _, _ => pure none
+
+partial def reduceNatBinaryNatApp
+    (env : Env)
+    (info : ConstantInfo)
+    (name : Name)
+    (args : List Expr)
+    (op : Nat → Nat → Nat)
+    (levelParams : LevelContext := []) : Result (Option Expr) := do
+  if args.length != 2 then
+    pure none
+  else
+    let _ ← checkNatBinaryNatPrimitiveDeclaration name info
+    match
+        ← natValue? env args[0]! (levelParams := levelParams),
+        ← natValue? env args[1]! (levelParams := levelParams) with
+    | some left, some right => pure (some (.lit (.natVal (op left right))))
+    | _, _ => pure none
+
+partial def reduceNatBinaryBoolApp
+    (env : Env)
+    (info : ConstantInfo)
+    (name : Name)
+    (args : List Expr)
+    (op : Nat → Nat → Bool)
+    (levelParams : LevelContext := []) : Result (Option Expr) := do
+  if args.length != 2 then
+    pure none
+  else
+    let _ ← checkNatBinaryBoolPrimitiveDeclaration name info
+    match
+        ← natValue? env args[0]! (levelParams := levelParams),
+        ← natValue? env args[1]! (levelParams := levelParams) with
+    | some left, some right => pure (some (← boolCtorExpr env (op left right)))
+    | _, _ => pure none
+
+partial def reduceKernelOverrideApp
+    (env : Env)
+    (info : ConstantInfo)
+    (name : Name)
+    (levels : List Level)
+    (args : List Expr)
+    (levelParams : LevelContext := []) : Result (Option Expr) := do
+  match name with
+  | "Nat.add" => reduceNatAddApp env info levels args (levelParams := levelParams)
+  | "Nat.beq" =>
+      if !levels.isEmpty then
+        pure none
+      else
+        reduceNatBinaryBoolApp env info name args (fun left right => left = right) (levelParams := levelParams)
+  | "Nat.ble" =>
+      if !levels.isEmpty then
+        pure none
+      else
+        reduceNatBinaryBoolApp env info name args (fun left right => left <= right) (levelParams := levelParams)
+  | "Nat.mul" =>
+      if !levels.isEmpty then
+        pure none
+      else
+        reduceNatBinaryNatApp env info name args (fun left right => left * right) (levelParams := levelParams)
+  | "Nat.pow" =>
+      if !levels.isEmpty then
+        pure none
+      else
+        reduceNatBinaryNatApp env info name args (fun left right => Nat.pow left right) (levelParams := levelParams)
+  | _ => pure none
+
 partial def reducePrimitiveApp
     (env : Env)
     (name : Name)
@@ -1488,12 +1929,6 @@ partial def reducePrimitiveApp
   | .recursor _ _ => reduceRecursorApp env name levels args (levelParams := levelParams)
   | .quotLift => reduceQuotLiftApp env levels args (levelParams := levelParams)
   | .quotType | .quotMk | .quotInd | .quotSound => pure none
-
-partial def requireConstant (env : Env) (name : Name) : Result Unit :=
-  if env.contains name then
-    pure ()
-  else
-    .error s!"unknown constant required by primitive literal: {name}"
 
 partial def requireNatLiteralConstructors (env : Env) : Nat → Result Unit
   | 0 => requireConstant env "Nat.zero"
@@ -1511,8 +1946,7 @@ partial def natLiteralConstructorExpr (env : Env) : Nat → Result Expr
 
 partial def whnf (env : Env) (expr : Expr) (levelParams : LevelContext := []) : Result Expr := do
   match expr with
-  | .lit (.natVal value) => whnf env (← natLiteralConstructorExpr env value) (levelParams := levelParams)
-  | .lit (.strVal _) => pure expr
+  | .lit _ => pure expr
   | .proj typeName index struct => do
       match ← reduceProjection env typeName index struct (levelParams := levelParams) with
       | some reduced => whnf env reduced (levelParams := levelParams)
@@ -1522,34 +1956,50 @@ partial def whnf (env : Env) (expr : Expr) (levelParams : LevelContext := []) : 
   | .app _ _ =>
       let head := expr.getAppFn
       let args := expr.getAppArgs
-      let headWhnf ← whnf env head (levelParams := levelParams)
-      let rebuilt := Expr.mkApps headWhnf args
-      match headWhnf with
-      | .lam _ _ body =>
-          match args with
-          | [] => pure rebuilt
-          | arg :: rest => whnf env (Expr.mkApps (Expr.instantiate1 arg body) rest) (levelParams := levelParams)
-      | .const name levels =>
-          match env.find? name with
-          | some info =>
-              let _ ← info.checkLevelsIn levelParams levels
-              match ← info.value? levels (levelParams := levelParams) with
-              | some value => whnf env (Expr.mkApps value args) (levelParams := levelParams)
-              | none =>
-                  match info.kind with
-                  | .primitive primitive =>
-                      match ← reducePrimitiveApp env name primitive levels args (levelParams := levelParams) with
-                      | some reduced => whnf env reduced (levelParams := levelParams)
-                      | none => pure rebuilt
-                  | _ => pure rebuilt
-          | none => .error s!"unknown constant: {name}"
-      | .letE _ _ value body =>
-          whnf env (Expr.mkApps (Expr.instantiate1 value body) args) (levelParams := levelParams)
-      | _ =>
-          if rebuilt = expr then
-            pure rebuilt
-          else
-            whnf env rebuilt (levelParams := levelParams)
+      let overrideReduced? ←
+        match head with
+        | .const name levels =>
+            match env.find? name with
+            | some info =>
+                let _ ← info.checkLevelsIn levelParams levels
+                reduceKernelOverrideApp env info name levels args (levelParams := levelParams)
+            | none => .error s!"unknown constant: {name}"
+        | _ => pure none
+      match overrideReduced? with
+      | some value => whnf env value (levelParams := levelParams)
+      | none =>
+          let headWhnf ← whnf env head (levelParams := levelParams)
+          let rebuilt := Expr.mkApps headWhnf args
+          match headWhnf with
+          | .lam _ _ body =>
+              match args with
+              | [] => pure rebuilt
+              | arg :: rest =>
+                  whnf env (Expr.mkApps (Expr.instantiate1 arg body) rest) (levelParams := levelParams)
+          | .const name levels =>
+              match env.find? name with
+              | some info =>
+                  let _ ← info.checkLevelsIn levelParams levels
+                  match ← reduceKernelOverrideApp env info name levels args (levelParams := levelParams) with
+                  | some value => whnf env value (levelParams := levelParams)
+                  | none =>
+                      match ← info.value? levels (levelParams := levelParams) with
+                      | some value => whnf env (Expr.mkApps value args) (levelParams := levelParams)
+                      | none =>
+                          match info.kind with
+                          | .primitive primitive =>
+                              match ← reducePrimitiveApp env name primitive levels args (levelParams := levelParams) with
+                              | some reduced => whnf env reduced (levelParams := levelParams)
+                              | none => pure rebuilt
+                          | _ => pure rebuilt
+              | none => .error s!"unknown constant: {name}"
+          | .letE _ _ value body =>
+              whnf env (Expr.mkApps (Expr.instantiate1 value body) args) (levelParams := levelParams)
+          | _ =>
+              if rebuilt = expr then
+                pure rebuilt
+              else
+                whnf env rebuilt (levelParams := levelParams)
   | .letE _ _ value body => whnf env (Expr.instantiate1 value body) (levelParams := levelParams)
   | .const name levels =>
       match env.find? name with
@@ -1674,12 +2124,11 @@ partial def infer
       pure (.sort (inferSortOfPi domainLevel bodyLevel))
   | .proj typeName index struct =>
       inferProjection env ctx typeName index struct (levelParams := levelParams)
-  | .letE name type value body => do
+  | .letE _ type value body => do
       let _ ← inferSort env ctx type (levelParams := levelParams)
       let valueTy ← infer env ctx value (levelParams := levelParams)
       let _ ← checkDefEqIn env ctx valueTy type (levelParams := levelParams)
-      let bodyTy ← infer env ({ name, type } :: ctx) body (levelParams := levelParams)
-      pure (Expr.instantiate1 value bodyTy)
+      infer env ctx (Expr.instantiate1 value body) (levelParams := levelParams)
 
 end
 
@@ -1687,7 +2136,7 @@ def normalizeForInductiveAnalysis
     (env : Env)
     (expr : Expr)
     (levelParams : LevelContext := []) : Result Expr :=
-  normalize env expr (levelParams := levelParams)
+  whnf env expr (levelParams := levelParams)
 
 partial def positiveParamOccurrence
     (env : Env)
@@ -1750,20 +2199,24 @@ partial def positiveParamOccurrence
               let isPositive := pair.2
               let occurs := containsBVarAt targetIndex depth arg
               if occurs then
+                let arg ← normalizeForInductiveAnalysis env arg (levelParams := levelParams)
+                let occurs := containsBVarAt targetIndex depth arg
                 if !isPositive then
-                  .error s!"parameter occurs in a non-positive argument of {headName}"
-                let nested ←
-                  positiveParamOccurrence
-                    env
-                    self
-                    selfPositive
-                    (openPositive := openPositive)
-                    targetIndex
-                    depth
-                    arg
-                    (levelParams := levelParams)
-                if nested then
-                  found := true
+                  if occurs then
+                    .error s!"parameter occurs in a non-positive argument of {headName}"
+                else
+                  let nested ←
+                    positiveParamOccurrence
+                      env
+                      self
+                      selfPositive
+                      (openPositive := openPositive)
+                      targetIndex
+                      depth
+                      arg
+                      (levelParams := levelParams)
+                  if nested then
+                    found := true
             pure found
         | none =>
             if containsBVarAt targetIndex depth expr then
@@ -1851,15 +2304,21 @@ partial def analyzeRecursiveShape
         .error s!"recursive occurrence must use the universe parameters of {headName}"
       else
         let paramCount := recursiveInfo.spec.params.length
-        let paramArgs := args.take paramCount
+        let paramArgs ←
+          (args.take paramCount).mapM fun arg =>
+            normalizeForInductiveAnalysis env arg (levelParams := levelParams)
+        let indexArgs ←
+          (args.drop paramCount).mapM fun arg =>
+            normalizeForInductiveAnalysis env arg (levelParams := levelParams)
+        let expr := Expr.mkApps (.const headName levels) (paramArgs ++ indexArgs)
         let expectedParams := Expr.bvarArgs paramCount locals.length
         if !((List.zip paramArgs expectedParams).all fun pair => pair.1.alphaEq pair.2) then
           .error s!"recursive occurrence must use the inductive parameters of {headName}"
-        else if (args.drop paramCount).any fun arg =>
+        else if indexArgs.any fun arg =>
             containsAnyExprAt recursiveTargets locals.length arg then
           .error s!"recursive occurrence appears inside an index of {headName}"
         else
-          pure (.nested { locals, target := expr, headName })
+          pure (.direct { locals, target := expr, headName })
     | none =>
       let mut found := false
       for pair in List.zip args info.positiveParams do
@@ -1867,25 +2326,40 @@ partial def analyzeRecursiveShape
         let isPositive := pair.2
         let occurs := containsAnyExprAt recursiveTargets locals.length arg
         if occurs then
+          let arg ← normalizeForInductiveAnalysis env arg (levelParams := levelParams)
+          let occurs := containsAnyExprAt recursiveTargets locals.length arg
           if !isPositive then
-            .error s!"recursive occurrence appears in a non-positive argument of {headName}"
-          let shape ←
-            analyzeRecursiveShape
-              env
-              root
-              (recursiveInfos := recursiveInfos)
-              locals
-              arg
-              (levelParams := levelParams)
-          if rawShapeHasIH shape then
-            found := true
+            if occurs then
+              .error s!"recursive occurrence appears in a non-positive argument of {headName}"
+          else
+            let shape ←
+              analyzeRecursiveShape
+                env
+                root
+                (recursiveInfos := recursiveInfos)
+                locals
+                arg
+                (levelParams := levelParams)
+            if rawShapeHasIH shape then
+              found := true
       for arg in args.drop info.spec.params.length do
         if containsAnyExprAt recursiveTargets locals.length arg then
-          .error s!"recursive occurrence appears in an index argument of {headName}"
+          let arg ← normalizeForInductiveAnalysis env arg (levelParams := levelParams)
+          if containsAnyExprAt recursiveTargets locals.length arg then
+            .error s!"recursive occurrence appears in an index argument of {headName}"
       if found then
+        let mut targetArgs : List Expr := []
         for arg in args.take info.spec.params.length do
-          if containsLocalBVar locals.length arg then
+          let argForSchema ←
+            if containsAnyExprAt recursiveTargets locals.length arg || containsLocalBVar locals.length arg then
+              normalizeForInductiveAnalysis env arg (levelParams := levelParams)
+            else
+              pure arg
+          targetArgs := targetArgs ++ [argForSchema]
+          if containsLocalBVar locals.length argForSchema then
             .error s!"nested inductive parameters cannot contain local variables in {headName}"
+        targetArgs := targetArgs ++ args.drop info.spec.params.length
+        let expr := Expr.mkApps (.const headName levels) targetArgs
         pure (.nested { locals, target := expr, headName })
       else
         pure .none
@@ -1940,7 +2414,9 @@ partial def internFieldShape
     (shape : RawFieldShape) : Result (FieldShape × List TargetSchema) := do
   match shape with
   | .none => pure (.none, schemas)
-  | .direct => pure (.direct, schemas)
+  | .direct schema => do
+      let schema ← trimTargetSchema schema
+      pure (.direct schema, schemas)
   | .pi binder body => do
       let (bodyShape, schemas) ← internFieldShape schemas body
       pure (.pi binder bodyShape, schemas)
@@ -1956,6 +2432,10 @@ partial def buildRecursorFamily
   let rootLevelParams := root.spec.levelParams
   let blockRootName := root.spec.name
   let recursiveNames := recursiveInfos.map (·.spec.name)
+  let recursorParams ←
+    root.spec.params.mapM fun param => do
+      let type ← normalizeForInductiveAnalysis env param.type (levelParams := rootLevelParams)
+      pure { param with type }
   let initialSchemas ←
     recursiveInfos.mapM fun info => do
       let target ←
@@ -2052,7 +2532,8 @@ partial def buildRecursorFamily
           some (recursorMotiveLevelParam root.spec)
         else
           none
-      params := root.spec.params
+      k := inductiveSupportsK root.spec
+      params := recursorParams
       targets
     }
 
@@ -2187,8 +2668,7 @@ def addDefinitionWithHintWithLevels
   let _ ← checkClosedIn levelParams s!"definition {name} type" type
   let _ ← checkClosedIn levelParams s!"definition {name} value" value
   let _ ← inferSort env [] type (levelParams := levelParams)
-  let valueTy ← infer env [] value (levelParams := levelParams)
-  let _ ← checkDefEq env valueTy type (levelParams := levelParams)
+  let _ ← checkHasType env value type (levelParams := levelParams)
   pure (ConstantInfo.mkDefnWithHint name levelParams type value hint :: env)
 
 def addDefinitionWithLevels
@@ -2228,8 +2708,7 @@ def addOpaqueDefinitionWithLevels
   let _ ← checkClosedIn levelParams s!"opaque definition {name} type" type
   let _ ← checkClosedIn levelParams s!"opaque definition {name} value" value
   let _ ← inferSort env [] type (levelParams := levelParams)
-  let valueTy ← infer env [] value (levelParams := levelParams)
-  let _ ← checkDefEq env valueTy type (levelParams := levelParams)
+  let _ ← checkHasType env value type (levelParams := levelParams)
   pure (ConstantInfo.mkOpaqueDefn name levelParams type value :: env)
 
 def addOpaqueDefinition (env : Env) (name : Name) (type value : Expr) : Result Env :=
@@ -2247,8 +2726,7 @@ def addTheoremWithLevels
   let typeSort ← inferSort env [] type (levelParams := levelParams)
   if !Level.defEq typeSort .zero then
     .error s!"theorem {name} type must be a proposition"
-  let valueTy ← infer env [] value (levelParams := levelParams)
-  let _ ← checkDefEq env valueTy type (levelParams := levelParams)
+  let _ ← checkHasType env value type (levelParams := levelParams)
   pure (ConstantInfo.mkTheorem name levelParams type value :: env)
 
 def addTheorem (env : Env) (name : Name) (type value : Expr) : Result Env :=
@@ -2265,8 +2743,7 @@ def addProjection (env : Env) (name structName : Name) (index : Nat) : Result En
   let _ ← checkClosedIn levelParams s!"projection {name} type" type
   let _ ← checkClosedIn levelParams s!"projection {name} value" value
   let _ ← inferSort env [] type (levelParams := levelParams)
-  let valueTy ← infer env [] value (levelParams := levelParams)
-  let _ ← checkDefEq env valueTy type (levelParams := levelParams)
+  let _ ← checkHasType env value type (levelParams := levelParams)
   pure (ConstantInfo.mkProjection name levelParams type value projection :: env)
 
 def projectionBodyAfterLambdas? : Nat → Expr → Option Expr
@@ -2803,7 +3280,7 @@ def checkGeneratedRecursor
   match info.kind with
   | .primitive (.recursor _ _) =>
       if !(← exportedGeneratedTypeMatches info.levelParams levelParams info.typeExpr type) then
-        .error s!"generated recursor {name} type does not match"
+        .error s!"generated recursor {name} type does not match: expected {repr info.typeExpr}, exported {repr type}"
       pure env
   | _ => .error s!"constant is not a generated recursor: {name}"
 
@@ -2929,6 +3406,7 @@ def expectedGeneratedRecursorInfo
       numIndices := target.schema.locals.length
       numMotives := family.targets.length
       numMinors := familyMinorCount family
+      k := family.k
       rules := target.ctors.map (expectedRecursorRuleInfo family targetIndex target)
     }
 
@@ -2949,6 +3427,8 @@ def checkGeneratedRecursorInfo
     .error s!"generated recursor {name} motive count does not match"
   if actual.numMinors != expected.numMinors then
     .error s!"generated recursor {name} minor count does not match"
+  if actual.k != expected.k then
+    .error s!"generated recursor {name} K-reduction flag does not match"
   if actual.rules.length != expected.rules.length ||
       !(List.zip actual.rules expected.rules).all (fun pair => recursorRuleHeaderEq pair.1 pair.2) then
     .error s!"generated recursor {name} rule headers do not match"
@@ -2972,11 +3452,29 @@ def checkGeneratedRecursorWithInfo
   match info.kind with
   | .primitive (.recursor targetIndex family) =>
       if !(← exportedGeneratedTypeMatches info.levelParams levelParams info.typeExpr type) then
-        .error s!"generated recursor {name} type does not match"
+        .error s!"generated recursor {name} type does not match: expected {repr info.typeExpr}, exported {repr type}"
       let expected ← expectedGeneratedRecursorInfo targetIndex family
       let _ ← checkGeneratedRecursorInfo name info.levelParams levelParams metadata expected
       pure env
   | _ => .error s!"constant is not a generated recursor: {name}"
+
+def checkPrimitiveDeclaration
+    (env : Env)
+    (name : Name)
+    (levelParams : LevelContext)
+    (type : Expr)
+    (primitive : PrimitiveInfo) : Result Env := do
+  let some info := env.find? name
+    | .error s!"unknown primitive declaration: {name}"
+  match info.kind with
+  | .primitive actual =>
+      if actual != primitive then
+        .error s!"primitive kind does not match for {name}"
+      else if !(← exportedGeneratedTypeMatches info.levelParams levelParams info.typeExpr type) then
+        .error s!"primitive {name} type does not match: expected {repr info.typeExpr}, exported {repr type}"
+      else
+        pure env
+  | _ => .error s!"constant is not a primitive declaration: {name}"
 
 def addDeclaration (env : Env) : Declaration → Result Env
   | .axiom name levelParams type => addAxiomWithLevels env name levelParams type
@@ -2999,6 +3497,8 @@ def addDeclaration (env : Env) : Declaration → Result Env
   | .structureInfo info => registerStructure env info
   | .projection name structName index => addProjection env name structName index
   | .quotientPrimitives => addQuotPrimitives env
+  | .primitiveCheck name levelParams type primitive =>
+      checkPrimitiveDeclaration env name levelParams type primitive
 
 namespace Declaration
 
@@ -3026,6 +3526,7 @@ def definedNames : Declaration → List Name
   | .structureInfo .. => []
   | .projection name .. => [name]
   | .quotientPrimitives => ["Quot", "Quot.mk", "Quot.lift", "Quot.ind", "Quot.sound"]
+  | .primitiveCheck .. => []
 
 def constructorSpecConstants (ctor : ConstructorSpec) : List Name :=
   let fieldConstants := telescopeConstants ctor.fields
@@ -3079,11 +3580,16 @@ def usedConstants : Declaration → List Name
   | .structureInfo info => structureInfoConstants info
   | .projection _ structName _ => [structName]
   | .quotientPrimitives => ["Eq"]
+  | .primitiveCheck name _ type _ => appendNewNames [name] (exprConstants type)
 
 end Declaration
 
 def declarationReplayNames : Declaration → List Name
   | .structureInfo info => [info.structName]
+  | .generatedConstructor name .. => [name]
+  | .generatedRecursor name .. => [name]
+  | .generatedRecursorWithInfo name .. => [name]
+  | .primitiveCheck name .. => [name]
   | declaration => declaration.definedNames
 
 def structureFieldReady (env : Env) (field : StructureFieldInfo) : Bool :=
@@ -3127,7 +3633,11 @@ partial def replayDeclarationsWithFuel
           let mut progressed := false
           for declaration in declarations do
             if declarationReady env declaration then
-              env ← addDeclaration env declaration
+              env ←
+                match addDeclaration env declaration with
+                | .ok newEnv => pure newEnv
+                | .error err =>
+                    .error s!"while replaying {repr (declarationReplayNames declaration)}: {err}"
               progressed := true
             else
               remaining := remaining ++ [declaration]

@@ -63,7 +63,7 @@ def telescopeTests : Result Unit := do
         (Expr.app boolType (.bvar 0))
   | _ => .error "dependent telescope type instantiation changed telescope length"
 
-def universeTests : Result Unit := do
+def universeLevelTests : Result Unit := do
   let _ ← expect "bound universe parameters are closed in their context" ((Level.param "u").closedIn ["u"])
   let _ ← expect "unbound universe parameters are open outside their context" (!((Level.param "u").closedIn []))
   let _ ←
@@ -94,6 +94,36 @@ def universeTests : Result Unit := do
         (.max (.param "u") (typeLevel (.param "v"))))
   let _ ←
     expect
+      "imax with identical symbolic arguments is definitionally equal to that argument"
+      (Level.defEq
+        (Level.normalize (.imax (.param "u") (.param "u")))
+        (.param "u"))
+  let _ ←
+    expect
+      "imax bounded by its right argument is definitionally equal to that argument"
+      (Level.defEq
+        (Level.normalize (.imax .zero (.param "u")))
+        (.param "u"))
+  let _ ←
+    expect
+      "imax one is definitionally equal to its right argument"
+      (Level.defEq
+        (.imax (.succ .zero) (.param "u"))
+        (.param "u"))
+  let _ ←
+    expect
+      "nested imax bounded by u is below Type u"
+      (Level.le
+        (.imax (.param "u") (.imax (.param "u") (.param "u")))
+        (.succ (.param "u")))
+  let _ ←
+    expect
+      "imax is bounded by a level that bounds both arguments"
+      (Level.le
+        (.imax (.param "u") (.param "v"))
+        (.max (.max (.succ .zero) (.param "u")) (.param "v")))
+  let _ ←
+    expect
       "unresolved symbolic imax is not collapsed to max"
       (!(Level.defEq
         (Level.normalize (.imax (.param "u") (.param "v")))
@@ -102,6 +132,7 @@ def universeTests : Result Unit := do
   let _ ← expect "Type 0 is a data universe" type0Level.definitelyPositive
   let _ ← expect "Type u is always above Prop" ((typeLevel (.param "u")).definitelyPositive)
 
+def universeKernelTests : Result Unit := do
   let env ← sampleEnv
   let propTy ← infer env [] (.sort propLevel)
   let _ ← expectExprEq "Prop has type Type 0" propTy type0Sort
@@ -110,6 +141,11 @@ def universeTests : Result Unit := do
   let pTy ← infer env [] pProp
   let _ ← expectExprEq "proposition constants have type Prop" pTy propSort
   let _ ← checkDefEq env pProof qProof
+  let _ ←
+    checkDefEq
+      env
+      (eqTypeAt propLevel pProp pProof pProof)
+      (eqTypeAt propLevel pProp qProof pProof)
   let _ ← expectError "data constructors remain proof-relevant" (checkDefEq env boolTrue boolFalse)
   let propSelfImpTy ← infer env [] propSelfImpType
   let _ ←
@@ -131,6 +167,23 @@ def universeTests : Result Unit := do
   let _ ← checkDefEq env eqRecTy boolType
   let eqRecNf ← normalize env eqRecOnRefl
   let _ ← expectExprEq "Eq.rec reduces on refl" eqRecNf boolFalse
+  let eqRecOnProofVar :=
+    Expr.mkApps
+      (.const "Eq.rec" [type0Level, type0Level])
+      [
+        boolType,
+        boolTrue,
+        eqBoolTrueMotive,
+        boolFalse,
+        boolTrue,
+        .bvar 0
+      ]
+  let _ ←
+    checkDefEqIn
+      env
+      [{ name := "h", type := eqType boolType boolTrue boolTrue }]
+      eqRecOnProofVar
+      boolFalse
   let boolQuotTy ← infer env [] boolQuotTrue
   let _ ← checkDefEq env boolQuotTy boolQuotType
   let boolQuotLiftTy ← infer env [] boolQuotLiftOnTrue
@@ -416,6 +469,10 @@ def universeTests : Result Unit := do
     "recursor reduction rejects mismatched constructor universe arguments"
     (normalize env polyBoxRecCtorLevelMismatch)
 
+def universeTests : Result Unit := do
+  let _ ← universeLevelTests
+  universeKernelTests
+
 def substitutionTests : Result Unit := do
   let body := Expr.app (.bvar 1) (.bvar 0)
   let actual := Expr.instantiateMany [boolType, natType] body
@@ -430,7 +487,38 @@ def substitutionTests : Result Unit := do
   let openBody := Expr.forallE "x" (.bvar 1) (Expr.app (.bvar 3) (.bvar 0))
   let openActual := Expr.instantiateManyFrom 1 [boolType, .bvar 0] openBody
   let openExpected := Expr.forallE "x" (.bvar 1) (Expr.app boolType (.bvar 0))
-  expectExprEq "simultaneous substitution lifts open inserted values" openActual openExpected
+  let _ ← expectExprEq "simultaneous substitution lifts open inserted values" openActual openExpected
+
+  let env ← sampleEnv
+  let familyType := Expr.forallE "x" boolType propSort
+  let familyValue := Expr.lam "x" boolType pProp
+  let familyUse :=
+    Expr.letE
+      "F"
+      familyType
+      familyValue
+      (Expr.app
+        (Expr.lam "h" (Expr.app (.bvar 0) boolTrue) (.bvar 0))
+        pProof)
+  let familyUseTy ← infer env [] familyUse
+  let familyUseTyNf ← normalize env familyUseTy
+  let _ ← expectExprEq "let-bound type families unfold while checking bodies" familyUseTyNf pProp
+
+  let fnType := .forallE "x" natType boolType
+  let etaExpanded := .lam "x" natType (Expr.app (.bvar 1) (.bvar 0))
+  checkDefEqIn
+    env
+    [{ name := "f", type := fnType }]
+    etaExpanded
+    (.bvar 0)
+  let etaCtx : Context :=
+    [
+      { name := "g", type := fnType },
+      { name := "f", type := fnType }
+    ]
+  let etaEqLeft := eqTypeAt type0Level fnType (.lam "x" natType (Expr.app (.bvar 2) (.bvar 0))) (.bvar 0)
+  let etaEqRight := eqTypeAt type0Level fnType (.bvar 1) (.bvar 0)
+  checkDefEqIn env etaCtx etaEqLeft etaEqRight
 
 def generatedValidationTests : Result Unit := do
   let env ← sampleEnv
@@ -1170,6 +1258,57 @@ def recursorGenerationTests : Result Unit := do
           expectedRecType
       pure ()
   | none => .error "AliasDec.rec should be present in the environment"
+  let relType : Expr :=
+    .forallE
+      "a"
+      (.bvar 0)
+      (.forallE "b" (.bvar 1) propSort)
+  let accLikeSpec : InductiveSpec :=
+    {
+      name := "AccLike"
+      levelParams := ["u"]
+      params :=
+        [
+          { name := "α", type := .sort (.param "u") },
+          { name := "r", type := relType }
+        ]
+      indices := [{ name := "x", type := .bvar 1 }]
+      level := propLevel
+      ctors :=
+        [
+          {
+            name := "AccLike.intro"
+            fields :=
+              [
+                { name := "x", type := .bvar 1 },
+                {
+                  name := "h"
+                  type :=
+                    .forallE
+                      "y"
+                      (.bvar 2)
+                      (.forallE
+                        "hRel"
+                        (Expr.mkApps (.bvar 2) [.bvar 0, .bvar 1])
+                        (Expr.mkApps (.const "AccLike" [.param "u"]) [.bvar 4, .bvar 3, .bvar 1]))
+                }
+              ]
+            target? := some (Expr.mkApps (.const "AccLike" [.param "u"]) [.bvar 3, .bvar 2, .bvar 1])
+          }
+        ]
+    }
+  let accLikeEnv ← addInductive [] accLikeSpec
+  match accLikeEnv.findRecursor? "AccLike.rec" with
+  | some (_, family) =>
+      let _ ←
+        expect
+          "direct recursive occurrences under binders do not create helper targets"
+          (family.targets.length = 1)
+      match family.targets with
+      | [{ ctors := [{ fields := [_, { shape := .pi _ (.pi _ (.direct schema)), .. }], .. }], .. }] =>
+          expect "direct recursive occurrence records its target head" (schema.headName = "AccLike")
+      | _ => .error "AccLike recursive field shape should be direct under two binders"
+  | none => .error "AccLike.rec should be present in the environment"
 
 def structureMetadataTests : Result Unit := do
   let parentSpec : InductiveSpec :=
@@ -1481,6 +1620,34 @@ def faithfulnessBridgeTests : Result Unit := do
   let _ ← checkDefEq env natRecTy boolType
   let natRecNf ← normalize env natIsZeroOnOne
   let _ ← expectExprEq "Lean accepts primitive recursor computation" natRecNf boolFalse
+  let natRecFunctionMotive :=
+    .lam "n" natType (.forallE "x" natType boolType)
+  let natRecFunctionZero :=
+    .lam "x" natType boolTrue
+  let natRecFunctionStep :=
+    .lam
+      "n"
+      natType
+      (.lam
+        "ih"
+        (.forallE "x" natType boolType)
+        (.lam "x" natType boolFalse))
+  let natRecWithTrailingArg :=
+    Expr.mkApps
+      (recConst "Nat.rec")
+      [
+        natRecFunctionMotive,
+        natRecFunctionZero,
+        natRecFunctionStep,
+        const0 "one",
+        natZero
+      ]
+  let natRecTrailingNf ← normalize env natRecWithTrailingArg
+  let _ ←
+    expectExprEq
+      "recursor reduction re-applies trailing arguments"
+      natRecTrailingNf
+      boolFalse
   let eqRecTy ← infer env [] eqRecOnRefl
   let _ ← checkDefEq env eqRecTy boolType
   let eqRecNf ← normalize env eqRecOnRefl
@@ -1558,14 +1725,29 @@ def literalTests : Result Unit := do
   let litThreeTy ← infer env [] litThree
   let _ ← checkDefEq env litThreeTy natType
   let litThreeNf ← normalize env litThree
-  let _ ← expectExprEq "natural literals normalize through Nat constructors" litThreeNf ctorThree
+  let _ ← expectExprEq "natural literals remain raw normal forms" litThreeNf litThree
   let _ ← checkDefEq env litThree ctorThree
+  let largeLit : Expr := .lit (.natVal 1114112)
+  let largeLitNf ← normalize env largeLit
+  let _ ← expectExprEq "large natural literals do not expand during normalization" largeLitNf largeLit
+  let natRecOnLitOne :=
+    Expr.mkApps
+      (recConst "Nat.rec")
+      [
+        natToBoolMotive,
+        boolTrue,
+        .lam "n" natType (.lam "ih" boolType boolFalse),
+        .lit (.natVal 1)
+      ]
+  let natRecOnLitOneNf ← normalize env natRecOnLitOne
+  let _ ← expectExprEq "Nat.rec reduces on raw natural literals" natRecOnLitOneNf boolFalse
   let env ← addDefinition env "threeLit" natType litThree
   let threeLitNf ← normalize env (const0 "threeLit")
-  let _ ← expectExprEq "definitions may store natural literals" threeLitNf ctorThree
+  let _ ← expectExprEq "definitions may store natural literals" threeLitNf litThree
   let natOnlyEnv ← addAxiom [] "Nat" type0Sort
   let _ ← expectError "natural literal typing requires Nat constructors" (infer natOnlyEnv [] (.lit (.natVal 0)))
-  let _ ← expectError "natural literal reduction requires Nat constructors" (normalize [] (.lit (.natVal 0)))
+  let rawZeroNf ← normalize [] (.lit (.natVal 0))
+  let _ ← expectExprEq "raw literal normalization does not require constructors" rawZeroNf (.lit (.natVal 0))
 
   let env ← addAxiom env "String" type0Sort
   let helloLit : Expr := .lit (.strVal "hello")
@@ -1592,7 +1774,7 @@ def literalTests : Result Unit := do
     expectExprEq
       "Lean declaration importer translates natural literals"
       importedNatLitNf
-      (natSucc (natSucc natZero))
+      (.lit (.natVal 2))
   let translatedString ← Import.translateExpr (.lit (.strVal "lean"))
   let _ ←
     expectExprEq
@@ -1606,6 +1788,430 @@ def literalTests : Result Unit := do
       "Lean literal dependency extraction records literal types"
       (natDependencies.any (· == ``Nat) && stringDependencies.any (· == ``String))
   pure ()
+
+def primitiveReductionTests : Result Unit := do
+  let env ← sampleEnv
+  let ofNatSpec : InductiveSpec :=
+    {
+      name := "OfNat"
+      levelParams := ["u"]
+      params :=
+        [
+          { name := "α", type := .sort (typeLevel (.param "u")) },
+          { name := "n", type := natType }
+        ]
+      level := typeLevel (.param "u")
+      ctors :=
+        [
+          { name := "OfNat.mk", fields := [{ name := "ofNat", type := .bvar 1 }] }
+        ]
+    }
+  let env ← addInductive env ofNatSpec
+  let ofNatType :=
+    .forallE
+      "α"
+      type0Sort
+      (.forallE
+        "n"
+        natType
+        (.forallE
+          "inst"
+          (Expr.mkApps (.const "OfNat" [type0Param]) [.bvar 1, .bvar 0])
+          (.bvar 2)))
+  let ofNatValue :=
+    .lam
+      "α"
+      type0Sort
+      (.lam
+        "n"
+        natType
+        (.lam
+          "inst"
+          (Expr.mkApps (.const "OfNat" [type0Param]) [.bvar 1, .bvar 0])
+          (.proj "OfNat" 0 (.bvar 0))))
+  let env ← addDefinition env "OfNat.ofNat" ofNatType ofNatValue
+  let instOfNatNatType :=
+    .forallE "n" natType (Expr.mkApps (.const "OfNat" [type0Param]) [natType, .bvar 0])
+  let instOfNatNatValue :=
+    .lam
+      "n"
+      natType
+      (Expr.mkApps (.const "OfNat.mk" [type0Param]) [natType, .bvar 0, .bvar 0])
+  let env ← addDefinition env "instOfNatNat" instOfNatNatType instOfNatNatValue
+  let addSpec : InductiveSpec :=
+    {
+      name := "Add"
+      levelParams := ["u"]
+      params := [{ name := "α", type := .sort (typeLevel (.param "u")) }]
+      level := typeLevel (.param "u")
+      ctors :=
+        [
+          {
+            name := "Add.mk"
+            fields :=
+              [
+                {
+                  name := "add"
+                  type := .forallE "a" (.bvar 0) (.forallE "b" (.bvar 1) (.bvar 2))
+                }
+              ]
+          }
+        ]
+    }
+  let hAddSpec : InductiveSpec :=
+    {
+      name := "HAdd"
+      levelParams := ["u", "v", "w"]
+      params :=
+        [
+          { name := "α", type := .sort (typeLevel (.param "u")) },
+          { name := "β", type := .sort (typeLevel (.param "v")) },
+          { name := "γ", type := .sort (typeLevel (.param "w")) }
+        ]
+      level := .max (typeLevel (.param "u")) (.max (typeLevel (.param "v")) (typeLevel (.param "w")))
+      ctors :=
+        [
+          {
+            name := "HAdd.mk"
+            fields :=
+              [
+                {
+                  name := "hAdd"
+                  type := .forallE "a" (.bvar 2) (.forallE "b" (.bvar 2) (.bvar 2))
+                }
+              ]
+          }
+        ]
+    }
+  let env ← addInductive env addSpec
+  let env ← addInductive env hAddSpec
+  let natAddType := .forallE "a" natType (.forallE "b" natType natType)
+  let natAddValue :=
+    .lam
+      "a"
+      natType
+      (.lam
+        "b"
+        natType
+        (Expr.mkApps
+          (recConst "Nat.rec")
+          [
+            .lam "n" natType natType,
+            .bvar 1,
+            .lam "n" natType (.lam "ih" natType (natSucc (.bvar 0))),
+            .bvar 0
+          ]))
+  let env ← addDefinition env "Nat.add" natAddType natAddValue
+  let natMulValue :=
+    .lam
+      "a"
+      natType
+      (.lam
+        "b"
+        natType
+        (Expr.mkApps
+          (recConst "Nat.rec")
+          [
+            .lam "n" natType natType,
+            natZero,
+            .lam
+              "n"
+              natType
+              (.lam "ih" natType (Expr.mkApps (const0 "Nat.add") [.bvar 0, .bvar 3])),
+            .bvar 0
+          ]))
+  let env ← addDefinition env "Nat.mul" natAddType natMulValue
+  let natPowValue :=
+    .lam
+      "a"
+      natType
+      (.lam
+        "b"
+        natType
+        (Expr.mkApps
+          (recConst "Nat.rec")
+          [
+            .lam "n" natType natType,
+            .lit (.natVal 1),
+            .lam
+              "n"
+              natType
+              (.lam "ih" natType (Expr.mkApps (const0 "Nat.mul") [.bvar 0, .bvar 3])),
+            .bvar 0
+          ]))
+  let env ← addDefinition env "Nat.pow" natAddType natPowValue
+  let natMulLargeNf ←
+    normalize env (Expr.mkApps (const0 "Nat.mul") [.lit (.natVal 65536), .lit (.natVal 65536)])
+  let _ ←
+    expectExprEq
+      "Nat.mul primitive reduction handles raw literals"
+      natMulLargeNf
+      (.lit (.natVal 4294967296))
+  let natPowUInt32SizeNf ←
+    normalize env (Expr.mkApps (const0 "Nat.pow") [.lit (.natVal 2), .lit (.natVal 32)])
+  let _ ←
+    expectExprEq
+      "Nat.pow primitive reduction handles UInt32-size arithmetic"
+      natPowUInt32SizeNf
+      (.lit (.natVal 4294967296))
+  let natBoolCompareType := .forallE "a" natType (.forallE "b" natType boolType)
+  let natBeqValue :=
+    .lam
+      "a"
+      natType
+      (.lam
+        "b"
+        natType
+        (Expr.app
+          (Expr.mkApps
+            (recConst "Nat.rec")
+            [
+              .lam "n" natType (.forallE "b" natType boolType),
+              .lam
+                "b"
+                natType
+                (Expr.mkApps
+                  (recConst "Nat.rec")
+                  [
+                    natToBoolMotive,
+                    boolTrue,
+                    .lam "n" natType (.lam "ih" boolType boolFalse),
+                    .bvar 0
+                  ]),
+              .lam
+                "a"
+                natType
+                (.lam
+                  "ih"
+                  (.forallE "b" natType boolType)
+                  (.lam
+                    "b"
+                    natType
+                    (Expr.mkApps
+                      (recConst "Nat.rec")
+                      [
+                        natToBoolMotive,
+                        boolFalse,
+                        .lam "b" natType (.lam "ihb" boolType (Expr.app (.bvar 3) (.bvar 1))),
+                        .bvar 0
+                      ]))),
+              .bvar 1
+            ])
+          (.bvar 0)))
+  let env ← addDefinition env "Nat.beq" natBoolCompareType natBeqValue
+  let natBleValue :=
+    .lam
+      "a"
+      natType
+      (.lam
+        "b"
+        natType
+        (Expr.app
+          (Expr.mkApps
+            (recConst "Nat.rec")
+            [
+              .lam "n" natType (.forallE "b" natType boolType),
+              .lam "b" natType boolTrue,
+              .lam
+                "a"
+                natType
+                (.lam
+                  "ih"
+                  (.forallE "b" natType boolType)
+                  (.lam
+                    "b"
+                    natType
+                    (Expr.mkApps
+                      (recConst "Nat.rec")
+                      [
+                        natToBoolMotive,
+                        boolFalse,
+                        .lam "b" natType (.lam "ihb" boolType (Expr.app (.bvar 3) (.bvar 1))),
+                        .bvar 0
+                      ]))),
+              .bvar 1
+            ])
+          (.bvar 0)))
+  let env ← addDefinition env "Nat.ble" natBoolCompareType natBleValue
+  let natBeqLargeTrueNf ←
+    normalize env (Expr.mkApps (const0 "Nat.beq") [.lit (.natVal 1114112), .lit (.natVal 1114112)])
+  let _ ← expectExprEq "Nat.beq primitive reduction handles raw equal literals" natBeqLargeTrueNf boolTrue
+  let natBeqLargeFalseNf ←
+    normalize env (Expr.mkApps (const0 "Nat.beq") [.lit (.natVal 1114112), natZero])
+  let _ ←
+    expectExprEq "Nat.beq primitive reduction handles raw unequal literals" natBeqLargeFalseNf boolFalse
+  let natBleLargeTrueNf ←
+    normalize env (Expr.mkApps (const0 "Nat.ble") [natZero, .lit (.natVal 1114112)])
+  let _ ← expectExprEq "Nat.ble primitive reduction handles raw ordered literals" natBleLargeTrueNf boolTrue
+  let natBleLargeFalseNf ←
+    normalize env (Expr.mkApps (const0 "Nat.ble") [.lit (.natVal 1114112), natZero])
+  let _ ←
+    expectExprEq "Nat.ble primitive reduction handles raw unordered literals" natBleLargeFalseNf boolFalse
+  let addAddType :=
+    .forallE
+      "α"
+      type0Sort
+      (.forallE
+        "inst"
+        (Expr.mkApps (.const "Add" [type0Param]) [.bvar 0])
+        (.forallE "a" (.bvar 1) (.forallE "b" (.bvar 2) (.bvar 3))))
+  let addAddValue :=
+    .lam
+      "α"
+      type0Sort
+      (.lam
+        "inst"
+        (Expr.mkApps (.const "Add" [type0Param]) [.bvar 0])
+        (.lam
+          "a"
+          (.bvar 1)
+          (.lam "b" (.bvar 2) (Expr.mkApps (.proj "Add" 0 (.bvar 2)) [.bvar 1, .bvar 0]))))
+  let env ← addDefinition env "Add.add" addAddType addAddValue
+  let hAddAddType :=
+    .forallE
+      "α"
+      type0Sort
+      (.forallE
+        "β"
+        type0Sort
+        (.forallE
+          "γ"
+          type0Sort
+          (.forallE
+            "inst"
+            (Expr.mkApps (.const "HAdd" [type0Param, type0Param, type0Param]) [.bvar 2, .bvar 1, .bvar 0])
+            (.forallE "a" (.bvar 3) (.forallE "b" (.bvar 3) (.bvar 3))))))
+  let hAddAddValue :=
+    .lam
+      "α"
+      type0Sort
+      (.lam
+        "β"
+        type0Sort
+        (.lam
+          "γ"
+          type0Sort
+          (.lam
+            "inst"
+            (Expr.mkApps (.const "HAdd" [type0Param, type0Param, type0Param]) [.bvar 2, .bvar 1, .bvar 0])
+            (.lam
+              "a"
+              (.bvar 3)
+              (.lam "b" (.bvar 3) (Expr.mkApps (.proj "HAdd" 0 (.bvar 2)) [.bvar 1, .bvar 0]))))))
+  let env ← addDefinition env "HAdd.hAdd" hAddAddType hAddAddValue
+  let instHAddType :=
+    .forallE
+      "α"
+      type0Sort
+      (.forallE
+        "inst"
+        (Expr.mkApps (.const "Add" [type0Param]) [.bvar 0])
+        (Expr.mkApps (.const "HAdd" [type0Param, type0Param, type0Param]) [.bvar 1, .bvar 1, .bvar 1]))
+  let instHAddValue :=
+    .lam
+      "α"
+      type0Sort
+      (.lam
+        "inst"
+        (Expr.mkApps (.const "Add" [type0Param]) [.bvar 0])
+        (Expr.mkApps
+          (.const "HAdd.mk" [type0Param, type0Param, type0Param])
+          [
+            .bvar 1,
+            .bvar 1,
+            .bvar 1,
+            Expr.mkApps (const0 "Add.add") [.bvar 1, .bvar 0]
+          ]))
+  let env ← addDefinition env "instHAdd" instHAddType instHAddValue
+  let instAddNatValue :=
+    Expr.mkApps (.const "Add.mk" [type0Param]) [natType, const0 "Nat.add"]
+  let env ← addDefinition env "instAddNat" (Expr.mkApps (.const "Add" [type0Param]) [natType]) instAddNatValue
+  let mCtx : Context := [{ name := "m", type := natType }]
+  let oneFromOfNat :=
+    Expr.mkApps
+      (const0 "OfNat.ofNat")
+      [
+        natType,
+        .lit (.natVal 1),
+        Expr.mkApps (const0 "instOfNatNat") [.lit (.natVal 1)]
+      ]
+  let oneFromOfNatNf ← normalize env oneFromOfNat
+  let _ ←
+    expectExprEq
+      "Nat OfNat projection reduces to a raw natural literal"
+      oneFromOfNatNf
+      (.lit (.natVal 1))
+  let _ ←
+    checkDefEqIn
+      env
+      mCtx
+      (Expr.mkApps (const0 "Nat.add") [.bvar 0, natZero])
+      (.bvar 0)
+  let _ ←
+    checkDefEqIn
+      env
+      mCtx
+      (Expr.mkApps (const0 "Nat.add") [.bvar 0, natSucc natZero])
+      (natSucc (.bvar 0))
+  let _ ←
+    checkDefEqIn
+      env
+      mCtx
+      (Expr.mkApps (const0 "Nat.add") [.bvar 0, .lit (.natVal 1)])
+      (natSucc (.bvar 0))
+  let _ ←
+    checkDefEqIn
+      env
+      mCtx
+      (Expr.mkApps (const0 "Nat.add") [.bvar 0, oneFromOfNat])
+      (natSucc (.bvar 0))
+  let hAddNatAddOne :=
+    Expr.mkApps
+      (const0 "HAdd.hAdd")
+      [
+        natType,
+        natType,
+        natType,
+        Expr.mkApps (const0 "instHAdd") [natType, const0 "instAddNat"],
+        .bvar 0,
+        oneFromOfNat
+      ]
+  let _ ←
+    checkDefEqIn
+      env
+      mCtx
+      hAddNatAddOne
+      (natSucc (.bvar 0))
+  let badNatAddInfo : ConstantInfo :=
+    {
+      name := "Nat.add"
+      levelParams := []
+      typeExpr := .forallE "a" boolType (.forallE "b" natType boolType)
+      kind := .axiom
+    }
+  expectError
+    "Nat.add primitive reduction requires the specified declaration"
+    (normalize (badNatAddInfo :: env) (Expr.mkApps (const0 "Nat.add") [boolTrue, natZero]))
+  let badNatBeqInfo : ConstantInfo :=
+    {
+      name := "Nat.beq"
+      levelParams := []
+      typeExpr := .forallE "a" boolType (.forallE "b" natType boolType)
+      kind := .axiom
+    }
+  expectError
+    "Nat.beq primitive reduction requires the specified declaration"
+    (normalize (badNatBeqInfo :: env) (Expr.mkApps (const0 "Nat.beq") [natZero, natZero]))
+  let badBoolTrueInfo : ConstantInfo :=
+    {
+      name := "Bool.true"
+      levelParams := []
+      typeExpr := natType
+      kind := .ctor "Bool"
+    }
+  expectError
+    "Nat.beq primitive reduction requires Bool.true to have type Bool"
+    (normalize (badBoolTrueInfo :: env) (Expr.mkApps (const0 "Nat.beq") [natZero, natZero]))
 
 def rawEntryTests : Result Unit := do
   let env ← sampleEnv
@@ -1630,6 +2236,7 @@ def kernelRegressionTests : Result Unit := do
   let _ ← projectionTests
   let _ ← faithfulnessBridgeTests
   let _ ← literalTests
+  let _ ← primitiveReductionTests
   let _ ← rawEntryTests
   let _ ← demoReport
   pure ()
@@ -1650,6 +2257,7 @@ def testReport : Result (List String) := do
   let _ ← projectionTests
   let _ ← faithfulnessBridgeTests
   let _ ← literalTests
+  let _ ← primitiveReductionTests
   let _ ← rawEntryTests
   let _ ← demoReport
   pure
@@ -1669,6 +2277,7 @@ def testReport : Result (List String) := do
       "projection typing, reduction, and eta checks",
       "faithfulness bridge checks local expressions against the Lean corpus",
       "literal expressions type-check and normalize",
+      "kernel-overridden primitive reductions check",
       "raw inference and normalization entry points reject malformed primitives",
       "kernel example regressions check"
     ]

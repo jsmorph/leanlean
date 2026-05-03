@@ -20,6 +20,9 @@ name = "Faithfulness.Fragments"
 [[lean_lib]]
 name = "Faithfulness.ExportSmoke"
 
+[[lean_lib]]
+name = "Faithfulness.ExportArithmetic"
+
 [[lean_exe]]
 name = "leanlean"
 root = "Main"

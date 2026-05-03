@@ -111,6 +111,15 @@ partial def normalize : Level → Level
           | .imax left right => .imax (normalize left) (normalize right)
           | other => other
 
+partial def atMostOne : Level → Bool
+  | level =>
+      match normalize level with
+      | .zero => true
+      | .succ .zero => true
+      | .max left right => atMostOne left && atMostOne right
+      | .imax left right => atMostOne left && atMostOne right
+      | _ => false
+
 def closedEval? (level : Level) : Option Nat :=
   match normalizeSummands? (normalize level) with
   | some summands =>
@@ -137,6 +146,8 @@ def summandLe (left right : Summand) : Bool :=
   | some leftName, some rightName => leftName = rightName && left.offset <= right.offset
   | some _, none => false
 
+mutual
+
 partial def defEq (left right : Level) : Bool :=
   let left := normalize left
   let right := normalize right
@@ -153,17 +164,40 @@ partial def defEq (left right : Level) : Bool :=
           (defEq leftA rightA && defEq leftB rightB) ||
             (defEq leftA rightB && defEq leftB rightA)
       | .imax leftA leftB, .imax rightA rightB =>
-          defEq leftA rightA && defEq leftB rightB
+          (defEq leftA rightA && defEq leftB rightB) ||
+            (((le leftA leftB) || atMostOne leftA) &&
+              ((le rightA rightB) || atMostOne rightA) &&
+              defEq leftB rightB)
+      | .imax left right, other =>
+          ((le left right) || atMostOne left) && defEq right other
+      | other, .imax left right =>
+          ((le left right) || atMostOne left) && defEq other right
       | _, _ => false
 
-def le (left right : Level) : Bool :=
+partial def le (left right : Level) : Bool :=
   let left := normalize left
   let right := normalize right
   match normalizeSummands? left, normalizeSummands? right with
   | some leftN, some rightN =>
       leftN.all fun leftSummand =>
         rightN.any fun rightSummand => summandLe leftSummand rightSummand
-  | _, _ => defEq left right
+  | _, _ =>
+      match left, right with
+      | .imax leftA leftB, _ =>
+          if (le leftA leftB) || atMostOne leftA then
+            le leftB right
+          else if le leftA right && le leftB right then
+            true
+          else
+            defEq left right
+      | _, .imax rightA rightB =>
+          if (le rightA rightB) || atMostOne rightA then
+            le left rightB
+          else
+            defEq left right
+      | _, _ => defEq left right
+
+end
 
 def instantiate (params : List Name) (values : List Level) : Level → Level
   | .zero => .zero

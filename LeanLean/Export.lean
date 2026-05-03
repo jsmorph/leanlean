@@ -234,6 +234,35 @@ def parseAxiom (state : State) (json : Lean.Json) : Result Declaration := do
   requireSafeFlag "axiom" name (← field json "isUnsafe")
   pure (.axiom name (← levelParamList state (← field json "levelParams")) (← exprAt state (← natField json "type")))
 
+def quotientPrimitiveForKind (kind : String) : Result (Name × PrimitiveInfo) :=
+  match kind with
+  | "type" => pure ("Quot", .quotType)
+  | "ctor" => pure ("Quot.mk", .quotMk)
+  | "lift" => pure ("Quot.lift", .quotLift)
+  | "ind" => pure ("Quot.ind", .quotInd)
+  | other => .error s!"unsupported quotient export kind: {other}"
+
+def parseQuotientPrimitiveCheck (state : State) (json : Lean.Json) : Result Declaration := do
+  let kind ← stringField json "kind"
+  let (expectedName, primitive) ← quotientPrimitiveForKind kind
+  let name ← localNameAt state (← natField json "name")
+  if name != expectedName then
+    .error s!"quotient export kind {kind} used unexpected name {name}"
+  else
+    pure
+      (.primitiveCheck
+        name
+        (← levelParamList state (← field json "levelParams"))
+        (← exprAt state (← natField json "type"))
+        primitive)
+
+def withQuotientPrimitives (state : State) (checks : List Declaration) :
+    State × List Declaration :=
+  if state.sawQuotientPrimitives then
+    (state, checks)
+  else
+    ({ state with sawQuotientPrimitives := true }, .quotientPrimitives :: checks)
+
 def parseDefinition (state : State) (json : Lean.Json) : Result Declaration := do
   let name ← localNameAt state (← natField json "name")
   requireSafeDefinition name (← field json "safety")
@@ -319,6 +348,7 @@ def parseGeneratedRecursor (state : State) (json : Lean.Json) : Result Declarati
         numIndices := (← natField json "numIndices")
         numMotives := (← natField json "numMotives")
         numMinors := (← natField json "numMinors")
+        k := (← boolField json "k")
         rules := (← rulesJson.toList.mapM (parseGeneratedRecursorRule state))
       })
 
@@ -347,15 +377,16 @@ def parseDeclaration (state : State) (json : Lean.Json) : Result (State × List 
     field? json "opaque",
     field? json "quot",
     field? json "inductive" with
-  | some value, none, none, none, none, none => pure (state, [← parseAxiom state value])
+  | some value, none, none, none, none, none =>
+      match ← parseAxiom state value with
+      | .axiom "Quot.sound" levelParams type =>
+          pure <| withQuotientPrimitives state [.primitiveCheck "Quot.sound" levelParams type .quotSound]
+      | declaration => pure (state, [declaration])
   | none, some value, none, none, none, none => pure (state, [← parseDefinition state value])
   | none, none, some value, none, none, none => pure (state, [← parseTheorem state value])
   | none, none, none, some value, none, none => pure (state, [← parseOpaque state value])
-  | none, none, none, none, some _, none =>
-      if state.sawQuotientPrimitives then
-        pure (state, [])
-      else
-        pure ({ state with sawQuotientPrimitives := true }, [.quotientPrimitives])
+  | none, none, none, none, some value, none =>
+      pure <| withQuotientPrimitives state [← parseQuotientPrimitiveCheck state value]
   | none, none, none, none, none, some value => pure (state, (← parseInductiveGroup state value))
   | _, _, _, _, _, _ => .error "export declaration entry must have exactly one declaration constructor"
 

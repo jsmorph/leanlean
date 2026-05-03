@@ -153,6 +153,7 @@ def translateGeneratedConstantInfo : Lean.ConstantInfo → Result Declaration
             numIndices := value.numIndices
             numMotives := value.numMotives
             numMinors := value.numMinors
+            k := value.k
             rules :=
               (← value.rules.mapM fun rule => do
                 pure

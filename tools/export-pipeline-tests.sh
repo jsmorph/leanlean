@@ -11,7 +11,7 @@ fi
 
 mkdir -p "$artifact_dir"
 
-lake build Faithfulness.ExportSmoke Faithfulness.Accepted leanlean-check-export
+lake build Faithfulness.ExportSmoke Faithfulness.Accepted Faithfulness.ExportArithmetic leanlean-check-export
 
 checker=".lake/build/bin/leanlean-check-export"
 lean_path="$(pwd)/.lake/build/lib/lean"
@@ -34,6 +34,7 @@ run_case "nat-literal" "Faithfulness.Accepted" "LeanLeanFaithfulness.Accepted.li
 run_case "quotient-value" "Faithfulness.Accepted" "LeanLeanFaithfulness.Accepted.q"
 run_case "subtype-value" "Faithfulness.Accepted" "LeanLeanFaithfulness.Accepted.subtypeTrue"
 run_case "recursive-list-length" "Faithfulness.Accepted" "LeanLeanFaithfulness.Accepted.listLength"
+run_case "gcd-parity-arithmetic" "Faithfulness.ExportArithmetic" "LeanLeanFaithfulness.ExportArithmetic.gcd_sum_diff_eq_one"
 
 echo "arena-input: box-unbox"
 IN="$artifact_dir/box-unbox.ndjson" "$checker"
