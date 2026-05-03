@@ -87,6 +87,7 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Add a traceability map from specification clauses to implementation functions and tests.
 - [x] Add a metatheoretic account and proof-obligation table.
 - [x] Tighten the specification with an explicit grammar, universe-result predicate, and declaration-script entry table.
+- [x] Add a paper claim structure and paper-ready boundary table.
 
 ## Current Decisions
 
