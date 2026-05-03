@@ -10,9 +10,36 @@
 - [x] Phase 6: `Prop`, proof irrelevance, and elimination restrictions.
 - [x] Phase 7: Mutual and nested mutual inductives.
 - [x] Phase 8: Low-level quotients and primitive equality support.
-- [ ] Phase 9: Definitions, opacity, and environment semantics.  Declaration records, opacity, theorems, projections, structure metadata, dependency-aware replay, closure extraction, and generated-declaration replay are implemented, but literal expressions, recursive-definition artifacts, unsafe declarations policy, and full exported environment behavior remain.
-- [ ] Phase 10: Faithfulness against Lean 4.  The source corpus, negative examples, importer smoke test, and selected real-environment closure import exist, but broad differential testing and documented full-fragment agreement remain.
-- [ ] Phase 11: Metatheory and paper-grade artifacts.  The repository has a growing specification, implementation, and faithfulness corpus, but it still needs a traceability map from specification clauses to implementation functions and tests.
+- [ ] Phase 9: Definitions, opacity, and environment semantics.
+  - [x] Add a unified declaration record with kind metadata, universe parameters, checked values, primitive metadata, projection metadata, theorem metadata, structure metadata, and reducibility hints.
+  - [x] Implement transparent definitions, opaque declarations, and theorem declarations with the intended conversion behavior.
+  - [x] Add ordered and dependency-aware declaration replay through the checked admission APIs.
+  - [x] Add a kernel-style inductive adapter and replay checks for exported generated constructors and recursors, including recursor metadata and rule right-hand sides.
+  - [x] Add core projections and local structure metadata for one-constructor inductives, including inherited-field metadata and eta where the current rule permits it.
+  - [x] Add finite `ConstantInfo` snapshot reconstruction and root-name environment closure extraction for selected Lean roots.
+  - [ ] Add literal expressions to the core syntax, importer, type checker, normalizer, specification, and regression suite.
+  - [ ] Reconstruct or reject Lean recursive-definition compilation artifacts by a written kernel-facing rule.
+  - [ ] Import Lean's full structure-extension records, including the metadata needed to check inherited projections against exported environments.
+  - [ ] Specify and implement the unsafe-declaration policy for replay.
+  - [ ] Expand exported environment behavior beyond the current smoke roots.
+- [ ] Phase 10: Faithfulness against Lean 4.
+  - [x] Add a source-level accepted and rejected Lean corpus under `Faithfulness`.
+  - [x] Add local bridge tests for the same behavior classes covered by the first corpus.
+  - [x] Add importer smoke tests over selected real Lean environment closures.
+  - [x] Preserve fixed Lean-divergence cases as regressions.
+  - [ ] Compare inferred types and normal forms for translated declarations where the local syntax can express them.
+  - [ ] Expand the accepted and rejected corpus to cover literals, recursive-definition artifacts, structure-extension metadata, larger universe examples, module boundaries, and additional primitive edge cases.
+  - [ ] Document every known divergence from Lean 4 in the specification with a reason.
+  - [ ] Run broad differential replay over larger Lean environment fragments instead of only selected roots.
+- [ ] Phase 11: Metatheory and paper-grade artifacts.
+  - [x] Maintain a written specification for the implemented trusted rules.
+  - [x] Maintain `devnotes.md` with references, rationale, and historical bug classes.
+  - [x] Keep regression tests for the main historical soundness and faithfulness bugs found so far.
+  - [ ] Build a traceability map from specification clauses to implementation functions and tests.
+  - [ ] Write a metatheoretic account of typing, conversion, universe checking, positivity, generated recursors, and environment replay.
+  - [ ] Review the specification to the level needed for an independent implementation.
+  - [ ] Draft the paper claim structure around specification, implementation, and Lean 4 faithfulness.
+  - [ ] State remaining Lean 4 divergences and unsupported features in paper-ready form.
 
 This plan describes a path from the current specification-driven proof of concept to a complete Lean 4 kernel.  The project has two operating standards.  Every trusted feature needs a written local specification before implementation work builds around it.  Every object admitted to the environment needs the same well-formedness discipline, whether the object came from user input or from kernel generation.
 
