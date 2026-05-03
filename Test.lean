@@ -395,6 +395,24 @@ def kernelInductiveDeclTests : Result Unit := do
   let env ← addDeclaration [] (.kernelInductive kernelBoolDecl)
   let falseTy ← infer env [] (const0 "KernelBool.false")
   let _ ← checkDefEq env falseTy (const0 "KernelBool")
+  let env ←
+    match env.find? "KernelBool.true" with
+    | some info =>
+        addDeclaration env (.generatedConstructor "KernelBool.true" info.levelParams info.typeExpr "KernelBool")
+    | none => .error "KernelBool.true should be present in the environment"
+  let _ ←
+    expectError
+      "generated constructor replay rejects mismatched types"
+      (addDeclaration env (.generatedConstructor "KernelBool.true" [] boolType "KernelBool"))
+  let env ←
+    match env.find? "KernelBool.rec" with
+    | some info =>
+        addDeclaration env (.generatedRecursor "KernelBool.rec" info.levelParams info.typeExpr)
+    | none => .error "KernelBool.rec should be present in the environment"
+  let _ ←
+    expectError
+      "generated recursor replay rejects mismatched types"
+      (addDeclaration env (.generatedRecursor "KernelBool.rec" [] boolType))
   let env ← addDeclaration env (.kernelInductive kernelBoxDecl)
   let kernelBoxTrue := Expr.mkApps (.const "KernelBox.mk" [type0Level]) [const0 "KernelBool", const0 "KernelBool.true"]
   let kernelBoxTrueTy ← infer env [] kernelBoxTrue
@@ -830,7 +848,7 @@ def testReport : Result (List String) := do
       "substitution invariants check",
       "generated declaration validation rejects malformed generated types",
       "declaration scripts use the checked admission path",
-      "kernel-style inductive declarations map to checked blocks",
+      "kernel-style inductive declarations and generated replay checks pass",
       "reducibility hints are recorded as definition metadata",
       "structure metadata records inherited fields",
       "environment declaration metadata checks",

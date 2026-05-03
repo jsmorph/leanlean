@@ -241,6 +241,8 @@ inductive Declaration where
   | inductive : InductiveSpec → Declaration
   | inductiveBlock : InductiveBlockSpec → Declaration
   | kernelInductive : KernelInductiveDecl → Declaration
+  | generatedConstructor : Name → LevelContext → Expr → Name → Declaration
+  | generatedRecursor : Name → LevelContext → Expr → Declaration
   | structureInfo : StructureInfo → Declaration
   | projection : Name → Name → Nat → Declaration
   | quotientPrimitives : Declaration
@@ -2511,6 +2513,41 @@ def addKernelInductive (env : Env) (decl : KernelInductiveDecl) : Result Env := 
   let block ← kernelInductiveDeclToBlock decl
   addInductiveBlock env block
 
+def checkGeneratedConstructor
+    (env : Env)
+    (name : Name)
+    (levelParams : LevelContext)
+    (type : Expr)
+    (indName : Name) : Result Env := do
+  let some info := env.find? name
+    | .error s!"generated constructor is missing: {name}"
+  match info.kind with
+  | .ctor actualIndName =>
+      if actualIndName != indName then
+        .error s!"generated constructor {name} belongs to {actualIndName}, not {indName}"
+      if info.levelParams != levelParams then
+        .error s!"generated constructor {name} has unexpected universe parameters"
+      if !info.typeExpr.alphaEq type then
+        .error s!"generated constructor {name} type does not match"
+      pure env
+  | _ => .error s!"constant is not a generated constructor: {name}"
+
+def checkGeneratedRecursor
+    (env : Env)
+    (name : Name)
+    (levelParams : LevelContext)
+    (type : Expr) : Result Env := do
+  let some info := env.find? name
+    | .error s!"generated recursor is missing: {name}"
+  match info.kind with
+  | .primitive (.recursor _ _) =>
+      if info.levelParams != levelParams then
+        .error s!"generated recursor {name} has unexpected universe parameters"
+      if !info.typeExpr.alphaEq type then
+        .error s!"generated recursor {name} type does not match"
+      pure env
+  | _ => .error s!"constant is not a generated recursor: {name}"
+
 def addDeclaration (env : Env) : Declaration → Result Env
   | .axiom name levelParams type => addAxiomWithLevels env name levelParams type
   | .definition name levelParams type value =>
@@ -2523,6 +2560,10 @@ def addDeclaration (env : Env) : Declaration → Result Env
   | .inductive spec => addInductive env spec
   | .inductiveBlock block => addInductiveBlock env block
   | .kernelInductive decl => addKernelInductive env decl
+  | .generatedConstructor name levelParams type indName =>
+      checkGeneratedConstructor env name levelParams type indName
+  | .generatedRecursor name levelParams type =>
+      checkGeneratedRecursor env name levelParams type
   | .structureInfo info => registerStructure env info
   | .projection name structName index => addProjection env name structName index
   | .quotientPrimitives => addQuotPrimitives env
