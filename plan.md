@@ -48,8 +48,10 @@
   - [x] Add a first export-checker smoke test generated from a small Lean source file through `lean4export`.
   - [x] Expand accepted export-checker tests generated from small Lean source files through `lean4export`.
   - [x] Turn the gcd/parity arithmetic export into a regular generated stress test after replay returns an accepted, rejected, or unsupported outcome without an internal abort.
+  - [x] Add generated export-checker rejection tests adapted from Lean Kernel Arena source fixtures.
+  - [x] Add hand-edited export-checker tests for supported-fragment rejection.
+  - [ ] Add export-checker tests for unsupported input.
   - [ ] Inventory Lean's kernel-overridden primitive reductions and add specified table entries, source citations, implementation rules, and export tests for each admitted primitive.
-  - [ ] Add hand-edited export-checker tests for supported-fragment rejection and unsupported input.
   - [ ] Add local Arena smoke tests and a sample checker configuration.
   - [ ] Add module-checker tests for accepted declarations, unsupported declarations, and rejected declarations inside the supported fragment.
   - [x] Record the checker interfaces in `spec.md`, `faithfulness.md`, and `devnotes.md`.
@@ -62,7 +64,7 @@ The export checker should be developed test-first.  Each accepted test should st
 
 The next expressiveness priority inside export replay is Lean's kernel-overridden primitive computation.  The gcd/parity export exposed `Nat.add`, `Nat.mul`, `Nat.pow`, `Nat.beq`, and `Nat.ble`: Lean's prelude declares logical models for these constants, but also marks them with kernel or compiler override behavior, and exported proofs can rely on the resulting definitional equalities.  The work item is to replace isolated primitive discoveries with an explicit inventory, then admit each primitive only after `spec.md` states the reduction rule, the implementation checks the declaration shape before reducing, and a generated export test forces that rule through `leanlean-check-export`.
 
-The current `lean4export` binary for local runs is `/tmp/lean4export/.lake/build/bin/lean4export`.  The generated export pipeline accepts with `LEANLEAN_LEAN4EXPORT` set to that path.  It now includes the gcd/parity arithmetic theorem, whose export checks 572 declaration entries.  The earlier `omega`-generated proof of the same arithmetic shape remains a separate performance stress case, because its closure reaches broad `Lean.Omega` certificate machinery and slow replay points outside the regular fixture's purpose.
+The current `lean4export` binary for local runs is `/tmp/lean4export/.lake/build/bin/lean4export`.  The generated export pipeline accepts with `LEANLEAN_LEAN4EXPORT` set to that path.  It includes the gcd/parity arithmetic theorem, whose export checks 572 declaration entries, and two generated rejection fixtures adapted from Lean Kernel Arena: a bogus theorem proof and an ill-typed projection from a proposition.  It also checks static Arena copies for the `imax` normalization bug and bad constant-level unfolding.  The earlier `omega`-generated proof of the same arithmetic shape remains a separate performance stress case, because its closure reaches broad `Lean.Omega` certificate machinery and slow replay points outside the regular fixture's purpose.
 
 This plan describes a path from the current specification-driven proof of concept to a complete Lean 4 kernel.  The project has two operating standards.  Every trusted feature needs a written local specification before implementation work builds around it.  Every object admitted to the environment needs the same well-formedness discipline, whether the object came from user input or from kernel generation.
 
@@ -274,7 +276,9 @@ Acceptance criteria:
 - The specification states the accepted `lean4export` NDJSON fragment.
 - The repository has accepted NDJSON tests generated from `Faithfulness.ExportSmoke` and `Faithfulness.Accepted` by `lean4export` and checked by `leanlean-check-export`.
 - The accepted export tests cover a custom inductive recursor, a theorem declaration, an opaque declaration, a raw natural literal, quotient primitives, a subtype value, a compiled recursive list definition, and the gcd/parity arithmetic theorem.
-- Static export-checker tests cover supported-fragment rejection and unsupported input with readable source companions.
+- Generated rejection tests cover a theorem proof with the wrong type and a projection whose structure argument is ill-typed.
+- Static export-checker tests cover supported-fragment rejection for `imax` normalization and bad constant-level unfolding.
+- Unsupported-input tests cover unsupported parser or replay boundaries with readable source companions.
 - `leanlean-check-export` supports the Arena input convention, translates accepted export records into declaration replay scripts, and returns `0` for accepted inputs, `1` for supported-fragment rejections, and `2` for unsupported inputs.
 - Local smoke tests include an accepted exported artifact, a rejected supported-fragment artifact, and an unsupported artifact.
 - Module-checker tests cover accepted roots, unsupported roots, and roots rejected inside the supported fragment.
@@ -282,4 +286,4 @@ Acceptance criteria:
 
 ## Immediate Next Work
 
-Ordinary universe polymorphism now covers inference, conversion, axioms, transparent and opaque definitions, theorem declarations, inductive blocks, generated constructors, generated recursors, low-level quotient primitives, core projections for one-constructor inductives, raw literal expressions, and the `PEmpty`/`PUnit` sort-polymorphic subsingleton shapes.  The kernel reserves `Sort 0` for `Prop`, uses symbolic `imax` for dependent function sorts, applies proof irrelevance to terms with proposition types equal by conversion, supports proposition-valued inductives with the indexed syntactic subsingleton-elimination rule, admits mutual inductive blocks atomically, records primitive, theorem, projection, reducibility, and structure metadata in the environment, and has ordered and dependency-aware declaration replay paths plus executable module and export checkers.  The immediate work is to add rejected and unsupported export fixtures, complete the primitive inventory, and turn the remaining broad arithmetic and tactic closures into classified outcomes or written boundaries.
+Ordinary universe polymorphism now covers inference, conversion, axioms, transparent and opaque definitions, theorem declarations, inductive blocks, generated constructors, generated recursors, low-level quotient primitives, core projections for one-constructor inductives, raw literal expressions, and the `PEmpty`/`PUnit` sort-polymorphic subsingleton shapes.  The kernel reserves `Sort 0` for `Prop`, uses symbolic `imax` for dependent function sorts, applies proof irrelevance to terms with proposition types equal by conversion, supports proposition-valued inductives with the indexed syntactic subsingleton-elimination rule, admits mutual inductive blocks atomically, records primitive, theorem, projection, reducibility, and structure metadata in the environment, and has ordered and dependency-aware declaration replay paths plus executable module and export checkers.  The immediate work is to add unsupported export fixtures, complete the primitive inventory, and turn the remaining broad arithmetic and tactic closures into classified outcomes or written boundaries.

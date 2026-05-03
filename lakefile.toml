@@ -23,6 +23,12 @@ name = "Faithfulness.ExportSmoke"
 [[lean_lib]]
 name = "Faithfulness.ExportArithmetic"
 
+[[lean_lib]]
+name = "Faithfulness.Arena.Bogus1"
+
+[[lean_lib]]
+name = "Faithfulness.Arena.ProjOfProp"
+
 [[lean_exe]]
 name = "leanlean"
 root = "Main"
