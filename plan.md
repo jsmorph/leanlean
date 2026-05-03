@@ -46,7 +46,7 @@
   - [x] Specify the first accepted `lean4export` NDJSON fragment.
   - [x] Add `leanlean-check-export`, which reads the Arena input, translates exported declarations into local replay scripts, and reports Arena outcomes.
   - [x] Add a first export-checker smoke test generated from a small Lean source file through `lean4export`.
-  - [ ] Expand export-checker tests generated from small Lean source files through `lean4export`.
+  - [x] Expand accepted export-checker tests generated from small Lean source files through `lean4export`.
   - [ ] Add hand-edited export-checker tests for supported-fragment rejection and unsupported input.
   - [ ] Add local Arena smoke tests and a sample checker configuration.
   - [ ] Add module-checker tests for accepted declarations, unsupported declarations, and rejected declarations inside the supported fragment.
@@ -264,8 +264,8 @@ Acceptance criteria:
 - The code has a typed result for accepted, rejected, unsupported, and internal-failure outcomes.
 - `leanlean-check-module` checks explicit root declarations from compiled Lean modules through `replayEnvironmentClosure`.
 - The specification states the accepted `lean4export` NDJSON fragment.
-- The repository has a first accepted NDJSON smoke test generated from `Faithfulness.ExportSmoke` by `lean4export` and checked by `leanlean-check-export`.
-- Export-checker tests grow from the first smoke case to cover several accepted NDJSON artifacts generated from small Lean source files.
+- The repository has accepted NDJSON tests generated from `Faithfulness.ExportSmoke` and `Faithfulness.Accepted` by `lean4export` and checked by `leanlean-check-export`.
+- The accepted export tests cover a custom inductive recursor, a theorem declaration, an opaque declaration, a raw natural literal, quotient primitives, a subtype value, and a compiled recursive list definition.
 - Static export-checker tests cover supported-fragment rejection and unsupported input with readable source companions.
 - `leanlean-check-export` supports the Arena input convention, translates accepted export records into declaration replay scripts, and returns `0` for accepted inputs, `1` for supported-fragment rejections, and `2` for unsupported inputs.
 - Local smoke tests include an accepted exported artifact, a rejected supported-fragment artifact, and an unsupported artifact.

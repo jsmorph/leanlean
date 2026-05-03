@@ -96,7 +96,8 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Specify the first accepted `lean4export` fragment.
 - [x] Add `leanlean-check-export` as the independent artifact-checking interface.
 - [x] Add a first generated export smoke case.
-- [ ] Expand accepted, rejected, and unsupported export-checker tests.
+- [x] Expand accepted generated export-checker tests.
+- [ ] Add rejected and unsupported export-checker tests.
 
 ## Current Decisions
 
@@ -170,6 +171,6 @@ Lean's structure extension is now imported for the fields that affect kernel-fac
 
 The first external checker interface was `leanlean-check-module`.  It is a module-loader bridge over the existing root-name closure importer, and it remains useful because it can compare local replay against Lean's loaded environment.  It returns typed outcomes: accepted roots return `0`, local replay rejections after translation return `1`, unsupported Lean artifacts return `2`, and internal checker failures return `3`.  The executable initializes Lean's search path from the current Lake build directory and loads environment extensions so that structure metadata and projection metadata are available during closure extraction.
 
-The independent artifact interface is now `leanlean-check-export`.  It reads a `lean4export` NDJSON file from a path or the Arena `IN` environment variable, parses the accepted format 3.1.0 fragment, and replays the resulting declaration script without Lean's environment loader.  The first generated smoke case exports `LeanLeanFaithfulness.ExportSmoke.unbox`, which exercises a universe-polymorphic inductive group, generated constructor and recursor checks, and a safe compiled definition.  The smoke script uses a matching `lean4export` binary supplied by `LEANLEAN_LEAN4EXPORT`; the project does not vendor that tool.
+The independent artifact interface is now `leanlean-check-export`.  It reads a `lean4export` NDJSON file from a path or the Arena `IN` environment variable, parses the accepted format 3.1.0 fragment, and replays the resulting declaration script without Lean's environment loader.  The generated accepted tests export `LeanLeanFaithfulness.ExportSmoke.unbox` plus selected `Faithfulness.Accepted` roots covering theorem declarations, opaque declarations, raw natural literals, quotient primitives, subtype values, and compiled recursive definitions.  The test script uses a matching `lean4export` binary supplied by `LEANLEAN_LEAN4EXPORT`; the project does not vendor that tool.
 
 Accepting safe compiled recursive definitions exposed two kernel bugs rather than a need for a recursive-definition primitive.  First, weak-head beta reduction dropped the active universe context, so imported polymorphic helper definitions such as `Nat.brecOn.go` treated `u` as unbound while reducing.  Second, symbolic level equality kept dominated `max` summands, so it missed equalities such as `max 1 (u+1) = u+1`.  The fixes preserve the intended rule: source-recursion metadata is provenance, while the compiled core definition must still recheck through ordinary definition admission.
