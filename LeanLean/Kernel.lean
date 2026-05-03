@@ -240,6 +240,20 @@ structure KernelInductiveDecl where
   types : List KernelInductiveTypeDecl
   deriving DecidableEq, Repr, Inhabited
 
+structure GeneratedRecursorRuleInfo where
+  ctor : Name
+  nfields : Nat
+  deriving DecidableEq, Repr, Inhabited
+
+structure GeneratedRecursorInfo where
+  all : List Name
+  numParams : Nat
+  numIndices : Nat
+  numMotives : Nat
+  numMinors : Nat
+  rules : List GeneratedRecursorRuleInfo
+  deriving DecidableEq, Repr, Inhabited
+
 inductive Declaration where
   | axiom : Name → LevelContext → Expr → Declaration
   | definition : Name → LevelContext → Expr → Expr → Declaration
@@ -251,6 +265,7 @@ inductive Declaration where
   | kernelInductive : KernelInductiveDecl → Declaration
   | generatedConstructor : Name → LevelContext → Expr → Name → Declaration
   | generatedRecursor : Name → LevelContext → Expr → Declaration
+  | generatedRecursorWithInfo : Name → LevelContext → Expr → GeneratedRecursorInfo → Declaration
   | structureInfo : StructureInfo → Declaration
   | projection : Name → Name → Nat → Declaration
   | quotientPrimitives : Declaration
@@ -2633,6 +2648,63 @@ def checkGeneratedRecursor
       pure env
   | _ => .error s!"constant is not a generated recursor: {name}"
 
+def generatedRecursorBlockNames (family : RecursorFamily) : List Name :=
+  family.targets.foldl
+    (fun names target =>
+      if target.recName = recursorName target.schema.headName then
+        appendNewNames names [target.schema.headName]
+      else
+        names)
+    []
+
+def expectedGeneratedRecursorInfo
+    (targetIndex : Nat)
+    (family : RecursorFamily) : Result GeneratedRecursorInfo := do
+  let some target := listGet? family.targets targetIndex
+    | .error s!"internal error: invalid recursor target index {targetIndex}"
+  pure
+    {
+      all := generatedRecursorBlockNames family
+      numParams := family.params.length
+      numIndices := target.schema.locals.length
+      numMotives := family.targets.length
+      numMinors := familyMinorCount family
+      rules := target.ctors.map fun ctor => { ctor := ctor.name, nfields := ctor.fields.length }
+    }
+
+def checkGeneratedRecursorInfo
+    (name : Name)
+    (actual expected : GeneratedRecursorInfo) : Result Unit := do
+  if actual.all != expected.all then
+    .error s!"generated recursor {name} block members do not match"
+  if actual.numParams != expected.numParams then
+    .error s!"generated recursor {name} parameter count does not match"
+  if actual.numIndices != expected.numIndices then
+    .error s!"generated recursor {name} index count does not match"
+  if actual.numMotives != expected.numMotives then
+    .error s!"generated recursor {name} motive count does not match"
+  if actual.numMinors != expected.numMinors then
+    .error s!"generated recursor {name} minor count does not match"
+  if actual.rules != expected.rules then
+    .error s!"generated recursor {name} rule headers do not match"
+
+def checkGeneratedRecursorWithInfo
+    (env : Env)
+    (name : Name)
+    (levelParams : LevelContext)
+    (type : Expr)
+    (metadata : GeneratedRecursorInfo) : Result Env := do
+  let some info := env.find? name
+    | .error s!"generated recursor is missing: {name}"
+  match info.kind with
+  | .primitive (.recursor targetIndex family) =>
+      if !(← exportedGeneratedTypeMatches info.levelParams levelParams info.typeExpr type) then
+        .error s!"generated recursor {name} type does not match"
+      let expected ← expectedGeneratedRecursorInfo targetIndex family
+      let _ ← checkGeneratedRecursorInfo name metadata expected
+      pure env
+  | _ => .error s!"constant is not a generated recursor: {name}"
+
 def addDeclaration (env : Env) : Declaration → Result Env
   | .axiom name levelParams type => addAxiomWithLevels env name levelParams type
   | .definition name levelParams type value =>
@@ -2649,6 +2721,8 @@ def addDeclaration (env : Env) : Declaration → Result Env
       checkGeneratedConstructor env name levelParams type indName
   | .generatedRecursor name levelParams type =>
       checkGeneratedRecursor env name levelParams type
+  | .generatedRecursorWithInfo name levelParams type metadata =>
+      checkGeneratedRecursorWithInfo env name levelParams type metadata
   | .structureInfo info => registerStructure env info
   | .projection name structName index => addProjection env name structName index
   | .quotientPrimitives => addQuotPrimitives env
@@ -2675,6 +2749,7 @@ def definedNames : Declaration → List Name
         []
   | .generatedConstructor .. => []
   | .generatedRecursor .. => []
+  | .generatedRecursorWithInfo .. => []
   | .structureInfo .. => []
   | .projection name .. => [name]
   | .quotientPrimitives => ["Quot", "Quot.mk", "Quot.lift", "Quot.ind", "Quot.sound"]
@@ -2725,6 +2800,9 @@ def usedConstants : Declaration → List Name
       appendNewNames [name, indName] (exprConstants type)
   | .generatedRecursor name _ type =>
       appendNewNames [name] (exprConstants type)
+  | .generatedRecursorWithInfo name _ type metadata =>
+      let ruleConstants := metadata.rules.map (·.ctor)
+      appendNewNames (name :: metadata.all) (appendNewNames ruleConstants (exprConstants type))
   | .structureInfo info => structureInfoConstants info
   | .projection _ structName _ => [structName]
   | .quotientPrimitives => ["Eq"]

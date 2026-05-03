@@ -477,6 +477,34 @@ def kernelInductiveDeclTests : Result Unit := do
         addDeclaration env (.generatedRecursor "KernelBool.rec" info.levelParams info.typeExpr)
     | none => .error "KernelBool.rec should be present in the environment"
   let _ ←
+    match env.find? "KernelBool.rec" with
+    | some info =>
+        let metadata : GeneratedRecursorInfo :=
+          {
+            all := ["KernelBool"]
+            numParams := 0
+            numIndices := 0
+            numMotives := 1
+            numMinors := 2
+            rules :=
+              [
+                { ctor := "KernelBool.false", nfields := 0 },
+                { ctor := "KernelBool.true", nfields := 0 }
+              ]
+          }
+        let _ ←
+          addDeclaration env
+            (.generatedRecursorWithInfo "KernelBool.rec" info.levelParams info.typeExpr metadata)
+        expectError
+          "generated recursor replay rejects mismatched metadata"
+          (addDeclaration env
+            (.generatedRecursorWithInfo
+              "KernelBool.rec"
+              info.levelParams
+              info.typeExpr
+              { metadata with numMinors := 1 }))
+    | none => .error "KernelBool.rec should be present in the environment"
+  let _ ←
     expectError
       "generated recursor replay rejects mismatched types"
       (addDeclaration env (.generatedRecursor "KernelBool.rec" [] boolType))
@@ -655,7 +683,11 @@ def importBridgeTests : Result Unit := do
           numIndices := 0
           numMotives := 1
           numMinors := 2
-          rules := []
+          rules :=
+            [
+              { ctor := infoFalseName, nfields := 0, rhs := infoFalseConst },
+              { ctor := infoTrueName, nfields := 0, rhs := infoTrueConst }
+            ]
           k := false
           isUnsafe := false
         },
@@ -777,6 +809,25 @@ def importBridgeTests : Result Unit := do
     expectError
       "importer rejects free variables"
       (Import.translateExpr (.fvar { name := Lean.Name.mkSimple "x" }))
+  let unsafeRecInfo : Lean.ConstantInfo :=
+    .recInfo
+      {
+        name := Lean.Name.mkSimple "unsafeRec"
+        levelParams := []
+        type := .sort .zero
+        all := []
+        numParams := 0
+        numIndices := 0
+        numMotives := 0
+        numMinors := 0
+        rules := []
+        k := false
+        isUnsafe := true
+      }
+  let _ ←
+    expectError
+      "importer rejects unsafe generated recursors"
+      (Import.translateGeneratedConstantInfo unsafeRecInfo)
   let unsafeDecl : Lean.Declaration :=
     .defnDecl
       {

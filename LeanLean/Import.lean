@@ -139,11 +139,20 @@ def translateGeneratedConstantInfo : Lean.ConstantInfo → Result Declaration
           (← translateExpr value.type)
           (translateName value.induct))
   | .recInfo value => do
+      checkSafeFlag "recursor" value.name value.isUnsafe
       pure
-        (.generatedRecursor
+        (.generatedRecursorWithInfo
           (translateName value.name)
           (translateLevelParams value.levelParams)
-          (← translateExpr value.type))
+          (← translateExpr value.type)
+          {
+            all := value.all.map translateName
+            numParams := value.numParams
+            numIndices := value.numIndices
+            numMotives := value.numMotives
+            numMinors := value.numMinors
+            rules := value.rules.map fun rule => { ctor := translateName rule.ctor, nfields := rule.nfields }
+          })
   | info => .error s!"constant is not a generated constructor or recursor: {info.name}"
 
 def findInductiveInfo? : List Lean.ConstantInfo → Lean.Name → Option Lean.InductiveVal
