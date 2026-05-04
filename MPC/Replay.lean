@@ -98,6 +98,7 @@ def extendBinders : Context → List Binder → Context
 
 def addSimpleInductive (manifest : Manifest) (env : Env) (spec : SimpleInductiveSpec) :
     Result Env := do
+  Manifest.validate manifest
   if manifest.inductives != .simple then
     fail "simple inductives are disabled by the manifest"
   else if spec.resultLevel.defEq .zero then
@@ -144,23 +145,26 @@ def addSimpleInductive (manifest : Manifest) (env : Env) (spec : SimpleInductive
       }
 
 def addDecl (manifest : Manifest) (env : Env) : Declaration → Result Env
-  | .axiom name levelParams type => do
-      let _ ← inferSort manifest env levelParams [] type
-      Env.add env { name, levelParams, type, kind := .axiom }
-  | .definition name levelParams type value => do
-      let _ ← inferSort manifest env levelParams [] type
-      check manifest env levelParams [] value type
-      Env.add env { name, levelParams, type, value? := some value, kind := .definition }
-  | .opaque name levelParams type value => do
-      let _ ← inferSort manifest env levelParams [] type
-      check manifest env levelParams [] value type
-      Env.add env { name, levelParams, type, value? := some value, kind := .opaque }
-  | .theorem name levelParams type value => do
-      isPropExpr manifest env levelParams [] type
-      check manifest env levelParams [] value type
-      Env.add env { name, levelParams, type, value? := some value, kind := .theorem }
-  | .inductive spec =>
-      addSimpleInductive manifest env spec
+  | declaration => do
+      Manifest.validate manifest
+      match declaration with
+      | .axiom name levelParams type => do
+          let _ ← inferSort manifest env levelParams [] type
+          Env.add env { name, levelParams, type, kind := .axiom }
+      | .definition name levelParams type value => do
+          let _ ← inferSort manifest env levelParams [] type
+          check manifest env levelParams [] value type
+          Env.add env { name, levelParams, type, value? := some value, kind := .definition }
+      | .opaque name levelParams type value => do
+          let _ ← inferSort manifest env levelParams [] type
+          check manifest env levelParams [] value type
+          Env.add env { name, levelParams, type, value? := some value, kind := .opaque }
+      | .theorem name levelParams type value => do
+          isPropExpr manifest env levelParams [] type
+          check manifest env levelParams [] value type
+          Env.add env { name, levelParams, type, value? := some value, kind := .theorem }
+      | .inductive spec =>
+          addSimpleInductive manifest env spec
 
 def replay (manifest : Manifest) : Env → List Declaration → Result Env
   | env, [] => pure env

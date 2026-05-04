@@ -2,6 +2,11 @@ import MPC.Basic
 
 namespace MPC
 
+inductive DeclarationMode where
+  | disabled
+  | checked
+  deriving BEq, Repr, Inhabited
+
 inductive PropMode where
   | disabled
   | enabled
@@ -18,12 +23,16 @@ inductive InductiveMode where
   deriving BEq, Repr, Inhabited
 
 structure Manifest where
+  declarations : DeclarationMode := .disabled
   prop : PropMode := .disabled
   literals : LiteralMode := .none
   inductives : InductiveMode := .none
   deriving BEq, Repr, Inhabited
 
-def Manifest.validate (_manifest : Manifest) : Result Unit :=
-  pure ()
+def Manifest.validate (manifest : Manifest) : Result Unit := do
+  if manifest.declarations == .checked then
+    pure ()
+  else
+    fail "declaration admission is disabled by the manifest"
 
 end MPC

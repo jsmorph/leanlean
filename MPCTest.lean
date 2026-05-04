@@ -112,6 +112,7 @@ def boxSpec : SimpleInductiveSpec :=
   }
 
 def checkBasePackages : IO Unit := do
+  expectOkLabel "manifest validation" (Manifest.validate MPC.Configs.Poc)
   let env ← expectOk (replay MPC.Configs.Poc emptyEnv baseDeclarations)
   let literalType ← expectOk (infer MPC.Configs.Poc env [] [] (.lit (.nat 3)))
   expectExprEq "natural literal type" literalType natType
@@ -122,6 +123,9 @@ def checkBasePackages : IO Unit := do
   expectError "theorem without Prop"
     (addDecl { MPC.Configs.Poc with prop := .disabled } env
       (.theorem "badTheorem" [] (.const "P" []) (.const "p" [])))
+  expectError "declaration admission disabled"
+    (addDecl { MPC.Configs.Poc with declarations := .disabled } env
+      (.axiom "NoDecls" [] type0))
   let malformedNatEnv ← expectOk (replay MPC.Configs.Poc emptyEnv [.axiom "Nat" [] type0])
   expectError "malformed natural literal environment"
     (infer MPC.Configs.Poc malformedNatEnv [] [] (.lit (.nat 0)))
