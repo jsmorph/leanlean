@@ -431,13 +431,143 @@ def parseDeclarations (input : String) : Result (List Declaration) := do
   let state ← parseLinesLoop 1 {} (input.splitOn "\n")
   pure state.declarations
 
-def checkString (input : String) : Checker.Outcome :=
+def rootContains (roots : List Name) (name : Name) : Bool :=
+  roots.any fun root => root == name
+
+def trustedDefinitionValueNeeded (name : Name) : Bool :=
+  name == "outParam" ||
+    name == "semiOutParam" ||
+    name == "optParam" ||
+    name == "Unit" ||
+    name == "OfNat.ofNat" ||
+    name == "instOfNatNat" ||
+    name == "Nat.add" ||
+    name == "Nat.mul" ||
+    name == "Nat.pow" ||
+    name == "Nat.sub" ||
+    name == "Nat.beq" ||
+    name == "Nat.ble" ||
+    name == "DecidableEq"
+
+def recursiveAuxSupportName (name : Name) : Bool :=
+  name.endsWith ".below" ||
+    name.endsWith ".brecOn" ||
+    name.endsWith ".brecOn.go" ||
+    name.endsWith ".brecOn.eq"
+
+def shouldAssumeNonRoot (roots : List Name) : Declaration → Bool
+  | .definition name .. =>
+      !rootContains roots name && !recursiveAuxSupportName name
+  | .definitionWithHint name .. =>
+      !rootContains roots name && !recursiveAuxSupportName name
+  | .opaqueDefinition name .. => !rootContains roots name
+  | .theorem name .. => !rootContains roots name
+  | .axiom name .. => !rootContains roots name
+  | _ => false
+
+def shouldTrustNonRootCheck (roots : List Name) : Declaration → Bool
+  | .generatedConstructor name .. => !rootContains roots name
+  | .generatedRecursor name .. => !rootContains roots name
+  | .generatedRecursorWithInfo name .. => !rootContains roots name
+  | .primitiveCheck name .. => !rootContains roots name
+  | _ => false
+
+def trustedBaseForDeclaration? : Declaration → Option (List ConstantInfo)
+  | .axiom name levelParams type => some [ConstantInfo.mkAxiom name levelParams type]
+  | .definition name levelParams type value =>
+      if trustedDefinitionValueNeeded name then
+        some [ConstantInfo.mkDefn name levelParams type value]
+      else
+        some [ConstantInfo.mkAxiom name levelParams type]
+  | .definitionWithHint name levelParams hint type value =>
+      if trustedDefinitionValueNeeded name then
+        some [ConstantInfo.mkDefnWithHint name levelParams type value hint]
+      else
+        some [ConstantInfo.mkAxiom name levelParams type]
+  | .opaqueDefinition name levelParams type _ => some [ConstantInfo.mkAxiom name levelParams type]
+  | .theorem name levelParams type _ => some [ConstantInfo.mkAxiom name levelParams type]
+  | _ => none
+
+structure RootedCheckResult where
+  env : Env
+  checked : Nat
+  assumed : Nat
+  trustedChecks : Nat
+
+def addTrustedBaseEntries
+    (state : RootedCheckResult)
+    (names : List Name)
+    (infos : List ConstantInfo) : Result RootedCheckResult := do
+  let mut env := state.env
+  let mut assumed := state.assumed
+  for info in infos do
+    if env.contains info.name then
+      .error s!"duplicate trusted-base declaration: {info.name}"
+    else if !names.contains info.name then
+      .error s!"trusted-base declaration name mismatch: {info.name}"
+    else
+      env := info :: env
+      assumed := assumed + 1
+  pure { state with env, assumed }
+
+def checkRootedDeclaration
+    (roots : List Name)
+    (state : RootedCheckResult)
+    (declaration : Declaration) : Result RootedCheckResult := do
+  if shouldTrustNonRootCheck roots declaration then
+    pure { state with trustedChecks := state.trustedChecks + 1 }
+  else if shouldAssumeNonRoot roots declaration then
+    match trustedBaseForDeclaration? declaration with
+    | some infos => addTrustedBaseEntries state declaration.definedNames infos
+    | none =>
+        .error s!"cannot assume declaration: {repr declaration.definedNames}"
+  else
+    match addDeclaration state.env declaration with
+    | .ok env => pure { state with env, checked := state.checked + 1 }
+    | .error err =>
+        .error s!"while replaying {repr (declarationReplayNames declaration)}: {err}"
+
+def checkDeclarationsWithRootAssumptions
+    (roots : List Name)
+    (declarations : List Declaration) : Checker.Outcome :=
+  match
+    declarations.foldlM
+      (fun state declaration => checkRootedDeclaration roots state declaration)
+      { env := [], checked := 0, assumed := 0, trustedChecks := 0 }
+  with
+  | .ok state =>
+      .accepted
+        (s!"checked {state.checked} declaration entries; assumed {state.assumed} trusted-base entries; " ++
+          s!"trusted {state.trustedChecks} generated or primitive checks")
+  | .error err => .rejected err
+
+def checkDeclarationsOrdered (declarations : List Declaration) : Checker.Outcome :=
+  match addDeclarations [] declarations with
+  | .ok _ => .accepted s!"checked {declarations.length} declaration entries"
+  | .error err => .rejected err
+
+def checkDeclarationsDependencyAware (declarations : List Declaration) : Checker.Outcome :=
+  match replayDeclarations [] declarations with
+  | .ok _ => .accepted s!"checked {declarations.length} declaration entries"
+  | .error err => .rejected err
+
+def checkStringOrdered (input : String) : Checker.Outcome :=
   match parseDeclarations input with
   | .error err => .unsupported err
-  | .ok declarations =>
-      match replayDeclarations [] declarations with
-      | .ok _ => .accepted s!"checked {declarations.length} declaration entries"
-      | .error err => .rejected err
+  | .ok declarations => checkDeclarationsOrdered declarations
+
+def checkStringDependencyAware (input : String) : Checker.Outcome :=
+  match parseDeclarations input with
+  | .error err => .unsupported err
+  | .ok declarations => checkDeclarationsDependencyAware declarations
+
+def checkStringWithRootAssumptions (input : String) (roots : List Name) : Checker.Outcome :=
+  match parseDeclarations input with
+  | .error err => .unsupported err
+  | .ok declarations => checkDeclarationsWithRootAssumptions roots declarations
+
+def checkString (input : String) : Checker.Outcome :=
+  checkStringOrdered input
 
 end Export
 end LeanLean

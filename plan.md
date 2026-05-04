@@ -52,6 +52,7 @@
   - [x] Add hand-edited export-checker tests for supported-fragment rejection.
   - [x] Add `leanlean-self-check` for a named kernel-only slice of this repository's compiled declarations.
   - [x] Add export-backed self-check for the same named source-facing roots through `lean4export` and `leanlean-check-export`.
+  - [x] Add full export-backed self-check for the source-facing module boundary plus recursive aux support, using explicit trusted-base roots rather than Lean's module loader.
   - [x] Add export-checker tests for unsupported input.
   - [x] Inventory Lean's kernel-overridden primitive reductions from the Lean 4.29.1 source tree.
   - [x] Add specified table entries, source citations, implementation rules, and export tests for each newly admitted primitive.
@@ -72,6 +73,8 @@
 ## Top Priorities
 
 The external-checker path now centers on `leanlean-check-export`.  The module checker gives immediate feedback on compiled Lean modules, but it still relies on Lean's module loader and environment data.  The export checker is the independent artifact checker: it reads a `lean4export` NDJSON file, translates the records into declaration scripts, and replays those scripts through the local kernel without asking Lean to interpret the artifact.
+
+Full export-backed self-check now uses `leanlean-export-roots --self-check` to select source-facing roots plus recursive `below` and `brecOn` support.  `tools/export-full-self-check.sh` exports those roots with `lean4export` and checks them with `leanlean-check-export --self-check-roots`.  The rooted checker treats non-root definitions and theorems as an explicit trusted base, except for named transparent wrappers whose values are needed for conversion and recursive aux support whose values must reduce while checking selected roots.  This boundary matches the module-loader self-check claim while replacing Lean's in-process environment data with an NDJSON artifact.
 
 The export checker should be developed test-first.  Each accepted test should start as a small Lean source file, pass through `lean4export`, and then pass through `leanlean-check-export`; the test therefore checks the exact artifact path we claim to support.  Rejected and unsupported tests should include hand-edited NDJSON fixtures only when the fixture has a written purpose and a readable source companion, because malformed export files can otherwise become opaque test folklore.
 

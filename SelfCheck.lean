@@ -272,6 +272,7 @@ def trustedDefinitionValueNeeded (name : Lean.Name) : Bool :=
   name == `outParam ||
     name == `semiOutParam ||
     name == `optParam ||
+    name == `Unit ||
     name == `OfNat.ofNat ||
     name == `instOfNatNat ||
     name == `Nat.add ||

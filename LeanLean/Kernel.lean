@@ -2074,8 +2074,7 @@ partial def inferSpine
         let reduced ← whnf env type (levelParams := levelParams)
         match reduced with
         | .forallE _ domain body =>
-            let actual ← infer env ctx arg (levelParams := levelParams)
-            let _ ← checkDefEqIn env ctx actual domain (levelParams := levelParams)
+            let _ ← checkHasTypeIn env ctx arg domain (levelParams := levelParams)
             loop (Expr.instantiate1 arg body) rest
         | _ => .error s!"application expects a function, got {repr reduced}"
   loop headTy args
@@ -3678,7 +3677,11 @@ def replayDeclarations (env : Env) (declarations : List Declaration) : Result En
 def addDeclarations : Env → List Declaration → Result Env
   | env, [] => pure env
   | env, declaration :: rest => do
-      let env ← addDeclaration env declaration
+      let env ←
+        match addDeclaration env declaration with
+        | .ok newEnv => pure newEnv
+        | .error err =>
+            .error s!"while replaying {repr (declarationReplayNames declaration)}: {err}"
       addDeclarations env rest
 
 end LeanLean
