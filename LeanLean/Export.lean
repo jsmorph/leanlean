@@ -694,11 +694,37 @@ def analyzeGapDeclaration
               rows := state.rows ++ [replayGapRow declaration .rejected err]
             }
 
+partial def replayGapRowsWithFuel
+    (fuel : Nat)
+    (state : GapReportState)
+    (declarations : List Declaration) : Result GapReportState := do
+  match declarations with
+  | [] => pure state
+  | _ =>
+      match fuel with
+      | 0 => declarations.foldlM analyzeGapDeclaration state
+      | fuel + 1 =>
+          let mut state := state
+          let mut remaining : List Declaration := []
+          let mut progressed := false
+          for declaration in declarations do
+            if declarationReady state.env declaration then
+              state ← analyzeGapDeclaration state declaration
+              progressed := true
+            else
+              remaining := declaration :: remaining
+          let pending := remaining.reverse
+          if progressed then
+            replayGapRowsWithFuel fuel state pending
+          else
+            pending.foldlM analyzeGapDeclaration state
+
 def replayGapRows (declarations : List Declaration) : Result (List GapRow) := do
   let state ←
-    declarations.foldlM
-      analyzeGapDeclaration
+    replayGapRowsWithFuel
+      (declarations.length + 1)
       { env := [], rows := [] }
+      declarations
   pure state.rows
 
 def formatReplayGapReport (declarations : List Declaration) : Result String := do

@@ -3666,10 +3666,11 @@ partial def replayDeclarationsWithFuel
                     .error s!"while replaying {repr (declarationReplayNames declaration)}: {err}"
               progressed := true
             else
-              remaining := remaining ++ [declaration]
+              remaining := declaration :: remaining
+          let pending := remaining.reverse
           if !progressed then
-            .error s!"unresolved declaration dependencies: {repr (declarationsDefinedNames remaining)}"
-          replayDeclarationsWithFuel fuel env remaining
+            .error s!"unresolved declaration dependencies: {repr (declarationsDefinedNames pending)}"
+          replayDeclarationsWithFuel fuel env pending
 
 def replayDeclarations (env : Env) (declarations : List Declaration) : Result Env :=
   replayDeclarationsWithFuel (declarations.length + 1) env declarations
