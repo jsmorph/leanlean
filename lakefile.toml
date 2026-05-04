@@ -6,6 +6,9 @@ defaultTargets = ["leanlean"]
 name = "LeanLean"
 
 [[lean_lib]]
+name = "MPC"
+
+[[lean_lib]]
 name = "Faithfulness.Accepted"
 
 [[lean_lib]]
