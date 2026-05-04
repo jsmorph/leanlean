@@ -126,6 +126,7 @@ run_static "unsupported-expression" "unsupported" 2 "testdata/unsupported/unsupp
 
 run_gap_report_expect "box-unbox" "$artifact_dir/box-unbox.ndjson" "ordered-outcome: accepted"
 run_gap_report_expect "arena-level-imax-normalization" "testdata/arena/level-imax-normalization.ndjson" "status=assumed-after-rejection"
+run_gap_report_expect "unsupported-partial-definition" "testdata/unsupported/partial-definition.ndjson" "summary: status=unsupported"
 
 echo "arena-input: box-unbox"
 set +e

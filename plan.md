@@ -73,6 +73,7 @@
   - [ ] Make whole-artifact replay, not rooted replay with trusted non-root definitions, the main checker claim.
   - [x] Add a replay gap report over parsed `lean4export` artifacts.
   - [x] Add a replay gap report over loaded `ConstantInfo` maps.
+  - [x] Report unsupported export entries as diagnostic gap rows instead of bare parser failures.
   - [ ] Check every safe ordinary declaration in the supplied replay set, while postponing generated constructors and recursors for comparison.
   - [ ] Match Lean's `Environment.replay` policy for unsafe and partial constants, or state the stricter policy as a deliberate external-checker rule.
   - [ ] Replace string names with structured names or specify and test an injective accepted-name encoding.

@@ -493,6 +493,7 @@ inductive GapStatus where
   | generatedCompared
   | rejected
   | assumedAfterRejection
+  | unsupported
   deriving DecidableEq, Repr
 
 def GapStatus.label : GapStatus → String
@@ -500,6 +501,7 @@ def GapStatus.label : GapStatus → String
   | .generatedCompared => "generated-compared"
   | .rejected => "rejected"
   | .assumedAfterRejection => "assumed-after-rejection"
+  | .unsupported => "unsupported"
 
 def joinStringsWith (separator : String) : List String → String
   | [] => ""
@@ -514,6 +516,10 @@ def joinLines (values : List String) : String :=
 
 def joinNames (names : List Name) : String :=
   joinStrings names
+
+def displayNames : List Name → String
+  | [] => "none"
+  | names => joinNames names
 
 def declarationKind : Declaration → String
   | .axiom .. => "axiom"
@@ -631,7 +637,7 @@ def gapDetailLine (row : GapRow) : String :=
     else
       s!" message={row.message}"
   s!"detail: status={row.status.label} kind={row.kind} class={row.className} \
-    names={joinNames row.names} dependencies={row.dependencyCount} primitives={primitiveText}{message}"
+    names={displayNames row.names} dependencies={row.dependencyCount} primitives={primitiveText}{message}"
 
 def addTrustedGapEntries
     (env : Env)
@@ -663,6 +669,17 @@ def replayGapRow (declaration : Declaration) (status : GapStatus) (message : Str
     dependencyCount := declaration.usedConstants.length
     primitiveDependencies := declarationPrimitiveDependencies declaration
     status
+    message
+  }
+
+def unsupportedGapRow (message : String) : GapRow :=
+  {
+    names := []
+    kind := "parse-entry"
+    className := "unsupported"
+    dependencyCount := 0
+    primitiveDependencies := []
+    status := .unsupported
     message
   }
 
@@ -755,6 +772,14 @@ def formatReplayGapReport (declarations : List Declaration) : Result String := d
       "\n" ++ joinLines (rejectedRows.map gapDetailLine)
   pure (header ++ summaries ++ details)
 
+def formatUnsupportedGapReport (message : String) : String :=
+  let row := unsupportedGapRow message
+  "parse-outcome: unsupported\n" ++
+    s!"parse-message: {message}\n" ++
+    "declarations: 0\n" ++
+    gapSummaryLine { status := .unsupported, kind := row.kind, className := row.className, count := 1 } ++
+    "\n" ++ gapDetailLine row
+
 structure RootedCheckResult where
   env : Env
   checked : Nat
@@ -835,7 +860,7 @@ def checkStringWithRootAssumptions (input : String) (roots : List Name) : Checke
 
 def replayGapReportString (input : String) : Checker.Outcome :=
   match parseDeclarations input with
-  | .error err => .unsupported err
+  | .error err => .accepted (formatUnsupportedGapReport err)
   | .ok declarations =>
       match formatReplayGapReport declarations with
       | .ok report => .accepted report
