@@ -1321,6 +1321,47 @@ def recursorGenerationTests : Result Unit := do
           expectedRecType
       pure ()
   | none => .error "AliasDec.rec should be present in the environment"
+  let optParamType : Expr :=
+    .forallE "α" (.sort (.param "u")) (.forallE "default" (.bvar 0) (.sort (.param "u")))
+  let optParamValue : Expr :=
+    .lam "α" (.sort (.param "u")) (.lam "default" (.bvar 0) (.bvar 1))
+  let optBoolSpec : InductiveSpec :=
+    {
+      name := "OptBool"
+      params := []
+      level := type0Level
+      ctors :=
+        [
+          {
+            name := "OptBool.mk"
+            fields :=
+              [
+                {
+                  name := "flag"
+                  type := Expr.mkApps (.const "optParam" [type0Level]) [boolType, boolFalse]
+                }
+              ]
+          }
+        ]
+    }
+  let env ← sampleEnv
+  let env ← addDefinitionWithLevels env "optParam" ["u"] optParamType optParamValue
+  let env ← addInductive env optBoolSpec
+  let optBoolType := const0 "OptBool"
+  let optBoolMk (flag : Expr) : Expr :=
+    Expr.mkApps (const0 "OptBool.mk") [flag]
+  let optBoolRecType : Expr :=
+    .forallE
+      "motive"
+      (.forallE "t" optBoolType (.sort (.param "u")))
+      (.forallE
+        "mk"
+        (.forallE "flag" boolType (.app (.bvar 1) (optBoolMk (.bvar 0))))
+        (.forallE "t" optBoolType (.app (.bvar 2) (.bvar 0))))
+  let _ ←
+    addDeclaration
+      env
+      (.generatedRecursor "OptBool.rec" ["u"] optBoolRecType)
   let relType : Expr :=
     .forallE
       "a"
@@ -2342,7 +2383,7 @@ def testReport : Result (List String) := do
       "literal expressions type-check and normalize",
       "kernel-overridden primitive reductions check",
       "raw inference and normalization entry points reject malformed primitives",
-      "kernel example regressions check"
+      "kernel example checks"
     ]
 
 end LeanLean

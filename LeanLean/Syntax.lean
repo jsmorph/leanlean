@@ -258,6 +258,28 @@ def getAppFn (expr : Expr) : Expr :=
 def getAppArgs (expr : Expr) : List Expr :=
   (collectAppRev expr []).2
 
+partial def consumeTypeAnnotations (expr : Expr) : Expr :=
+  match expr.getAppFn, expr.getAppArgs with
+  | .const "optParam" _, [type, _] => consumeTypeAnnotations type
+  | .const "autoParam" _, [type, _] => consumeTypeAnnotations type
+  | .const "outParam" _, [type] => consumeTypeAnnotations type
+  | .const "semiOutParam" _, [type] => consumeTypeAnnotations type
+  | _, _ => expr
+
+partial def cleanupTypeAnnotations (expr : Expr) : Expr :=
+  match expr.consumeTypeAnnotations with
+  | .app fn arg => .app (cleanupTypeAnnotations fn) (cleanupTypeAnnotations arg)
+  | .lam name type body => .lam name (cleanupTypeAnnotations type) (cleanupTypeAnnotations body)
+  | .forallE name type body => .forallE name (cleanupTypeAnnotations type) (cleanupTypeAnnotations body)
+  | .proj typeName index struct => .proj typeName index (cleanupTypeAnnotations struct)
+  | .letE name type value body =>
+      .letE
+        name
+        (cleanupTypeAnnotations type)
+        (cleanupTypeAnnotations value)
+        (cleanupTypeAnnotations body)
+  | expr => expr
+
 def bvarArgs (count inner : Nat) : List Expr :=
   (List.range count).map fun index => .bvar (inner + count - 1 - index)
 
@@ -421,10 +443,8 @@ def instantiateFrom (cutoff : Nat) (value : Expr) : Expr → Expr
 def instantiate1 (value body : Expr) : Expr :=
   instantiateFrom 0 value body
 
-def listGet? : List α → Nat → Option α
-  | [], _ => none
-  | value :: _, 0 => some value
-  | _ :: rest, index + 1 => listGet? rest index
+def listGet? (values : List α) (index : Nat) : Option α :=
+  List.get?Internal values index
 
 def instantiateManyFrom (cutoff : Nat) (values : List Expr) : Expr → Expr
   | .bvar index =>

@@ -57,3 +57,8 @@ supportInterpreter = true
 [[lean_exe]]
 name = "leanlean-check-export"
 root = "CheckExport"
+
+[[lean_exe]]
+name = "leanlean-self-check"
+root = "SelfCheck"
+supportInterpreter = true

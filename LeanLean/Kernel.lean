@@ -729,10 +729,8 @@ def decomposeInductiveApp (env : Env) (expr : Expr) :
       | none => none
   | _ => none
 
-def listGet? : List α → Nat → Option α
-  | [], _ => none
-  | value :: _, 0 => some value
-  | _ :: rest, index + 1 => listGet? rest index
+def listGet? (values : List α) (index : Nat) : Option α :=
+  List.get?Internal values index
 
 structure ProjectionTarget where
   ctor : ConstructorSpec
@@ -2493,7 +2491,12 @@ partial def buildRecursorFamily
           | ctor :: rest => do
               let ctorFields :=
                 ctor.fields.map fun field =>
-                  { field with type := Expr.instantiateLevels info.spec.levelParams levels field.type }
+                  {
+                    field with
+                    type :=
+                      (Expr.instantiateLevels info.spec.levelParams levels field.type)
+                        |>.consumeTypeAnnotations
+                  }
               let instantiated := Telescope.instantiateTypes targetParamArgs ctorFields
               let ctorTarget ← constructorTargetExpr info.spec ctor
               let ctorTarget :=
@@ -3193,10 +3196,14 @@ def splitAt? (n : Nat) (xs : List α) : Option (List α × List α) :=
   else
     none
 
+def consumeTelescopeTypeAnnotations (tele : Telescope) : Telescope :=
+  tele.map fun binder => { binder with type := binder.type.cleanupTypeAnnotations }
+
 def kernelInductiveHeaderToSpec
     (decl : KernelInductiveDecl)
     (typeDecl : KernelInductiveTypeDecl) : Result InductiveSpec := do
   let (binders, result) := decomposeForalls typeDecl.type
+  let result := result.cleanupTypeAnnotations
   let some (params, indices) := splitAt? decl.numParams binders
     | .error s!"kernel inductive {typeDecl.name} has fewer parameters than declared"
   let .sort level := result
@@ -3205,8 +3212,8 @@ def kernelInductiveHeaderToSpec
     {
       name := typeDecl.name
       levelParams := decl.levelParams
-      params
-      indices
+      params := consumeTelescopeTypeAnnotations params
+      indices := consumeTelescopeTypeAnnotations indices
       level
       ctors := []
     }
@@ -3218,9 +3225,15 @@ def kernelConstructorToSpec
   let (binders, target) := decomposeForalls ctor.type
   let some (params, fields) := splitAt? decl.numParams binders
     | .error s!"kernel constructor {ctor.name} has fewer parameters than declared"
+  let params := consumeTelescopeTypeAnnotations params
   if !telescopeTypesAlphaEq params spec.params then
     .error s!"kernel constructor {ctor.name} parameter telescope does not match {spec.name}"
-  pure { name := ctor.name, fields, target? := some target }
+  pure
+    {
+      name := ctor.name
+      fields := consumeTelescopeTypeAnnotations fields
+      target? := some target.cleanupTypeAnnotations
+    }
 
 def kernelInductiveDeclToBlock (decl : KernelInductiveDecl) : Result InductiveBlockSpec := do
   match decl.types with
@@ -3243,6 +3256,11 @@ def addKernelInductive (env : Env) (decl : KernelInductiveDecl) : Result Env := 
   let block ← kernelInductiveDeclToBlock decl
   addInductiveBlock env block
 
+partial def cleanupForallBinderTypeAnnotations : Expr → Expr
+  | .forallE name type body =>
+      .forallE name type.cleanupTypeAnnotations (cleanupForallBinderTypeAnnotations body)
+  | expr => expr.cleanupTypeAnnotations
+
 def exportedGeneratedTypeMatches
     (actualParams exportedParams : LevelContext)
     (actualType exportedType : Expr) : Result Bool := do
@@ -3251,7 +3269,9 @@ def exportedGeneratedTypeMatches
   else
     let renamedExportedType :=
       Expr.instantiateLevels exportedParams (actualParams.map Level.param) exportedType
-    pure (actualType.alphaEq renamedExportedType)
+    pure
+      ((cleanupForallBinderTypeAnnotations actualType).alphaEq
+        (cleanupForallBinderTypeAnnotations renamedExportedType))
 
 def checkGeneratedConstructor
     (env : Env)
