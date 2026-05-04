@@ -68,7 +68,7 @@
   - [ ] Specify and check generated no-confusion helpers and constructor eliminators.
   - [ ] Specify and check sparse-case helpers, including the library and primitive dependencies they require.
   - [ ] Specify and check derived instance support and generated representation support only after their trusted role is separated from display and debugging code.
-  - [ ] Add tests that prevent generated-support mode from silently treating a newly admitted generated class as a typed assumption.
+  - [x] Add tests that prevent generated-support mode from silently treating a newly admitted generated class as a typed assumption.
 - [ ] Phase 14: Complete replay checker boundary.
   - [ ] Make whole-artifact replay, not rooted replay with trusted non-root definitions, the main checker claim.
   - [x] Add a replay gap report over parsed `lean4export` artifacts.
