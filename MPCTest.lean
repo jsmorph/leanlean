@@ -227,6 +227,17 @@ def propInductiveSpec : SimpleInductiveSpec :=
       ]
   }
 
+def propChoiceSpec : SimpleInductiveSpec :=
+  {
+    name := "PropChoice"
+    resultLevel := .zero
+    constructors :=
+      [
+        { name := "PropChoice.left" },
+        { name := "PropChoice.right" }
+      ]
+  }
+
 def propOnlyRecursorType : Expr :=
   pi "motive"
     (pi "target" (.const "PropOnly" []) propType)
@@ -519,6 +530,52 @@ def dPairFst : Expr :=
 
 def dPairSnd : Expr :=
   .proj "DPair" 1 dPairTarget
+
+def hAddLikeSpec : SimpleInductiveSpec :=
+  {
+    name := "HAddLike"
+    levelParams := ["u", "v", "w"]
+    params :=
+      [
+        { name := "α", type := .sort (.param "u") },
+        { name := "β", type := .sort (.param "v") },
+        { name := "γ", type := .sort (.param "w") }
+      ]
+    resultLevel :=
+      .max
+        (.max (.succ (.param "u")) (.succ (.param "v")))
+        (.succ (.param "w"))
+    constructors :=
+      [
+        {
+          name := "HAddLike.mk"
+          fields :=
+            [
+              {
+                name := "hAdd"
+                type := pi "x" (.bvar 2) (pi "y" (.bvar 2) (.bvar 2))
+              }
+            ]
+        }
+      ]
+  }
+
+def hAddLikeApp (alpha beta gamma : Expr) : Expr :=
+  appN (.const "HAddLike" [.param "u", .param "v", .param "w"]) [alpha, beta, gamma]
+
+def hAddLikeAccessorType : Expr :=
+  pi "α" (.sort (.param "u"))
+    (pi "β" (.sort (.param "v"))
+      (pi "γ" (.sort (.param "w"))
+        (pi "self" (hAddLikeApp (.bvar 2) (.bvar 1) (.bvar 0))
+          (pi "x" (.bvar 3) (pi "y" (.bvar 3) (.bvar 3))))))
+
+def hAddLikeAccessorValue : Expr :=
+  .lam "α" (.sort (.param "u"))
+    (.lam "β" (.sort (.param "v"))
+      (.lam "γ" (.sort (.param "w"))
+        (.lam "self" (hAddLikeApp (.bvar 2) (.bvar 1) (.bvar 0))
+          (.proj "HAddLike" 0 (.bvar 0)))))
 
 def badIndexedTargetSpec : IndexedInductiveSpec :=
   { vecSpec with
@@ -844,6 +901,13 @@ def checkPropInductives : IO Unit := do
   let reduced ← expectOkLabel "Prop inductive recursor reduction"
     (normalize MPC.Configs.InductivePropPoc env [] recursor)
   expectExprEq "Prop inductive recursor value" reduced (.const "p" [])
+  let largePropManifest := { MPC.Configs.InductivePropPoc with inductiveProp := .largeElim }
+  let propChoiceEnv ← expectOkLabel "multi-constructor Prop replay"
+    (replay largePropManifest emptyEnv (baseDeclarations ++ [.inductive propChoiceSpec]))
+  let _propChoiceRecursor ← expectOkLabel "multi-constructor Prop recursor level arity"
+    (infer largePropManifest propChoiceEnv [] [] (.const "PropChoice.rec" []))
+  expectError "multi-constructor Prop recursor rejects large elimination level"
+    (infer largePropManifest propChoiceEnv [] [] (.const "PropChoice.rec" [.zero]))
 
 def checkIndexedInductives : IO Unit := do
   expectError "indexed inductive disabled"
@@ -1006,6 +1070,15 @@ def checkProjections : IO Unit := do
   expectExprEq "second projection value" sndReduced (.const "predProof" [])
   expectError "projection field out of range"
     (infer MPC.Configs.ProjectionPoc env [] [] (.proj "DPair" 2 dPairTarget))
+  let hAddLikeDeclarations :=
+    [
+      .inductive hAddLikeSpec,
+      .definition "HAddLike.hAdd" ["u", "v", "w"]
+        hAddLikeAccessorType hAddLikeAccessorValue
+    ]
+  let hAddLikeEnv ← expectOkLabel "dependent projection with binders replay"
+    (replay MPC.Configs.ProjectionPoc emptyEnv hAddLikeDeclarations)
+  expectEnvContains "dependent projection accessor" hAddLikeEnv "HAddLike.hAdd"
 
 def checkPrimitiveNat : IO Unit := do
   let declarations := baseDeclarations ++ primitiveNatDeclarations

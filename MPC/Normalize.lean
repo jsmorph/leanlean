@@ -33,7 +33,7 @@ def liftExprs (amount : Nat) (exprs : List Expr) : List Expr :=
 
 def instantiateSourceArgsAfterLocals (expr : Expr) (localCount : Nat) (args : List Expr) :
     Expr :=
-  args.reverse.foldl (fun expr arg => Expr.instantiateAt localCount arg expr) expr
+  expr.instantiateManyFrom localCount args
 
 def instantiateRecursiveFieldBinderType
     (paramArgs fieldArgs : List Expr) (boundLocals : Nat) (binder : Binder) : Expr :=

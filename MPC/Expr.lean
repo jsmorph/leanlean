@@ -87,8 +87,44 @@ partial def Expr.instantiateAt (depth : Nat) (value : Expr) : Expr → Expr
 def Expr.instantiate1 (body value : Expr) : Expr :=
   Expr.instantiateAt 0 value body
 
+partial def Expr.instantiateManyFrom (cutoff : Nat) (values : List Expr) : Expr → Expr
+  | .bvar index =>
+      if index < cutoff then
+        .bvar index
+      else
+        let rel := index - cutoff
+        if rel < values.length then
+          match values[values.length - 1 - rel]? with
+          | some value => value.liftFrom cutoff 0
+          | none => .bvar index
+        else
+          .bvar (index - values.length)
+  | .sort level => .sort level
+  | .const name levels => .const name levels
+  | .lit literal => .lit literal
+  | .app fn arg =>
+      .app (Expr.instantiateManyFrom cutoff values fn) (Expr.instantiateManyFrom cutoff values arg)
+  | .lam name type body =>
+      .lam name
+        (Expr.instantiateManyFrom cutoff values type)
+        (Expr.instantiateManyFrom (cutoff + 1) values body)
+  | .forallE name type body =>
+      .forallE name
+        (Expr.instantiateManyFrom cutoff values type)
+        (Expr.instantiateManyFrom (cutoff + 1) values body)
+  | .letE name type value body =>
+      .letE name
+        (Expr.instantiateManyFrom cutoff values type)
+        (Expr.instantiateManyFrom cutoff values value)
+        (Expr.instantiateManyFrom (cutoff + 1) values body)
+  | .proj structureName fieldIndex target =>
+      .proj structureName fieldIndex (Expr.instantiateManyFrom cutoff values target)
+
+def Expr.instantiateMany (expr : Expr) (values : List Expr) : Expr :=
+  Expr.instantiateManyFrom 0 values expr
+
 def Expr.instantiateSourceArgs (expr : Expr) (args : List Expr) : Expr :=
-  args.reverse.foldl (fun expr arg => Expr.instantiate1 expr arg) expr
+  expr.instantiateMany args
 
 partial def Expr.instantiateLevels (subst : List (Name × Level)) : Expr → Expr
   | .bvar index => .bvar index

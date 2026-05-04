@@ -49,6 +49,8 @@ def simpleLargeElimEligible
     (manifest : Manifest) (env : Env) (spec : SimpleInductiveSpec) : Result Bool := do
   if !manifest.supportsPropLargeElimination || !isPropLevel spec.resultLevel then
     pure false
+  else if 1 < spec.constructors.length then
+    pure false
   else
     let paramCtx := extendBinders [] spec.params
     spec.constructors.allM fun ctor =>
