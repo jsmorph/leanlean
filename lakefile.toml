@@ -65,6 +65,10 @@ name = "leanlean-check-export"
 root = "CheckExport"
 
 [[lean_exe]]
+name = "mpc-check-export"
+root = "CheckMPCExport"
+
+[[lean_exe]]
 name = "leanlean-export-roots"
 root = "ExportRoots"
 supportInterpreter = true
