@@ -392,15 +392,61 @@ def translateInductiveGroup
         types
       })
 
-def translateOrdinaryConstantInfo? : Lean.ConstantInfo → Result (Option Declaration)
-  | .axiomInfo value => do
-      checkTrustedUnsafeFlag "axiom" value.name value.isUnsafe
+def isQuotSoundInfo : Lean.ConstantInfo → Bool
+  | .axiomInfo value => value.name == ``Quot.sound
+  | _ => false
+
+def translateQuotKind : Lean.QuotKind → PrimitiveInfo
+  | .type => .quotType
+  | .ctor => .quotMk
+  | .lift => .quotLift
+  | .ind => .quotInd
+
+def translateQuotientPrimitiveInfo? : Lean.ConstantInfo → Result (Option Declaration)
+  | .quotInfo value => do
       pure
         (some
-          (.axiom
+          (.primitiveCheck
             (translateName value.name)
             (translateLevelParams value.levelParams)
-            (← translateExpr value.type)))
+            (← translateExpr value.type)
+            (translateQuotKind value.kind)))
+  | .axiomInfo value => do
+      if value.name == ``Quot.sound then
+        checkTrustedUnsafeFlag "axiom" value.name value.isUnsafe
+        pure
+          (some
+            (.primitiveCheck
+              "Quot.sound"
+              (translateLevelParams value.levelParams)
+              (← translateExpr value.type)
+              .quotSound))
+      else
+        pure none
+  | _ => pure none
+
+def translateQuotientPrimitiveInfos (infos : List Lean.ConstantInfo) : Result (List Declaration) :=
+  let collect :=
+    infos.foldlM
+      (fun declarations info => do
+        match (← translateQuotientPrimitiveInfo? info) with
+        | some declaration => pure (declaration :: declarations)
+        | none => pure declarations)
+      []
+  collect.map List.reverse
+
+def translateOrdinaryConstantInfo? : Lean.ConstantInfo → Result (Option Declaration)
+  | info@(.axiomInfo value) => do
+      if isQuotSoundInfo info then
+        pure none
+      else
+        checkTrustedUnsafeFlag "axiom" value.name value.isUnsafe
+        pure
+          (some
+            (.axiom
+              (translateName value.name)
+              (translateLevelParams value.levelParams)
+              (← translateExpr value.type)))
   | .defnInfo value => do
       checkTrustedDefinitionSafety value.name value.safety
       pure
@@ -458,14 +504,15 @@ def hasQuotientInfo (infos : List Lean.ConstantInfo) : Bool :=
   infos.any fun info =>
     match info with
     | .quotInfo _ => true
-    | _ => false
+    | _ => isQuotSoundInfo info
 
 def translateConstantInfoSnapshot (infos : List Lean.ConstantInfo) : Result (List Declaration) := do
   let quotientDecls := if hasQuotientInfo infos then [.quotientPrimitives] else []
+  let quotientChecks ← translateQuotientPrimitiveInfos infos
   let ordinary ← translateOrdinaryConstantInfos infos
   let inductives ← (inductiveGroupKeys infos).mapM (translateInductiveGroup infos)
   let generated ← translateGeneratedConstantInfos infos
-  pure (quotientDecls ++ ordinary ++ inductives ++ generated)
+  pure (quotientDecls ++ quotientChecks ++ ordinary ++ inductives ++ generated)
 
 def replayConstantInfoSnapshot (env : Env) (infos : List Lean.ConstantInfo) : Result Env := do
   replayDeclarations env (← translateConstantInfoSnapshot infos)

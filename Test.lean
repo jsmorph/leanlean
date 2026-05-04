@@ -19,6 +19,41 @@ def expectError (label : String) (result : Result α) : Result Unit :=
   | .ok _ => .error s!"{label}: expected failure"
   | .error _ => pure ()
 
+def leanNameFromString (name : String) : Lean.Name :=
+  match name.splitOn "." with
+  | [] => .anonymous
+  | head :: rest => rest.foldl Lean.Name.mkStr (Lean.Name.mkSimple head)
+
+def leanLevelFromLocal : Level → Lean.Level
+  | .zero => .zero
+  | .param name => .param (leanNameFromString name)
+  | .succ level => .succ (leanLevelFromLocal level)
+  | .max left right => .max (leanLevelFromLocal left) (leanLevelFromLocal right)
+  | .imax left right => .imax (leanLevelFromLocal left) (leanLevelFromLocal right)
+termination_by level => level
+
+def leanLiteralFromLocal : Literal → Lean.Literal
+  | .natVal value => .natVal value
+  | .strVal value => .strVal value
+
+def leanExprFromLocal : Expr → Lean.Expr
+  | .bvar index => .bvar index
+  | .sort level => .sort (leanLevelFromLocal level)
+  | .const name levels => .const (leanNameFromString name) (levels.map leanLevelFromLocal)
+  | .lit literal => .lit (leanLiteralFromLocal literal)
+  | .app fn arg => .app (leanExprFromLocal fn) (leanExprFromLocal arg)
+  | .lam name type body => .lam (leanNameFromString name) (leanExprFromLocal type) (leanExprFromLocal body) .default
+  | .forallE name type body => .forallE (leanNameFromString name) (leanExprFromLocal type) (leanExprFromLocal body) .default
+  | .proj typeName index struct => .proj (leanNameFromString typeName) index (leanExprFromLocal struct)
+  | .letE name type value body =>
+      .letE
+        (leanNameFromString name)
+        (leanExprFromLocal type)
+        (leanExprFromLocal value)
+        (leanExprFromLocal body)
+        false
+termination_by expr => expr
+
 def telescopeTests : Result Unit := do
   let a : Binder := { name := "A", type := type0Sort }
   let x : Binder := { name := "x", type := .bvar 0 }
@@ -1028,6 +1063,34 @@ def importBridgeTests : Result Unit := do
     expectError
       "constant-info snapshots reject constructor index mismatches"
       (Import.translateConstantInfoSnapshot wrongIndexSnapshot)
+  let quotSoundInfo : Lean.ConstantInfo :=
+    .axiomInfo
+      {
+        name := ``Quot.sound
+        levelParams := [Lean.Name.mkSimple "u"]
+        type := leanExprFromLocal quotientSoundType
+        isUnsafe := false
+      }
+  let quotSoundDecls ← Import.translateConstantInfoSnapshot [quotSoundInfo]
+  let _ ←
+    expect
+      "constant-info snapshots coalesce and check Quot.sound"
+      (quotSoundDecls =
+        [.quotientPrimitives, .primitiveCheck "Quot.sound" ["u"] quotientSoundType .quotSound])
+  let quotBaseEnv ← addInductive [] eqSpec
+  let _ ← Import.replayConstantInfoSnapshot quotBaseEnv [quotSoundInfo]
+  let badQuotSoundInfo : Lean.ConstantInfo :=
+    .axiomInfo
+      {
+        name := ``Quot.sound
+        levelParams := [Lean.Name.mkSimple "u"]
+        type := .sort .zero
+        isUnsafe := false
+      }
+  let _ ←
+    expectError
+      "constant-info snapshots reject a malformed Quot.sound type"
+      (Import.replayConstantInfoSnapshot quotBaseEnv [badQuotSoundInfo])
   let lookupInfo (name : Lean.Name) : Option Lean.ConstantInfo :=
     infoSnapshot.find? fun info => info.name == name
   let _ ←
