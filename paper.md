@@ -22,7 +22,7 @@ The specification claim comes first.  The implementation claim depends on it, be
 | Environment semantics | Present checked declaration records, transparent and opaque conversion behavior, theorem opacity, quotient primitives, projections, structure metadata, and declaration replay. |
 | Lean 4 import and faithfulness | Describe translation from Lean declaration data, closure extraction, generated-declaration replay, structure-extension import, source corpus testing, and differential comparison. |
 | Metatheory | State preservation, substitution, universe, positivity, recursor, projection, quotient, and replay obligations.  Identify which obligations are mechanized as executable tests and which remain paper proofs. |
-| Evaluation | Report the regression suite, source corpus, importer smoke roots, broad differential fragments, and every fixed divergence that became a regression. |
+| Evaluation | Report the regression suite, source corpus, importer smoke roots, broad differential fragments, and every fixed divergence that received a test. |
 | Boundaries | State unsupported Lean 4 behavior in paper-ready terms, with reasons and required work. |
 
 ## Evaluation Claims
@@ -48,4 +48,4 @@ The evaluation describes the named fragments exactly.  The current broad fragmen
 
 ## Submission Bar
 
-The repository is ready for a paper only when every trusted rule in [Minimal Kernel Subset](spec.md) has a traceability row, every traceability row has a stated metatheoretic obligation, and every fixed bug has a regression.  The paper states which metatheoretic obligations remain proof sketches rather than mechanized theorems.  It reports unsupported Lean 4 behavior as a boundary of the theorem, not as incidental missing engineering work.
+The repository is ready for a paper only when every trusted rule in [Minimal Kernel Subset](spec.md) has a traceability row, every traceability row has a stated metatheoretic obligation, and every fixed bug has a test.  The paper states which metatheoretic obligations remain proof sketches rather than mechanized theorems.  It reports unsupported Lean 4 behavior as a boundary of the theorem, not as incidental missing engineering work.

@@ -12,7 +12,7 @@ The substitution judgment follows the context convention in the specification.  
 
 ## Typing And Conversion
 
-Type preservation for reduction is the first central theorem.  If `E; U; Γ ⊢ e : A` and `e` reduces by beta, delta, zeta, iota, projection, natural-literal, quotient, or eta reduction to `e'`, then `E; U; Γ ⊢ e' : A`.  The theorem depends on declaration soundness for delta reduction, recursor soundness for iota reduction, projection soundness for projection reduction, and quotient primitive soundness for `Quot.lift`.
+Type preservation for reduction is the first central theorem.  If `E; U; Γ ⊢ e : A` and `e` reduces by beta, delta, zeta, iota, projection, natural-literal, listed primitive, quotient, or eta reduction to `e'`, then `E; U; Γ ⊢ e' : A`.  The theorem depends on declaration soundness for delta reduction, recursor soundness for iota reduction, projection soundness for projection reduction, declaration-shape checks for listed primitive reductions, and quotient primitive soundness for `Quot.lift`.
 
 Conversion soundness follows preservation.  If the checker accepts `e ≡ e'` at type `A`, then both expressions must have type `A`, and replacing one by the other in any well-typed expression preserves typing.  Proof irrelevance adds one extra premise: the two compared proof terms must infer the same normalized proposition type before the conversion rule applies.
 
@@ -62,12 +62,12 @@ Lean import soundness has a narrower statement than full Lean 4 kernel equivalen
 
 | Obligation | Current evidence | Missing proof work |
 | --- | --- | --- |
-| Substitution preservation | `substitutionTests`, `telescopeTests`, generated recursor regressions. | Induction over expressions with simultaneous substitution under binders. |
-| Subject reduction for conversion | `kernelRegressionTests`, `projectionTests`, `literalTests`, quotient regressions. | Case proof for every reduction rule, including proof irrelevance and eta. |
-| Universe soundness | `universeTests`, inductive universe regressions, broad replay over core roots. | Lemmas for `imax`, data-field bounds, and sort-polymorphic subsingletons. |
+| Substitution preservation | `substitutionTests`, `telescopeTests`, generated recursor tests. | Induction over expressions with simultaneous substitution under binders. |
+| Subject reduction for conversion | `kernelRegressionTests`, `projectionTests`, `literalTests`, quotient tests. | Case proof for every reduction rule, including proof irrelevance and eta. |
+| Universe soundness | `universeTests`, inductive universe tests, broad replay over core roots. | Lemmas for `imax`, data-field bounds, and sort-polymorphic subsingletons. |
 | Positivity soundness | Rejected positivity corpus, nested-parameter rejection, mutual and nested mutual tests. | Monotonicity proof for the positive-parameter fixed point and a strict-positivity theorem for accepted blocks. |
 | Recursor correctness | Generated-declaration validation, recursor metadata replay, differential recursor terms. | Derivation of generated recursor types and iota preservation for every reachable target shape. |
-| Projection and structure soundness | Projection regressions, structure metadata replay, inherited-field smoke tests. | Preservation proof for dependent projections, parent projections, and the current eta rule. |
+| Projection and structure soundness | Projection tests, structure metadata replay, inherited-field smoke tests. | Preservation proof for dependent projections, parent projections, and the current eta rule. |
 | Quotient primitive soundness | Quotient regression tests and rejected relation mismatch. | Axiomatized quotient model and proof that the single computation rule respects the relation side condition. |
 | Environment replay soundness | Declaration replay tests, importer bridge tests, importer smoke, broad differential replay. | Induction over dependency-aware replay and a theorem connecting Lean import translation to local declaration scripts. |
 | Lean faithfulness for named fragments | Source corpus, importer smoke, term differentials, broad fragment differentials. | A precise theorem stating the named fragment, the translation relation, and the conditions under which Lean and the local checker agree. |

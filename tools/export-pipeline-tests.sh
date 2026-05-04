@@ -81,6 +81,8 @@ run_generated "box-unbox" "accepted" 0 "Faithfulness.ExportSmoke" "LeanLeanFaith
 run_generated "true-theorem" "accepted" 0 "Faithfulness.Accepted" "LeanLeanFaithfulness.Accepted.trueTheorem"
 run_generated "opaque-definition" "accepted" 0 "Faithfulness.Accepted" "LeanLeanFaithfulness.Accepted.opaqueTrue"
 run_generated "nat-literal" "accepted" 0 "Faithfulness.Accepted" "LeanLeanFaithfulness.Accepted.literalNat"
+run_generated "nat-sub-closed" "accepted" 0 "Faithfulness.Accepted" "LeanLeanFaithfulness.Accepted.natSubClosed"
+run_generated "nat-sub-truncated" "accepted" 0 "Faithfulness.Accepted" "LeanLeanFaithfulness.Accepted.natSubTruncated"
 run_generated "quotient-value" "accepted" 0 "Faithfulness.Accepted" "LeanLeanFaithfulness.Accepted.q"
 run_generated "subtype-value" "accepted" 0 "Faithfulness.Accepted" "LeanLeanFaithfulness.Accepted.subtypeTrue"
 run_generated "recursive-list-length" "accepted" 0 "Faithfulness.Accepted" "LeanLeanFaithfulness.Accepted.listLength"

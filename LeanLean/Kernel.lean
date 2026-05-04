@@ -1916,6 +1916,11 @@ partial def reduceKernelOverrideApp
         pure none
       else
         reduceNatBinaryNatApp env info name args (fun left right => Nat.pow left right) (levelParams := levelParams)
+  | "Nat.sub" =>
+      if !levels.isEmpty then
+        pure none
+      else
+        reduceNatBinaryNatApp env info name args (fun left right => left - right) (levelParams := levelParams)
   | _ => pure none
 
 partial def reducePrimitiveApp

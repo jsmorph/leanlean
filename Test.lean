@@ -2044,6 +2044,36 @@ def primitiveReductionTests : Result Unit := do
             .bvar 0
           ]))
   let env ← addDefinition env "Nat.pow" natAddType natPowValue
+  let natPredType := .forallE "a" natType natType
+  let natPredValue :=
+    .lam
+      "a"
+      natType
+      (Expr.mkApps
+        (recConst "Nat.rec")
+        [
+          .lam "n" natType natType,
+          natZero,
+          .lam "n" natType (.lam "ih" natType (.bvar 1)),
+          .bvar 0
+        ])
+  let env ← addDefinition env "Nat.pred" natPredType natPredValue
+  let natSubValue :=
+    .lam
+      "a"
+      natType
+      (.lam
+        "b"
+        natType
+        (Expr.mkApps
+          (recConst "Nat.rec")
+          [
+            .lam "n" natType natType,
+            .bvar 1,
+            .lam "n" natType (.lam "ih" natType (Expr.app (const0 "Nat.pred") (.bvar 0))),
+            .bvar 0
+          ]))
+  let env ← addDefinition env "Nat.sub" natAddType natSubValue
   let natMulLargeNf ←
     normalize env (Expr.mkApps (const0 "Nat.mul") [.lit (.natVal 65536), .lit (.natVal 65536)])
   let _ ←
@@ -2058,6 +2088,20 @@ def primitiveReductionTests : Result Unit := do
       "Nat.pow primitive reduction handles UInt32-size arithmetic"
       natPowUInt32SizeNf
       (.lit (.natVal 4294967296))
+  let natSubPositiveNf ←
+    normalize env (Expr.mkApps (const0 "Nat.sub") [.lit (.natVal 1114112), .lit (.natVal 12)])
+  let _ ←
+    expectExprEq
+      "Nat.sub primitive reduction handles raw nonnegative subtraction"
+      natSubPositiveNf
+      (.lit (.natVal 1114100))
+  let natSubTruncatedNf ←
+    normalize env (Expr.mkApps (const0 "Nat.sub") [.lit (.natVal 12), .lit (.natVal 1114112)])
+  let _ ←
+    expectExprEq
+      "Nat.sub primitive reduction handles raw truncated subtraction"
+      natSubTruncatedNf
+      (.lit (.natVal 0))
   let natBoolCompareType := .forallE "a" natType (.forallE "b" natType boolType)
   let natBeqValue :=
     .lam
@@ -2306,6 +2350,16 @@ def primitiveReductionTests : Result Unit := do
   expectError
     "Nat.beq primitive reduction requires the specified declaration"
     (normalize (badNatBeqInfo :: env) (Expr.mkApps (const0 "Nat.beq") [natZero, natZero]))
+  let badNatSubInfo : ConstantInfo :=
+    {
+      name := "Nat.sub"
+      levelParams := []
+      typeExpr := .forallE "a" boolType (.forallE "b" natType boolType)
+      kind := .axiom
+    }
+  expectError
+    "Nat.sub primitive reduction requires the specified declaration"
+    (normalize (badNatSubInfo :: env) (Expr.mkApps (const0 "Nat.sub") [natZero, natZero]))
   let badBoolTrueInfo : ConstantInfo :=
     {
       name := "Bool.true"

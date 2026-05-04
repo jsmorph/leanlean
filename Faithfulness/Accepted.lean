@@ -35,6 +35,12 @@ def literalNat : Nat :=
 example :
     Nat.rec true (fun _ _ => false) literalNat = false := rfl
 
+theorem natSubClosed :
+    Nat.sub 8 3 = 5 := rfl
+
+theorem natSubTruncated :
+    Nat.sub 3 8 = 0 := rfl
+
 def literalString : String :=
   "lean"
 
