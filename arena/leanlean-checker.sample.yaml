@@ -1,0 +1,5 @@
+description: |
+  LeanLean export checker for the current repository.
+version: "0.1.0"
+build: lake build leanlean-check-export
+run: .lake/build/bin/leanlean-check-export "$IN"
