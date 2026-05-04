@@ -100,7 +100,8 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Expand accepted generated export-checker tests.
 - [x] Add generated export-checker rejection tests.
 - [x] Add static export-checker rejection tests.
-- [ ] Add unsupported export-checker tests.
+- [x] Add unsupported export-checker tests.
+- [x] Add module-checker tests for accepted, unsupported, and rejected outcomes.
 
 ## Current Decisions
 
@@ -173,6 +174,8 @@ Structure metadata follows Lean's split between kernel declarations and elaborat
 Lean's structure extension is now imported for the fields that affect kernel-facing replay.  The importer reads `StructureInfo.fieldNames`, `fieldInfo.projFn`, `fieldInfo.subobject?`, and `parentInfo`, then validates each direct field projection against Lean's `ProjectionFunctionInfo`: constructor name, parameter count, and field index must match the structure declaration.  The local structure registration repeats the relevant check over translated declarations by requiring each direct field projection to be either a local projection declaration or a checked lambda whose body is the corresponding core projection.  Parent projections must also have stored checked values, and their types must return the declared parent structure after binding the child parameters and child value.  Binder annotations, deprecated auto-parameter fields, defaults, resolution order, class-instance metadata, and notation data stay outside the trusted kernel subset because they guide elaboration rather than typing or conversion.
 
 The first external checker interface was `leanlean-check-module`.  It is a module-loader bridge over the existing root-name closure importer, and it remains useful because it can compare local replay against Lean's loaded environment.  It returns typed outcomes: accepted roots return `0`, local replay rejections after translation return `1`, unsupported Lean artifacts return `2`, and internal checker failures return `3`.  The executable initializes Lean's search path from the current Lake build directory and loads environment extensions so that structure metadata and projection metadata are available during closure extraction.
+
+The module-checker tests now cover all three user-facing non-internal outcomes.  `LeanLeanFaithfulness.Accepted.transparentId` accepts, `LeanLeanFaithfulness.UnsupportedModule.unsafeId` returns unsupported because Lean records it as an unsafe definition, and `LeanLean.Export.checkString` returns rejected after local replay reaches `Nat.Linear.Poly.denote_reverse`.  A simple source-level `partial def` in the same unsupported test module appears in Lean 4.29.1's loaded environment as a safe opaque constant, so the module checker treats that root as an ordinary opaque declaration.  Explicit partial records in `lean4export` input remain unsupported.
 
 The module checker can check selected roots from LeanLean's own compiled modules.  The accepted roots currently include `LeanLean.Level` with 367 declaration entries, `LeanLean.Literal` with 363 entries, `LeanLean.Expr` with 382 entries, `LeanLean.Binder` with 388 entries, `LeanLean.Level.defEq` with 375 entries, `LeanLean.checkDefEqIn` with 556 entries, and `LeanLean.replayDeclarations` with 617 entries.  The runs found an importer bug around Lean's representation of `Quot.sound`: Lean stores `Quot`, `Quot.mk`, `Quot.lift`, and `Quot.ind` as quotient records, but stores `Quot.sound` as an axiom, so the snapshot importer must add quotient primitives once and then check the exported `Quot.sound` type against the primitive declaration.
 

@@ -24,6 +24,9 @@ name = "Faithfulness.ExportSmoke"
 name = "Faithfulness.ExportArithmetic"
 
 [[lean_lib]]
+name = "Faithfulness.UnsupportedModule"
+
+[[lean_lib]]
 name = "Faithfulness.Arena.Bogus1"
 
 [[lean_lib]]
