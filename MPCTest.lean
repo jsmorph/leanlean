@@ -79,6 +79,20 @@ def primitiveBoolSpec : SimpleInductiveSpec :=
       ]
   }
 
+def natInductiveSpec : SimpleInductiveSpec :=
+  {
+    name := "Nat"
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        { name := "Nat.zero" },
+        {
+          name := "Nat.succ"
+          fields := [{ name := "n", type := natType }]
+        }
+      ]
+  }
+
 def recNatSpec : SimpleInductiveSpec :=
   {
     name := "RecNat"
@@ -128,6 +142,61 @@ def recNatCasesOnValue : Expr :=
                   (.app (.bvar 3) (.bvar 1))),
               .bvar 0
             ]))))
+
+def ofNatLevel : Level :=
+  .param "u"
+
+def ofNatAlphaSort : Expr :=
+  .sort (.succ ofNatLevel)
+
+def ofNatSpec : SimpleInductiveSpec :=
+  {
+    name := "OfNat"
+    levelParams := ["u"]
+    params :=
+      [
+        { name := "α", type := ofNatAlphaSort },
+        { name := "n", type := natType }
+      ]
+    resultLevel := .succ ofNatLevel
+    constructors :=
+      [
+        {
+          name := "OfNat.mk"
+          fields := [{ name := "ofNat", type := .bvar 1 }]
+        }
+      ]
+  }
+
+def ofNatApp (level : Level) (alpha index : Expr) : Expr :=
+  appN (.const "OfNat" [level]) [alpha, index]
+
+def ofNatAccessorType : Expr :=
+  pi "α" ofNatAlphaSort
+    (pi "n" natType
+      (pi "self" (ofNatApp ofNatLevel (.bvar 1) (.bvar 0)) (.bvar 2)))
+
+def ofNatAccessorValue : Expr :=
+  .lam "α" ofNatAlphaSort
+    (.lam "n" natType
+      (.lam "self" (ofNatApp ofNatLevel (.bvar 1) (.bvar 0))
+        (.proj "OfNat" 0 (.bvar 0))))
+
+def instOfNatNatType : Expr :=
+  pi "n" natType (ofNatApp .zero natType (.bvar 0))
+
+def instOfNatNatValue : Expr :=
+  .lam "n" natType
+    (appN (.const "OfNat.mk" [.zero]) [natType, .bvar 0, .bvar 0])
+
+def ofNatZeroExpr : Expr :=
+  appN
+    (.const "OfNat.ofNat" [.zero])
+    [
+      natType,
+      .lit (.nat 0),
+      .app (.const "instOfNatNat" []) (.lit (.nat 0))
+    ]
 
 def badRecursiveSpec : SimpleInductiveSpec :=
   {
@@ -652,6 +721,35 @@ def checkSimpleInductives : IO Unit := do
   let recNatReduced ← expectOkLabel "recursive simple recursor reduction"
     (normalize MPC.Configs.Poc recNatEnv [] recNatRecursor)
   expectExprEq "recursive simple recursor iota" recNatReduced (.const "p" [])
+  let natLiteralEnv ← expectOkLabel "Nat inductive replay"
+    (replay MPC.Configs.Poc emptyEnv
+      [.axiom "P" [] propType, .axiom "p" [] (.const "P" []), .inductive natInductiveSpec])
+  let natLiteralMotive := .lam "target" natType (.const "P" [])
+  let natLiteralSuccMinor :=
+    .lam "n" natType (.lam "ih" (.const "P" []) (.bvar 0))
+  let natLiteralRecursor :=
+    appN
+      (.const "Nat.rec" [.zero])
+      [
+        natLiteralMotive,
+        .const "p" [],
+        natLiteralSuccMinor,
+        .lit (.nat 1)
+      ]
+  let natLiteralReduced ← expectOkLabel "Nat.rec literal reduction"
+    (normalize MPC.Configs.Poc natLiteralEnv [] natLiteralRecursor)
+  expectExprEq "Nat.rec literal iota" natLiteralReduced (.const "p" [])
+  let ofNatEnv ← expectOkLabel "OfNat replay"
+    (replay MPC.Configs.LeanCore429 emptyEnv
+      [
+        .inductive natInductiveSpec,
+        .inductive ofNatSpec,
+        .definition "OfNat.ofNat" ["u"] ofNatAccessorType ofNatAccessorValue,
+        .definition "instOfNatNat" [] instOfNatNatType instOfNatNatValue
+      ])
+  let ofNatReduced ← expectOkLabel "OfNat.ofNat projection reduction"
+    (normalize MPC.Configs.LeanCore429 ofNatEnv [] ofNatZeroExpr)
+  expectExprEq "OfNat.ofNat value" ofNatReduced (.lit (.nat 0))
 
 def checkPropInductives : IO Unit := do
   expectError "Prop inductive package requires Prop"

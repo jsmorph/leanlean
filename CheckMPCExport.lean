@@ -88,21 +88,22 @@ def printOutcome (status : String) (path : System.FilePath) (message : String) :
   if message != "" then
     IO.println s!"message: {message}"
 
-partial def replayTraceLoop
-    (manifest : Manifest) :
+partial def replayLoop
+    (manifest : Manifest)
+    (trace : Bool) :
     Nat → Env → List Declaration → IO (Result Env)
   | _, env, [] => pure (.ok env)
   | index, env, declaration :: rest => do
-      IO.println s!"replay: {index} {MPC.Adapters.Export.declarationKindLabel declaration} {MPC.Adapters.Export.declarationNameLabel declaration}"
-      (← IO.getStdout).flush
+      if trace then
+        IO.println s!"replay: {index} {MPC.Adapters.Export.declarationKindLabel declaration} {MPC.Adapters.Export.declarationNameLabel declaration}"
+        (← IO.getStdout).flush
       match addDecl manifest env declaration with
-      | .ok env => replayTraceLoop manifest (index + 1) env rest
+      | .ok env => replayLoop manifest trace (index + 1) env rest
       | .error err =>
           pure (.error { message := s!"while replaying {MPC.Adapters.Export.declarationKindLabel declaration} {MPC.Adapters.Export.declarationNameLabel declaration}: {err.message}" })
 
 def generatedSupportAssumptionName (name : Name) : Bool :=
   name.endsWith ".noConfusion" ||
-    name.endsWith ".noConfusionType" ||
     name.startsWith "noConfusion_of_"
 
 def generatedSupportAssumption : Declaration → Bool
@@ -153,14 +154,15 @@ def generatedAssumptionCount (config : Config) (state : MPC.Adapters.Export.Pars
 def replayConfig (config : Config) (state : MPC.Adapters.Export.ParseState) :
     IO (Result Env) := do
   let declarations := prepareDeclarations config state
-  if config.trace then
-    replayTraceLoop MPC.Configs.LeanCore429 0 emptyEnv declarations
-  else
-    match config.limit? with
-    | some _ =>
-        pure (MPC.Adapters.Export.replayDeclarations MPC.Configs.LeanCore429 emptyEnv declarations)
-    | none =>
-        pure (MPC.Adapters.Export.replayParsed MPC.Configs.LeanCore429 state)
+  match ← replayLoop MPC.Configs.LeanCore429 config.trace 0 emptyEnv declarations with
+  | .error err => pure (.error err)
+  | .ok env =>
+      match config.limit? with
+      | some _ => pure (.ok env)
+      | none =>
+          match MPC.Adapters.Export.auditGenerated env state.audit with
+          | .ok () => pure (.ok env)
+          | .error err => pure (.error err)
 
 def run (args : List String) : IO UInt32 := do
   match ← parseArgs args with

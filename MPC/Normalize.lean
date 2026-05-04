@@ -226,6 +226,37 @@ partial def reduceProjection? (manifest : Manifest) (env : Env) (levelParams : L
         | _ => pure none
     | _ => pure none
 
+partial def reduceSimpleRecursorCtor?
+    (name : Name)
+    (levels : List Level)
+    (spec : SimpleInductiveSpec)
+    (info : SimpleRecursorInfo)
+    (paramArgs : List Expr)
+    (motive : Expr)
+    (minorArgs : List Expr)
+    (trailing : List Expr)
+    (ctorName : Name)
+    (fieldArgs : List Expr) : Result (Option Expr) := do
+  let some ctorIndex := findConstructorIndex? ctorName spec.constructors 0
+    | pure none
+  let some ctorInfo := findSimpleRecursorConstructor? ctorName info.constructors
+    | pure none
+  let some minor := listGet? minorArgs ctorIndex
+    | pure none
+  if fieldArgs.length != ctorInfo.fieldCount then
+    pure none
+  else
+    let recursor := .const name levels
+    let recursiveResults ←
+      ctorInfo.recursiveFields.mapM fun rec => do
+        let some fieldValue := listGet? fieldArgs rec.fieldIndex
+          | fail s!"missing recursive field {rec.fieldIndex} for {ctorName}"
+        pure
+          (Expr.mkApps recursor
+            (paramArgs ++ [motive] ++ minorArgs ++ [fieldValue]))
+    let value := Expr.mkApps minor (fieldArgs ++ recursiveResults)
+    pure (some (Expr.mkApps value trailing))
+
 partial def reduceSimpleRecursor? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (name : Name) (info : SimpleRecursorInfo) (levels : List Level) (args : List Expr) :
     Result (Option Expr) := do
@@ -249,33 +280,27 @@ partial def reduceSimpleRecursor? (manifest : Manifest) (env : Env) (levelParams
               let trailing := args.drop required
               let targetWhnf ← whnf manifest env levelParams target
               let (targetHead, targetArgs) := Expr.getAppFnArgs targetWhnf
-              match targetHead with
-              | Expr.const ctorName ctorLevels =>
-                  match findConstructorIndex? ctorName spec.constructors 0 with
-                  | some ctorIndex =>
+              match targetWhnf with
+              | .lit (.nat value) =>
+                  if spec.name != "Nat" then
+                    pure none
+                  else
+                    match value with
+                    | 0 =>
+                        reduceSimpleRecursorCtor? name levels spec info paramArgs motive minorArgs trailing
+                          "Nat.zero" []
+                    | pred + 1 =>
+                        reduceSimpleRecursorCtor? name levels spec info paramArgs motive minorArgs trailing
+                          "Nat.succ" [.lit (.nat pred)]
+              | _ =>
+                  match targetHead with
+                  | Expr.const ctorName ctorLevels =>
                       if ctorLevels.length != spec.levelParams.length then
                         pure none
                       else
-                        let some ctorInfo := findSimpleRecursorConstructor? ctorName info.constructors
-                          | pure none
-                        let some minor := listGet? minorArgs ctorIndex
-                          | pure none
-                        let fieldArgs := targetArgs.drop spec.params.length
-                        if fieldArgs.length != ctorInfo.fieldCount then
-                          pure none
-                        else
-                          let recursor := .const name levels
-                          let recursiveResults ←
-                            ctorInfo.recursiveFields.mapM fun rec => do
-                              let some fieldValue := listGet? fieldArgs rec.fieldIndex
-                                | fail s!"missing recursive field {rec.fieldIndex} for {ctorName}"
-                              pure
-                                (Expr.mkApps recursor
-                                  (paramArgs ++ [motive] ++ minorArgs ++ [fieldValue]))
-                          let value := Expr.mkApps minor (fieldArgs ++ recursiveResults)
-                          pure (some (Expr.mkApps value trailing))
-                  | none => pure none
-              | _ => pure none
+                        reduceSimpleRecursorCtor? name levels spec info paramArgs motive minorArgs trailing
+                          ctorName (targetArgs.drop spec.params.length)
+                  | _ => pure none
         | _ => pure none
     | none => pure none
 

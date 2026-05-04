@@ -214,13 +214,17 @@ partial def defEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (left right : Expr) : Result Unit := do
   match structuralDefEq manifest env levelParams ctx left right with
   | .ok () => pure ()
-  | .error _ =>
+  | .error structuralError =>
       match functionEtaDefEq manifest env levelParams ctx left right with
       | .ok () => pure ()
       | .error _ =>
           match functionEtaDefEq manifest env levelParams ctx right left with
           | .ok () => pure ()
-          | .error _ => proofIrrelevanceDefEq manifest env levelParams ctx left right
+          | .error _ =>
+              match proofIrrelevanceDefEq manifest env levelParams ctx left right with
+              | .ok () => pure ()
+              | .error proofError =>
+                  fail s!"{structuralError.message}; proof irrelevance fallback failed: {proofError.message}"
 
 end
 
