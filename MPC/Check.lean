@@ -34,6 +34,34 @@ def natLiteralConstructorSpine (env : Env) : Nat → Result Expr
       requireNatLiteralSupport env
       pure (.app (.const "Nat.succ" []) (← natLiteralConstructorSpine env n))
 
+def projectionFieldType (env : Env) (structureName : Name) (fieldIndex : Nat)
+    (target targetType : Expr) : Result Expr := do
+  let (head, targetArgs) := targetType.getAppFnArgs
+  match head with
+  | .const targetName levels =>
+      if targetName != structureName then
+        fail s!"projection target has type {targetName}, expected {structureName}"
+      else
+        match env.find? structureName with
+        | some { kind := .inductiveType spec, levelParams, .. } =>
+            if levels.length != levelParams.length then
+              fail s!"projection target has wrong universe arity for {structureName}"
+            else if targetArgs.length != spec.params.length then
+              fail s!"projection target has wrong parameter arity for {structureName}"
+            else
+              match spec.constructors with
+              | [ctor] =>
+                  let some field := listGet? ctor.fields fieldIndex
+                    | fail s!"projection field {fieldIndex} is out of range for {structureName}"
+                  let previousFields :=
+                    (List.range fieldIndex).map fun index =>
+                      .proj structureName index target
+                  pure (field.type.instantiateSourceArgs (targetArgs ++ previousFields))
+              | _ => fail s!"projection target {structureName} is not a one-constructor structure"
+        | some _ => fail s!"projection target {structureName} is not an inductive type"
+        | none => fail s!"unknown projection structure: {structureName}"
+  | _ => fail s!"projection target type is not a structure application: {repr targetType}"
+
 mutual
 
 partial def infer (manifest : Manifest) (env : Env) (levelParams : LevelContext)
@@ -82,8 +110,12 @@ partial def infer (manifest : Manifest) (env : Env) (levelParams : LevelContext)
       check manifest env levelParams ctx value type
       let bodyType ← infer manifest env levelParams (ctx.extend name type) body
       pure (Expr.instantiate1 bodyType value)
-  | .proj _ _ _ =>
-      fail "projection expressions are not implemented yet"
+  | .proj structureName fieldIndex target => do
+      if !manifest.supportsProjections then
+        fail "projection expressions are disabled by the manifest"
+      else
+        let targetType ← whnf manifest env levelParams (← infer manifest env levelParams ctx target)
+        projectionFieldType env structureName fieldIndex target targetType
 
 partial def inferSort (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (expr : Expr) : Result Level := do

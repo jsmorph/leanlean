@@ -20,6 +20,30 @@ def findIndexedConstructor? (name : Name) : List IndexedRecursorConstructorInfo 
 
 mutual
 
+partial def reduceProjection? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (structureName : Name) (fieldIndex : Nat) (target : Expr) : Result (Option Expr) := do
+  if !manifest.supportsProjections then
+    pure none
+  else
+    let targetWhnf ← whnf manifest env levelParams target
+    let (head, args) := targetWhnf.getAppFnArgs
+    match head with
+    | Expr.const ctorName _ =>
+        match env.find? ctorName with
+        | some { kind := .constructor inductiveName _ fieldCount, .. } =>
+            if inductiveName != structureName || fieldIndex >= fieldCount then
+              pure none
+            else
+              match env.find? structureName with
+              | some { kind := .inductiveType spec, .. } =>
+                  match spec.constructors with
+                  | [_] =>
+                      pure (listGet? (args.drop spec.params.length) fieldIndex)
+                  | _ => pure none
+              | _ => pure none
+        | _ => pure none
+    | _ => pure none
+
 partial def reduceSimpleRecursor? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (_name : Name) (info : SimpleRecursorInfo) (_levels : List Level) (args : List Expr) :
     Result (Option Expr) := do
@@ -191,7 +215,9 @@ partial def whnf (manifest : Manifest) (env : Env) (levelParams : LevelContext)
   | .letE _ _ value body =>
       whnf manifest env levelParams (Expr.instantiate1 body value)
   | .proj structureName fieldIndex target => do
-      pure (.proj structureName fieldIndex target)
+      match ← reduceProjection? manifest env levelParams structureName fieldIndex target with
+      | some reduced => whnf manifest env levelParams reduced
+      | none => pure (.proj structureName fieldIndex target)
   | .app fn arg =>
       let appExpr := Expr.app fn arg
       let (head, args) := Expr.getAppFnArgs appExpr

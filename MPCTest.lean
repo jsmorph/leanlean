@@ -248,6 +248,44 @@ def eqNdRecTransport : Expr :=
       eqReflA
     ]
 
+def dPairSpec : SimpleInductiveSpec :=
+  {
+    name := "DPair"
+    resultLevel := .succ .zero
+    params :=
+      [
+        { name := "A", type := type0 },
+        { name := "B", type := pi "x" (.bvar 0) type0 }
+      ]
+    constructors :=
+      [
+        {
+          name := "DPair.mk"
+          fields :=
+            [
+              { name := "fst", type := .bvar 1 },
+              { name := "snd", type := .app (.bvar 1) (.bvar 0) }
+            ]
+        }
+      ]
+  }
+
+def dPairTarget : Expr :=
+  appN
+    (.const "DPair.mk" [])
+    [
+      alphaType,
+      .const "Pred" [],
+      .const "a" [],
+      .const "predProof" []
+    ]
+
+def dPairFst : Expr :=
+  .proj "DPair" 0 dPairTarget
+
+def dPairSnd : Expr :=
+  .proj "DPair" 1 dPairTarget
+
 def badIndexedTargetSpec : IndexedInductiveSpec :=
   { vecSpec with
     name := "BadVec"
@@ -398,6 +436,35 @@ def checkEquality : IO Unit := do
     (normalize MPC.Configs.EqualityPoc env [] eqNdRecTransport)
   expectExprEq "Eq.ndrec value" ndReduced (.const "b" [])
 
+def checkProjections : IO Unit := do
+  let declarations := baseDeclarations ++ equalityDeclarations ++ [.inductive dPairSpec]
+  let baseEnv ← expectOkLabel "projection baseline replay"
+    (replay MPC.Configs.Poc emptyEnv declarations)
+  expectError "projection disabled"
+    (infer MPC.Configs.Poc baseEnv [] [] dPairFst)
+  let env ← expectOkLabel "projection replay"
+    (replay MPC.Configs.ProjectionPoc emptyEnv declarations)
+  expectEnvContains "projection structure" env "DPair"
+  let fstType ← expectOkLabel "first projection inference"
+    (infer MPC.Configs.ProjectionPoc env [] [] dPairFst)
+  expectExprEq "first projection type" fstType alphaType
+  let fstReduced ← expectOkLabel "first projection reduction"
+    (normalize MPC.Configs.ProjectionPoc env [] dPairFst)
+  expectExprEq "first projection value" fstReduced (.const "a" [])
+  let sndType ← expectOkLabel "second projection inference"
+    (infer MPC.Configs.ProjectionPoc env [] [] dPairSnd)
+  expectExprEq "second projection raw type" sndType (.app (.const "Pred" []) dPairFst)
+  let sndTypeReduced ← expectOkLabel "second projection type normalization"
+    (normalize MPC.Configs.ProjectionPoc env [] sndType)
+  expectExprEq "second projection normalized type" sndTypeReduced predA
+  expectOkLabel "second projection conversion"
+    (check MPC.Configs.ProjectionPoc env [] [] dPairSnd predA)
+  let sndReduced ← expectOkLabel "second projection reduction"
+    (normalize MPC.Configs.ProjectionPoc env [] dPairSnd)
+  expectExprEq "second projection value" sndReduced (.const "predProof" [])
+  expectError "projection field out of range"
+    (infer MPC.Configs.ProjectionPoc env [] [] (.proj "DPair" 2 dPairTarget))
+
 def checkQuotients : IO Unit := do
   expectError "quotient primitives disabled"
     (replay MPC.Configs.Poc emptyEnv [.quotientPrimitives])
@@ -466,5 +533,6 @@ def main : IO Unit := do
   checkSimpleInductives
   checkIndexedInductives
   checkEquality
+  checkProjections
   checkQuotients
   checkAdapters
