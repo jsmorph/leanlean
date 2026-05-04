@@ -40,7 +40,7 @@
   - [x] Review the specification to the level needed for an independent implementation.
   - [x] Draft the paper claim structure around specification, implementation, and Lean 4 faithfulness.
   - [x] State remaining Lean 4 divergences and unsupported features in paper-ready form.
-- [ ] Phase 12: External checker interfaces.
+- [x] Phase 12: External checker interfaces.
   - [x] Add typed checker outcomes for acceptance, supported-fragment rejection, unsupported input, and internal checker failure.
   - [x] Add `leanlean-check-module`, which loads compiled Lean modules with `Lean.importModules`, takes explicit root declarations, and replays the root-name closure through the local checker.
   - [x] Specify the first accepted `lean4export` NDJSON fragment.
@@ -62,11 +62,11 @@
 
 ## Top Priorities
 
-The active checker priority remains `leanlean-check-export`.  The module checker gives immediate feedback on compiled Lean modules, but it still relies on Lean's module loader and environment data.  The export checker is the independent artifact checker: it reads a `lean4export` NDJSON file, translates the records into declaration scripts, and replays those scripts through the local kernel without asking Lean to interpret the artifact.
+The external-checker path now centers on `leanlean-check-export`.  The module checker gives immediate feedback on compiled Lean modules, but it still relies on Lean's module loader and environment data.  The export checker is the independent artifact checker: it reads a `lean4export` NDJSON file, translates the records into declaration scripts, and replays those scripts through the local kernel without asking Lean to interpret the artifact.
 
 The export checker should be developed test-first.  Each accepted test should start as a small Lean source file, pass through `lean4export`, and then pass through `leanlean-check-export`; the test therefore checks the exact artifact path we claim to support.  Rejected and unsupported tests should include hand-edited NDJSON fixtures only when the fixture has a written purpose and a readable source companion, because malformed export files can otherwise become opaque test folklore.
 
-The next expressiveness priority inside export replay is Lean's kernel-overridden primitive computation.  The gcd/parity export exposed `Nat.add`, `Nat.mul`, `Nat.pow`, `Nat.beq`, and `Nat.ble`: Lean's prelude declares logical models for these constants, but also marks them with kernel or compiler override behavior, and exported proofs can rely on the resulting definitional equalities.  Closed subtraction added `Nat.sub` through the same admission rule.  The work item is to keep the primitive inventory explicit, then admit each primitive only after `spec.md` states the reduction rule, the implementation checks the declaration shape before reducing, and a generated export test forces that rule through `leanlean-check-export`.
+The next expressiveness priority inside export replay remains Lean's kernel-overridden primitive computation.  The gcd/parity export exposed `Nat.add`, `Nat.mul`, `Nat.pow`, `Nat.beq`, and `Nat.ble`: Lean's prelude declares logical models for these constants, but also marks them with kernel or compiler override behavior, and exported proofs can rely on the resulting definitional equalities.  Closed subtraction added `Nat.sub` through the same admission rule.  The continuing rule is to keep the primitive inventory explicit, then admit each primitive only after `spec.md` states the reduction rule, the implementation checks the declaration shape before reducing, and a generated export test forces that rule through `leanlean-check-export`.
 
 The current `lean4export` binary for local runs is `/tmp/lean4export/.lake/build/bin/lean4export`.  The generated export pipeline accepts with `LEANLEAN_LEAN4EXPORT` set to that path.  It includes the gcd/parity arithmetic theorem, whose export checks 572 declaration entries, and two generated rejection fixtures adapted from Lean Kernel Arena: a bogus theorem proof and an ill-typed projection from a proposition.  It also checks static Arena copies for the `imax` normalization bug and bad constant-level unfolding.  The earlier `omega`-generated proof of the same arithmetic shape remains a separate performance stress case, because its closure reaches broad `Lean.Omega` certificate machinery and slow replay points outside the regular fixture's purpose.
 
