@@ -522,6 +522,7 @@ def reachLargeRecursorOnTarget : Expr :=
 
 def checkBasePackages : IO Unit := do
   expectOkLabel "manifest validation" (Manifest.validate MPC.Configs.Poc)
+  expectOkLabel "Lean 4.29 manifest validation" (Manifest.validate MPC.Configs.LeanCore429)
   let env ← expectOk (replay MPC.Configs.Poc emptyEnv baseDeclarations)
   let literalType ← expectOk (infer MPC.Configs.Poc env [] [] (.lit (.nat 3)))
   expectExprEq "natural literal type" literalType natType
