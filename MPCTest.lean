@@ -108,6 +108,13 @@ def propInductiveSpec : SimpleInductiveSpec :=
       ]
   }
 
+def propOnlyRecursorType : Expr :=
+  pi "motive"
+    (pi "target" (.const "PropOnly" []) propType)
+    (pi "PropOnly.intro.minor"
+      (.app (.bvar 0) (.const "PropOnly.intro" []))
+      (pi "target" (.const "PropOnly" []) (.app (.bvar 2) (.bvar 0))))
+
 def boxSpec : SimpleInductiveSpec :=
   {
     name := "Box"
@@ -428,6 +435,30 @@ def checkSimpleInductives : IO Unit := do
   let boxReduced ← expectOk (normalize MPC.Configs.Poc boxEnv [] boxRecursor)
   expectExprEq "parameterized simple recursor iota" boxReduced (.const "p" [])
 
+def checkPropInductives : IO Unit := do
+  expectError "Prop inductive package requires Prop"
+    (replay { MPC.Configs.InductivePropPoc with prop := .disabled } emptyEnv
+      (baseDeclarations ++ [.inductive propInductiveSpec]))
+  let env ← expectOkLabel "Prop inductive replay"
+    (replay MPC.Configs.InductivePropPoc emptyEnv (baseDeclarations ++ [.inductive propInductiveSpec]))
+  expectEnvContains "Prop inductive constructor" env "PropOnly.intro"
+  expectEnvContains "Prop inductive recursor" env "PropOnly.rec"
+  let recursorType ← expectOkLabel "Prop inductive recursor inference"
+    (infer MPC.Configs.InductivePropPoc env [] [] (.const "PropOnly.rec" []))
+  expectExprEq "Prop inductive recursor type" recursorType propOnlyRecursorType
+  let motive := .lam "x" (.const "PropOnly" []) (.const "P" [])
+  let recursor :=
+    appN
+      (.const "PropOnly.rec" [])
+      [
+        motive,
+        .const "p" [],
+        .const "PropOnly.intro" []
+      ]
+  let reduced ← expectOkLabel "Prop inductive recursor reduction"
+    (normalize MPC.Configs.InductivePropPoc env [] recursor)
+  expectExprEq "Prop inductive recursor value" reduced (.const "p" [])
+
 def checkIndexedInductives : IO Unit := do
   expectError "indexed inductive disabled"
     (replay MPC.Configs.Poc emptyEnv (baseDeclarations ++ [.indexedInductive vecSpec]))
@@ -682,6 +713,7 @@ def main : IO Unit := do
   checkUniverseComparison
   checkBasePackages
   checkSimpleInductives
+  checkPropInductives
   checkIndexedInductives
   checkEquality
   checkProjections

@@ -1,4 +1,5 @@
 import MPC.Check
+import MPC.Packages.Inductive.Prop
 import MPC.Packages.Equality
 import MPC.Packages.Quotient
 
@@ -52,7 +53,8 @@ def simpleConstructorType (spec : SimpleInductiveSpec) (ctor : SimpleConstructor
   bindForall (spec.params ++ ctor.fields) target
 
 def simpleMotiveType (spec : SimpleInductiveSpec) : Expr :=
-  .forallE "target" (simpleInductiveTarget spec) (.sort (.param "u"))
+  .forallE "target" (simpleInductiveTarget spec)
+    (.sort (MPC.Packages.Inductive.Prop.recursorMotiveLevel spec.resultLevel))
 
 def simpleCtorAppFromFields (spec : SimpleInductiveSpec) (previousMinors : Nat)
     (ctor : SimpleConstructorSpec) : Expr :=
@@ -227,47 +229,49 @@ def addSimpleInductive (manifest : Manifest) (env : Env) (spec : SimpleInductive
   if !manifest.supportsSimpleInductives then
     fail "simple inductives are disabled by the manifest"
   else if spec.resultLevel.defEq .zero then
-    fail "the MPC PoC simple inductive package is data-only"
+    MPC.Packages.Inductive.Prop.checkPropInductiveEnabled manifest
   else
-    let _ ← inferSort manifest env spec.levelParams [] (.sort spec.resultLevel)
-    let inductiveInfo : ConstantInfo :=
+    pure ()
+  let _ ← inferSort manifest env spec.levelParams [] (.sort spec.resultLevel)
+  let inductiveInfo : ConstantInfo :=
+    {
+      name := spec.name
+      levelParams := spec.levelParams
+      type := simpleInductiveType spec
+      kind := .inductiveType spec
+  }
+  let env ← Env.add env inductiveInfo
+  let paramCtx := extendBinders [] spec.params
+  for ctor in spec.constructors do
+    checkSimpleInductiveFields manifest env spec.levelParams spec.name paramCtx ctor.fields
+  let mut env := env
+  for pair in enumerate spec.constructors do
+    let ctor := pair.2
+    let type := simpleConstructorType spec ctor
+    let _ ← inferSort manifest env spec.levelParams [] type
+    env ← Env.add env
       {
-        name := spec.name
+        name := ctor.name
         levelParams := spec.levelParams
-        type := simpleInductiveType spec
-        kind := .inductiveType spec
-    }
-    let env ← Env.add env inductiveInfo
-    let paramCtx := extendBinders [] spec.params
-    for ctor in spec.constructors do
-      checkSimpleInductiveFields manifest env spec.levelParams spec.name paramCtx ctor.fields
-    let mut env := env
-    for pair in enumerate spec.constructors do
-      let ctor := pair.2
-      let type := simpleConstructorType spec ctor
-      let _ ← inferSort manifest env spec.levelParams [] type
-      env ← Env.add env
-        {
-          name := ctor.name
-          levelParams := spec.levelParams
-          type
-          kind := .constructor spec.name pair.1 ctor.fields.length
-        }
-    let recursorLevelParams := "u" :: spec.levelParams
-    let recursorType := simpleRecursorType spec
-    let _ ← inferSort manifest env recursorLevelParams [] recursorType
-    Env.add env
-      {
-        name := simpleRecursorName spec
-        levelParams := recursorLevelParams
-        type := recursorType
-        kind :=
-          .recursor
-            {
-              inductiveName := spec.name
-              constructors := spec.constructors.map (fun ctor => (ctor.name, ctor.fields.length))
-            }
+        type
+        kind := .constructor spec.name pair.1 ctor.fields.length
       }
+  let recursorLevelParams :=
+    MPC.Packages.Inductive.Prop.recursorLevelParams spec.resultLevel spec.levelParams
+  let recursorType := simpleRecursorType spec
+  let _ ← inferSort manifest env recursorLevelParams [] recursorType
+  Env.add env
+    {
+      name := simpleRecursorName spec
+      levelParams := recursorLevelParams
+      type := recursorType
+      kind :=
+        .recursor
+          {
+            inductiveName := spec.name
+            constructors := spec.constructors.map (fun ctor => (ctor.name, ctor.fields.length))
+          }
+    }
 
 def checkIndexedConstructor
     (manifest : Manifest)
