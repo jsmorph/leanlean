@@ -132,9 +132,8 @@ def indexedRecursorName (spec : IndexedInductiveSpec) : Name :=
 def fieldTypeUnderAllFields (fieldCount fieldIndex : Nat) (type : Expr) : Expr :=
   type.liftFrom (fieldCount - fieldIndex) 0
 
-def directIndexedRecursiveField? (spec : IndexedInductiveSpec) (fieldCount fieldIndex : Nat)
-    (field : Binder) : Option IndexedRecursiveFieldInfo :=
-  let type := fieldTypeUnderAllFields fieldCount fieldIndex field.type
+partial def indexedRecursiveFieldInType? (spec : IndexedInductiveSpec) (fieldIndex : Nat)
+    (binders : List Binder) (type : Expr) : Option IndexedRecursiveFieldInfo :=
   let (head, args) := type.getAppFnArgs
   match head with
   | .const name levels =>
@@ -144,16 +143,24 @@ def directIndexedRecursiveField? (spec : IndexedInductiveSpec) (fieldCount field
         some
           {
             fieldIndex
+            binders
             indices := args.drop spec.params.length
           }
       else
         none
+  | .forallE name domain body =>
+      indexedRecursiveFieldInType? spec fieldIndex (binders ++ [{ name, type := domain }]) body
   | _ => none
+
+def indexedRecursiveField? (spec : IndexedInductiveSpec) (fieldCount fieldIndex : Nat)
+    (field : Binder) : Option IndexedRecursiveFieldInfo :=
+  indexedRecursiveFieldInType? spec fieldIndex []
+    (fieldTypeUnderAllFields fieldCount fieldIndex field.type)
 
 def indexedRecursiveFields (spec : IndexedInductiveSpec) (ctor : IndexedConstructorSpec) :
     List IndexedRecursiveFieldInfo :=
   enumerate ctor.fields |>.filterMap fun pair =>
-    directIndexedRecursiveField? spec ctor.fields.length pair.1 pair.2
+    indexedRecursiveField? spec ctor.fields.length pair.1 pair.2
 
 def indexedMotiveApp (motive : Expr) (indices : List Expr) (target : Expr) : Expr :=
   Expr.mkApps motive (indices ++ [target])
@@ -168,14 +175,42 @@ def liftIndexExprForMinor (fieldCount previousMinors recursiveCount : Nat) (expr
     Expr :=
   (expr.liftFrom (previousMinors + 1) fieldCount).liftFrom recursiveCount 0
 
+def liftRecursiveFieldExprForMinor (fieldCount previousMinors recursiveIndex localCount : Nat)
+    (expr : Expr) : Expr :=
+  (expr.liftFrom (previousMinors + 1) (localCount + fieldCount)).liftFrom recursiveIndex localCount
+
+def recursiveFieldLocalArgs (localCount : Nat) : List Expr :=
+  sourceOrderBvars localCount 0
+
+def recursiveFieldValue (fieldCount recursiveIndex localCount fieldIndex : Nat) : Expr :=
+  .bvar (localCount + recursiveIndex + fieldCount - 1 - fieldIndex)
+
+def recursiveFieldTarget (fieldCount recursiveIndex : Nat) (rec : IndexedRecursiveFieldInfo) : Expr :=
+  let localCount := rec.binders.length
+  Expr.mkApps
+    (recursiveFieldValue fieldCount recursiveIndex localCount rec.fieldIndex)
+    (recursiveFieldLocalArgs localCount)
+
+partial def liftRecursiveFieldBindersForMinor
+    (fieldCount previousMinors recursiveIndex : Nat) :
+    Nat → List Binder → List Binder
+  | _, [] => []
+  | localCount, binder :: rest =>
+      {
+        binder with
+        type := liftRecursiveFieldExprForMinor fieldCount previousMinors recursiveIndex localCount binder.type
+      } ::
+        liftRecursiveFieldBindersForMinor fieldCount previousMinors recursiveIndex (localCount + 1) rest
+
 def indexedRecursiveHypothesisType (previousMinors fieldCount recursiveIndex : Nat)
     (rec : IndexedRecursiveFieldInfo) : Expr :=
+  let localCount := rec.binders.length
   let indices :=
     rec.indices.map fun index =>
-      liftIndexExprForMinor fieldCount previousMinors recursiveIndex index
-  let motive := .bvar (fieldCount + recursiveIndex + previousMinors)
-  let fieldValue := .bvar (recursiveIndex + fieldCount - 1 - rec.fieldIndex)
-  indexedMotiveApp motive indices fieldValue
+      liftRecursiveFieldExprForMinor fieldCount previousMinors recursiveIndex localCount index
+  let motive := .bvar (localCount + fieldCount + recursiveIndex + previousMinors)
+  let body := indexedMotiveApp motive indices (recursiveFieldTarget fieldCount recursiveIndex rec)
+  bindForall (liftRecursiveFieldBindersForMinor fieldCount previousMinors recursiveIndex 0 rec.binders) body
 
 def indexedRecursiveHypothesisBinders (previousMinors fieldCount : Nat)
     (recFields : List IndexedRecursiveFieldInfo) : List Binder :=

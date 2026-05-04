@@ -191,6 +191,9 @@ def vecType (index : Expr) : Expr :=
 def propVecType (index : Expr) : Expr :=
   appN (.const "PropVec" []) [natType, index]
 
+def reachType (index : Expr) : Expr :=
+  appN (.const "Reach" []) [.const "Alpha" [], .const "r" [], index]
+
 def vecSpec : IndexedInductiveSpec :=
   {
     name := "Vec"
@@ -382,6 +385,114 @@ def propIndexedSpec : IndexedInductiveSpec :=
       ]
   }
 
+def reachSpec : IndexedInductiveSpec :=
+  {
+    name := "Reach"
+    resultLevel := .zero
+    params :=
+      [
+        { name := "A", type := type0 },
+        { name := "R", type := pi "x" (.bvar 0) (pi "y" (.bvar 1) propType) }
+      ]
+    indices :=
+      [
+        { name := "x", type := .bvar 1 }
+      ]
+    constructors :=
+      [
+        {
+          name := "Reach.intro"
+          fields :=
+            [
+              { name := "x", type := .bvar 1 },
+              {
+                name := "step"
+                type :=
+                  pi "y" (.bvar 2)
+                    (pi "h" (appN (.bvar 2) [.bvar 0, .bvar 1])
+                      (appN (.const "Reach" []) [.bvar 4, .bvar 3, .bvar 1]))
+              }
+            ]
+          targetIndices := [.bvar 1]
+        }
+      ]
+  }
+
+def reachStepTypeA : Expr :=
+  pi "y" alphaType
+    (pi "h" (appN (.const "r" []) [.bvar 0, .const "a" []])
+      (reachType (.bvar 1)))
+
+def reachStepTypeForBoundX : Expr :=
+  pi "y" alphaType
+    (pi "h" (appN (.const "r" []) [.bvar 0, .bvar 1])
+      (reachType (.bvar 1)))
+
+def reachIHTypeForBoundX : Expr :=
+  pi "y" alphaType
+    (pi "h" (appN (.const "r" []) [.bvar 0, .bvar 2])
+      (.const "P" []))
+
+def useReachIHType : Expr :=
+  pi "x" alphaType
+    (pi "ih" (pi "y" alphaType (pi "h" (appN (.const "r" []) [.bvar 0, .bvar 1]) (.const "P" [])))
+      (.const "P" []))
+
+def reachPreDeclarations : List Declaration :=
+  [
+    .axiom "Alpha" [] type0,
+    .axiom "r" [] relType,
+    .axiom "a" [] alphaType,
+    .axiom "UseReachIH" [] useReachIHType
+  ]
+
+def reachPostDeclarations : List Declaration :=
+  [
+    .axiom "step" [] reachStepTypeA
+  ]
+
+def reachMotive : Expr :=
+  .lam "x" alphaType
+    (.lam "target" (reachType (.bvar 0)) (.const "P" []))
+
+def reachMinor : Expr :=
+  .lam "x" alphaType
+    (.lam "step" reachStepTypeForBoundX
+      (.lam "ih" reachIHTypeForBoundX
+        (appN (.const "UseReachIH" []) [.bvar 2, .bvar 0])))
+
+def reachTarget : Expr :=
+  appN (.const "Reach.intro" []) [alphaType, .const "r" [], .const "a" [], .const "step" []]
+
+def reachRecursorOnTarget : Expr :=
+  appN
+    (.const "Reach.rec" [])
+    [
+      alphaType,
+      .const "r" [],
+      reachMotive,
+      reachMinor,
+      .const "a" [],
+      reachTarget
+    ]
+
+def reachExpectedIH : Expr :=
+  .lam "y" alphaType
+    (.lam "h" (appN (.const "r" []) [.bvar 0, .const "a" []])
+      (appN
+        (.const "Reach.rec" [])
+        [
+          alphaType,
+          .const "r" [],
+          reachMotive.lift 2,
+          reachMinor.lift 2,
+          .bvar 1,
+          appN (.const "step" []) [.bvar 1, .bvar 0]
+        ]))
+
+def reachExpectedReduction : Expr :=
+  appN (.const "UseReachIH" []) [.const "a" [], reachExpectedIH]
+
 def checkBasePackages : IO Unit := do
   expectOkLabel "manifest validation" (Manifest.validate MPC.Configs.Poc)
   let env ← expectOk (replay MPC.Configs.Poc emptyEnv baseDeclarations)
@@ -529,6 +640,18 @@ def checkIndexedPropInductives : IO Unit := do
   let reduced ← expectOkLabel "indexed Prop recursor reduction"
     (normalize MPC.Configs.IndexedPropPoc env [] recursor)
   expectExprEq "indexed Prop recursor value" reduced (.const "p" [])
+
+def checkIndexedRecursiveProofFields : IO Unit := do
+  let env ← expectOkLabel "Reach replay"
+    (replay MPC.Configs.IndexedPropPoc emptyEnv
+      (baseDeclarations ++ reachPreDeclarations ++ [.indexedInductive reachSpec] ++ reachPostDeclarations))
+  expectEnvContains "Reach constructor" env "Reach.intro"
+  expectEnvContains "Reach recursor" env "Reach.rec"
+  let _recursorType ← expectOkLabel "Reach recursor inference"
+    (infer MPC.Configs.IndexedPropPoc env [] [] (.const "Reach.rec" []))
+  let reduced ← expectOkLabel "Reach recursor reduction"
+    (normalize MPC.Configs.IndexedPropPoc env [] reachRecursorOnTarget)
+  expectExprEq "Reach recursive proof-field value" reduced reachExpectedReduction
 
 def checkEquality : IO Unit := do
   expectError "equality primitives disabled"
@@ -744,6 +867,7 @@ def main : IO Unit := do
   checkPropInductives
   checkIndexedInductives
   checkIndexedPropInductives
+  checkIndexedRecursiveProofFields
   checkEquality
   checkProjections
   checkPrimitiveNat

@@ -18,6 +18,53 @@ def findIndexedConstructor? (name : Name) : List IndexedRecursorConstructorInfo 
   | ctor :: rest =>
       if ctor.name == name then some ctor else findIndexedConstructor? name rest
 
+def recursorSourceOrderBvars (count offset : Nat) : List Expr :=
+  (List.range count).map fun index =>
+    .bvar (offset + count - 1 - index)
+
+def liftExprs (amount : Nat) (exprs : List Expr) : List Expr :=
+  exprs.map fun expr => expr.lift amount
+
+def instantiateSourceArgsAfterLocals (expr : Expr) (localCount : Nat) (args : List Expr) :
+    Expr :=
+  args.reverse.foldl (fun expr arg => Expr.instantiateAt localCount arg expr) expr
+
+def instantiateRecursiveFieldBinderType
+    (paramArgs fieldArgs : List Expr) (boundLocals : Nat) (binder : Binder) : Expr :=
+  instantiateSourceArgsAfterLocals binder.type boundLocals (paramArgs ++ fieldArgs)
+
+def recursiveFieldBody
+    (recursor motive : Expr)
+    (paramArgs minorArgs fieldArgs : List Expr)
+    (fieldValue : Expr)
+    (rec : IndexedRecursiveFieldInfo)
+    (boundLocals : Nat) : Expr :=
+  let localArgs := recursorSourceOrderBvars boundLocals 0
+  let recursiveIndices :=
+    rec.indices.map fun index =>
+      instantiateSourceArgsAfterLocals index boundLocals (paramArgs ++ fieldArgs)
+  let target := Expr.mkApps (fieldValue.lift boundLocals) localArgs
+  Expr.mkApps recursor
+    (liftExprs boundLocals paramArgs ++
+      [motive.lift boundLocals] ++
+      liftExprs boundLocals minorArgs ++
+      recursiveIndices ++
+      [target])
+
+partial def recursiveFieldResult
+    (recursor motive : Expr)
+    (paramArgs minorArgs fieldArgs : List Expr)
+    (fieldValue : Expr)
+    (rec : IndexedRecursiveFieldInfo) :
+    Nat → List Binder → Expr
+  | boundLocals, [] =>
+      recursiveFieldBody recursor motive paramArgs minorArgs fieldArgs fieldValue rec boundLocals
+  | boundLocals, binder :: rest =>
+      .lam binder.name
+        (instantiateRecursiveFieldBinderType paramArgs fieldArgs boundLocals binder)
+        (recursiveFieldResult recursor motive paramArgs minorArgs fieldArgs fieldValue rec
+          (boundLocals + 1) rest)
+
 def natTypeExpr : Expr :=
   .const "Nat" []
 
@@ -252,12 +299,9 @@ partial def reduceIndexedRecursor? (manifest : Manifest) (env : Env) (levelParam
                         ctorInfo.recursiveFields.mapM fun rec => do
                           let some fieldValue := listGet? fieldArgs rec.fieldIndex
                             | fail s!"missing recursive field {rec.fieldIndex} for {ctorName}"
-                          let recursiveIndices :=
-                            rec.indices.map fun index =>
-                              index.instantiateSourceArgs (paramArgs ++ fieldArgs)
                           pure
-                            (Expr.mkApps recursor
-                              (paramArgs ++ [motive] ++ minorArgs ++ recursiveIndices ++ [fieldValue]))
+                            (recursiveFieldResult recursor motive paramArgs minorArgs fieldArgs
+                              fieldValue rec 0 rec.binders)
                       let value := Expr.mkApps minor (fieldArgs ++ recursiveResults)
                       pure (some (Expr.mkApps value trailing))
               | _ => pure none

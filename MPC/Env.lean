@@ -38,6 +38,7 @@ structure SimpleRecursorInfo where
 
 structure IndexedRecursiveFieldInfo where
   fieldIndex : Nat
+  binders : List Binder := []
   indices : List Expr
   deriving BEq, Repr, Inhabited
 
