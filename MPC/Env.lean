@@ -16,9 +16,40 @@ structure SimpleInductiveSpec where
   constructors : List SimpleConstructorSpec
   deriving BEq, Repr, Inhabited
 
+structure IndexedConstructorSpec where
+  name : Name
+  fields : List Binder := []
+  targetIndices : List Expr
+  deriving BEq, Repr, Inhabited
+
+structure IndexedInductiveSpec where
+  name : Name
+  levelParams : LevelContext := []
+  params : List Binder := []
+  indices : List Binder
+  resultLevel : Level
+  constructors : List IndexedConstructorSpec
+  deriving BEq, Repr, Inhabited
+
 structure SimpleRecursorInfo where
   inductiveName : Name
   constructors : List (Name × Nat)
+  deriving BEq, Repr, Inhabited
+
+structure IndexedRecursiveFieldInfo where
+  fieldIndex : Nat
+  indices : List Expr
+  deriving BEq, Repr, Inhabited
+
+structure IndexedRecursorConstructorInfo where
+  name : Name
+  fieldCount : Nat
+  recursiveFields : List IndexedRecursiveFieldInfo
+  deriving BEq, Repr, Inhabited
+
+structure IndexedRecursorInfo where
+  inductiveName : Name
+  constructors : List IndexedRecursorConstructorInfo
   deriving BEq, Repr, Inhabited
 
 inductive ConstantKind where
@@ -27,8 +58,10 @@ inductive ConstantKind where
   | opaque
   | theorem
   | inductiveType : SimpleInductiveSpec → ConstantKind
+  | indexedInductiveType : IndexedInductiveSpec → ConstantKind
   | constructor : Name → Nat → Nat → ConstantKind
   | recursor : SimpleRecursorInfo → ConstantKind
+  | indexedRecursor : IndexedRecursorInfo → ConstantKind
   deriving BEq, Repr, Inhabited
 
 structure ConstantInfo where

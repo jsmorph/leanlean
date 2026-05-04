@@ -21,5 +21,6 @@ import MPC.Packages.Inductive.Admission
 import MPC.Packages.Inductive.Reduction
 import MPC.Configs.Poc
 import MPC.Configs.LeanCore429
+import MPC.Configs.IndexedPoc
 import MPC.Adapters.Script
 import MPC.Adapters.NDJSON

@@ -99,7 +99,7 @@ def extendBinders : Context → List Binder → Context
 def addSimpleInductive (manifest : Manifest) (env : Env) (spec : SimpleInductiveSpec) :
     Result Env := do
   Manifest.validate manifest
-  if manifest.inductives != .simple then
+  if !manifest.supportsSimpleInductives then
     fail "simple inductives are disabled by the manifest"
   else if spec.resultLevel.defEq .zero then
     fail "the MPC PoC simple inductive package is data-only"
@@ -165,6 +165,8 @@ def addDecl (manifest : Manifest) (env : Env) : Declaration → Result Env
           Env.add env { name, levelParams, type, value? := some value, kind := .theorem }
       | .inductive spec =>
           addSimpleInductive manifest env spec
+      | .indexedInductive _ =>
+          fail "indexed inductives are not implemented yet"
 
 def replay (manifest : Manifest) : Env → List Declaration → Result Env
   | env, [] => pure env

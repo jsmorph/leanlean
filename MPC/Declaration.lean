@@ -8,6 +8,7 @@ inductive Declaration where
   | opaque : Name → LevelContext → Expr → Expr → Declaration
   | theorem : Name → LevelContext → Expr → Expr → Declaration
   | inductive : SimpleInductiveSpec → Declaration
+  | indexedInductive : IndexedInductiveSpec → Declaration
   deriving BEq, Repr, Inhabited
 
 end MPC
