@@ -5,23 +5,23 @@ namespace MPC
 inductive PropMode where
   | disabled
   | enabled
-  deriving BEq, Repr
+  deriving BEq, Repr, Inhabited
 
 inductive LiteralMode where
   | none
   | nat
-  deriving BEq, Repr
+  deriving BEq, Repr, Inhabited
 
 inductive InductiveMode where
   | none
   | simple
-  deriving BEq, Repr
+  deriving BEq, Repr, Inhabited
 
 structure Manifest where
   prop : PropMode := .disabled
   literals : LiteralMode := .none
   inductives : InductiveMode := .none
-  deriving BEq, Repr
+  deriving BEq, Repr, Inhabited
 
 def Manifest.validate (_manifest : Manifest) : Result Unit :=
   pure ()

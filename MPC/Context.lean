@@ -9,4 +9,17 @@ structure Binder where
 
 abbrev Context := List Binder
 
+def Context.get? : Context → Nat → Option Binder
+  | [], _ => none
+  | binder :: _, 0 => some binder
+  | _ :: rest, index + 1 => get? rest index
+
+def Context.lookup? (ctx : Context) (index : Nat) : Option Binder :=
+  match Context.get? ctx index with
+  | some binder => some { binder with type := binder.type.lift (index + 1) }
+  | none => none
+
+def Context.extend (ctx : Context) (name : Name) (type : Expr) : Context :=
+  { name, type } :: ctx
+
 end MPC

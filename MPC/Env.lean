@@ -10,7 +10,7 @@ inductive ConstantKind where
   | theorem
   | constructor : Name → Nat → ConstantKind
   | recursor : Name → ConstantKind
-  deriving BEq, Repr
+  deriving BEq, Repr, Inhabited
 
 structure ConstantInfo where
   name : Name
@@ -18,7 +18,7 @@ structure ConstantInfo where
   type : Expr
   value? : Option Expr := none
   kind : ConstantKind
-  deriving BEq, Repr
+  deriving BEq, Repr, Inhabited
 
 abbrev Env := List ConstantInfo
 
@@ -36,5 +36,23 @@ def Env.add (env : Env) (info : ConstantInfo) : Result Env :=
     fail s!"constant already exists: {info.name}"
   else
     pure (info :: env)
+
+def ConstantInfo.levelSubst? (info : ConstantInfo) (levels : List Level) :
+    Option (List (Name × Level)) :=
+  if info.levelParams.length == levels.length then
+    some (info.levelParams.zip levels)
+  else
+    none
+
+def ConstantInfo.instantiateType? (info : ConstantInfo) (levels : List Level) :
+    Option Expr := do
+  let subst ← info.levelSubst? levels
+  pure (info.type.instantiateLevels subst)
+
+def ConstantInfo.instantiateValue? (info : ConstantInfo) (levels : List Level) :
+    Option Expr := do
+  let value ← info.value?
+  let subst ← info.levelSubst? levels
+  pure (value.instantiateLevels subst)
 
 end MPC

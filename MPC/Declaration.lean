@@ -7,6 +7,6 @@ inductive Declaration where
   | definition : Name → LevelContext → Expr → Expr → Declaration
   | opaque : Name → LevelContext → Expr → Expr → Declaration
   | theorem : Name → LevelContext → Expr → Expr → Declaration
-  deriving BEq, Repr
+  deriving BEq, Repr, Inhabited
 
 end MPC

@@ -2,7 +2,7 @@ namespace MPC
 
 structure Error where
   message : String
-  deriving BEq, Repr
+  deriving BEq, Repr, Inhabited
 
 abbrev Result := Except Error
 
