@@ -151,6 +151,52 @@ def vecSpec : IndexedInductiveSpec :=
       ]
   }
 
+def alphaType : Expr :=
+  .const "Alpha" []
+
+def betaType : Expr :=
+  .const "Beta" []
+
+def relType : Expr :=
+  pi "x" alphaType (pi "y" alphaType propType)
+
+def fnType : Expr :=
+  pi "x" alphaType betaType
+
+def eqBeta (left right : Expr) : Expr :=
+  appN (.const "Eq" [.succ .zero]) [betaType, left, right]
+
+def hType : Expr :=
+  pi "x" alphaType
+    (pi "y" alphaType
+      (pi "rel" (appN (.const "r" []) [.bvar 1, .bvar 0])
+        (eqBeta (.app (.const "f" []) (.bvar 2)) (.app (.const "f" []) (.bvar 1)))))
+
+def quotientDeclarations : List Declaration :=
+  [
+    .axiom "Alpha" [] type0,
+    .axiom "Beta" [] type0,
+    .axiom "r" [] relType,
+    .axiom "f" [] fnType,
+    .axiom "h" [] hType,
+    .axiom "a" [] alphaType
+  ]
+
+def quotMkA : Expr :=
+  appN (.const "Quot.mk" [.succ .zero]) [alphaType, .const "r" [], .const "a" []]
+
+def quotLiftA : Expr :=
+  appN
+    (.const "Quot.lift" [.succ .zero, .succ .zero])
+    [
+      alphaType,
+      .const "r" [],
+      betaType,
+      .const "f" [],
+      .const "h" [],
+      quotMkA
+    ]
+
 def badIndexedTargetSpec : IndexedInductiveSpec :=
   { vecSpec with
     name := "BadVec"
@@ -275,6 +321,22 @@ def checkIndexedInductives : IO Unit := do
   expectError "proposition-valued indexed inductive"
     (replay MPC.Configs.IndexedPoc emptyEnv (baseDeclarations ++ [.indexedInductive propIndexedSpec]))
 
+def checkQuotients : IO Unit := do
+  expectError "quotient primitives disabled"
+    (replay MPC.Configs.Poc emptyEnv [.quotientPrimitives])
+  expectError "duplicate quotient primitives"
+    (replay MPC.Configs.QuotPoc emptyEnv [.quotientPrimitives, .quotientPrimitives])
+  let env ← expectOkLabel "quotient replay"
+    (replay MPC.Configs.QuotPoc emptyEnv
+      (baseDeclarations ++ [.quotientPrimitives] ++ quotientDeclarations))
+  expectEnvContains "quotient primitives" env "Quot.lift"
+  let inferred ← expectOkLabel "quotient lift inference"
+    (infer MPC.Configs.QuotPoc env [] [] quotLiftA)
+  expectExprEq "quotient lift type" inferred betaType
+  let reduced ← expectOkLabel "quotient lift reduction"
+    (normalize MPC.Configs.QuotPoc env [] quotLiftA)
+  expectExprEq "quotient lift value" reduced (.app (.const "f" []) (.const "a" []))
+
 def scriptInput : String :=
   "axiom Nat Type0\n" ++
   "axiom Nat.zero Nat\n" ++
@@ -323,4 +385,5 @@ def main : IO Unit := do
   checkBasePackages
   checkSimpleInductives
   checkIndexedInductives
+  checkQuotients
   checkAdapters

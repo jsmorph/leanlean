@@ -26,7 +26,7 @@ mutual
 partial def reduceSimpleRecursor? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (_name : Name) (info : SimpleRecursorInfo) (_levels : List Level) (args : List Expr) :
     Result (Option Expr) := do
-  if manifest.inductives != .simple then
+  if !manifest.supportsSimpleInductives then
     pure none
   else
     match env.find? info.inductiveName with
@@ -114,6 +114,43 @@ partial def reduceIndexedRecursor? (manifest : Manifest) (env : Env) (levelParam
         | _ => pure none
     | none => pure none
 
+partial def reduceQuotLift? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (_levels : List Level) (args : List Expr) : Result (Option Expr) := do
+  if !manifest.supportsQuotients then
+    pure none
+  else
+    let required := 6
+    if args.length < required then
+      pure none
+    else
+      let some typeArg := listGet? args 0
+        | pure none
+      let some relationArg := listGet? args 1
+        | pure none
+      let some fnArg := listGet? args 3
+        | pure none
+      let some quotientArg := listGet? args 5
+        | pure none
+      let trailing := args.drop required
+      let quotientWhnf ← whnf manifest env levelParams quotientArg
+      let (quotientHead, quotientArgs) := quotientWhnf.getAppFnArgs
+      match quotientHead with
+      | Expr.const mkName _ =>
+          match env.find? mkName with
+          | some { kind := .quotientMk, .. } =>
+              let some mkTypeArg := listGet? quotientArgs 0
+                | pure none
+              let some mkRelationArg := listGet? quotientArgs 1
+                | pure none
+              let some valueArg := listGet? quotientArgs 2
+                | pure none
+              if mkTypeArg == typeArg && mkRelationArg == relationArg then
+                pure (some (Expr.mkApps (.app fnArg valueArg) trailing))
+              else
+                pure none
+          | _ => pure none
+      | _ => pure none
+
 partial def whnf (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (expr : Expr) : Result Expr := do
   match expr with
@@ -132,6 +169,10 @@ partial def whnf (manifest : Manifest) (env : Env) (levelParams : LevelContext)
               | none => pure (Expr.mkApps head args)
           | some { kind := .indexedRecursor info, .. } =>
               match ← reduceIndexedRecursor? manifest env levelParams name info levels args with
+              | some reduced => whnf manifest env levelParams reduced
+              | none => pure (Expr.mkApps head args)
+          | some { kind := .quotientLift, .. } =>
+              match ← reduceQuotLift? manifest env levelParams levels args with
               | some reduced => whnf manifest env levelParams reduced
               | none => pure (Expr.mkApps head args)
           | _ => pure (Expr.mkApps head args)

@@ -1,4 +1,5 @@
 import MPC.Check
+import MPC.Packages.Quotient
 
 namespace MPC
 
@@ -350,7 +351,7 @@ def addDecl (manifest : Manifest) (env : Env) : Declaration → Result Env
       | .indexedInductive spec =>
           addIndexedInductive manifest env spec
       | .quotientPrimitives =>
-          fail "quotient primitives are not implemented yet"
+          MPC.Packages.Quotient.addQuotientPrimitives manifest env
 
 def replay (manifest : Manifest) : Env → List Declaration → Result Env
   | env, [] => pure env

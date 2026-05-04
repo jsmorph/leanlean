@@ -19,6 +19,7 @@ import MPC.Packages.Inductive.Positivity
 import MPC.Packages.Inductive.Recursor
 import MPC.Packages.Inductive.Admission
 import MPC.Packages.Inductive.Reduction
+import MPC.Packages.Quotient
 import MPC.Configs.Poc
 import MPC.Configs.LeanCore429
 import MPC.Configs.IndexedPoc
