@@ -22,11 +22,13 @@ import MPC.Packages.Inductive.Reduction
 import MPC.Packages.Equality
 import MPC.Packages.Quotient
 import MPC.Packages.Projection
+import MPC.Packages.PrimitiveNat
 import MPC.Configs.Poc
 import MPC.Configs.LeanCore429
 import MPC.Configs.IndexedPoc
 import MPC.Configs.EqualityPoc
 import MPC.Configs.QuotPoc
 import MPC.Configs.ProjectionPoc
+import MPC.Configs.PrimitiveNatPoc
 import MPC.Adapters.Script
 import MPC.Adapters.NDJSON

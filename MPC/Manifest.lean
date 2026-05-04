@@ -38,6 +38,11 @@ inductive ProjectionMode where
   | core
   deriving BEq, Repr, Inhabited
 
+inductive PrimitiveReductionMode where
+  | disabled
+  | nat429
+  deriving BEq, Repr, Inhabited
+
 structure Manifest where
   declarations : DeclarationMode := .disabled
   prop : PropMode := .disabled
@@ -46,6 +51,7 @@ structure Manifest where
   equality : EqualityMode := .disabled
   quotients : QuotientMode := .disabled
   projections : ProjectionMode := .disabled
+  primitiveReductions : PrimitiveReductionMode := .disabled
   deriving BEq, Repr, Inhabited
 
 def Manifest.validate (manifest : Manifest) : Result Unit := do
@@ -68,5 +74,8 @@ def Manifest.supportsEquality (manifest : Manifest) : Bool :=
 
 def Manifest.supportsProjections (manifest : Manifest) : Bool :=
   manifest.projections == .core
+
+def Manifest.supportsNatPrimitiveReductions (manifest : Manifest) : Bool :=
+  manifest.primitiveReductions == .nat429
 
 end MPC
