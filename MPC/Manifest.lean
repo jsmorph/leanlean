@@ -23,6 +23,11 @@ inductive InductiveMode where
   | indexed
   deriving BEq, Repr, Inhabited
 
+inductive InductivePropMode where
+  | disabled
+  | propOnly
+  deriving BEq, Repr, Inhabited
+
 inductive QuotientMode where
   | disabled
   | primitive
@@ -53,6 +58,7 @@ structure Manifest where
   prop : PropMode := .disabled
   literals : LiteralMode := .none
   inductives : InductiveMode := .none
+  inductiveProp : InductivePropMode := .disabled
   equality : EqualityMode := .disabled
   quotients : QuotientMode := .disabled
   projections : ProjectionMode := .disabled
@@ -71,6 +77,9 @@ def Manifest.supportsSimpleInductives (manifest : Manifest) : Bool :=
 
 def Manifest.supportsIndexedInductives (manifest : Manifest) : Bool :=
   manifest.inductives == .indexed
+
+def Manifest.supportsPropInductives (manifest : Manifest) : Bool :=
+  manifest.inductiveProp == .propOnly
 
 def Manifest.supportsQuotients (manifest : Manifest) : Bool :=
   manifest.quotients == .primitive
