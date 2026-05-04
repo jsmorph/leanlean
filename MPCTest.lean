@@ -111,6 +111,71 @@ def boxSpec : SimpleInductiveSpec :=
       ]
   }
 
+def natZero : Expr :=
+  .const "Nat.zero" []
+
+def natSucc (value : Expr) : Expr :=
+  .app (.const "Nat.succ" []) value
+
+def vecType (index : Expr) : Expr :=
+  appN (.const "Vec" []) [natType, index]
+
+def vecSpec : IndexedInductiveSpec :=
+  {
+    name := "Vec"
+    resultLevel := .succ .zero
+    params :=
+      [
+        { name := "A", type := type0 }
+      ]
+    indices :=
+      [
+        { name := "n", type := natType }
+      ]
+    constructors :=
+      [
+        {
+          name := "Vec.nil"
+          targetIndices := [natZero]
+        },
+        {
+          name := "Vec.cons"
+          fields :=
+            [
+              { name := "n", type := natType },
+              { name := "head", type := .bvar 1 },
+              { name := "tail", type := appN (.const "Vec" []) [.bvar 2, .bvar 1] }
+            ]
+          targetIndices := [natSucc (.bvar 2)]
+        }
+      ]
+  }
+
+def badIndexedTargetSpec : IndexedInductiveSpec :=
+  { vecSpec with
+    name := "BadVec"
+    constructors :=
+      [
+        {
+          name := "BadVec.nil"
+          targetIndices := []
+        }
+      ]
+  }
+
+def propIndexedSpec : IndexedInductiveSpec :=
+  { vecSpec with
+    name := "PropVec"
+    resultLevel := .zero
+    constructors :=
+      [
+        {
+          name := "PropVec.nil"
+          targetIndices := [natZero]
+        }
+      ]
+  }
+
 def checkBasePackages : IO Unit := do
   expectOkLabel "manifest validation" (Manifest.validate MPC.Configs.Poc)
   let env ← expectOk (replay MPC.Configs.Poc emptyEnv baseDeclarations)
@@ -167,6 +232,49 @@ def checkSimpleInductives : IO Unit := do
   let boxReduced ← expectOk (normalize MPC.Configs.Poc boxEnv [] boxRecursor)
   expectExprEq "parameterized simple recursor iota" boxReduced (.const "p" [])
 
+def checkIndexedInductives : IO Unit := do
+  expectError "indexed inductive disabled"
+    (replay MPC.Configs.Poc emptyEnv (baseDeclarations ++ [.indexedInductive vecSpec]))
+  let env ← expectOkLabel "Vec replay"
+    (replay MPC.Configs.IndexedPoc emptyEnv (baseDeclarations ++ [.indexedInductive vecSpec]))
+  expectEnvContains "indexed inductive" env "Vec.rec"
+  let motive :=
+    .lam "n" natType
+      (.lam "target" (vecType (.bvar 0)) (.const "P" []))
+  let nilMinor := .const "p" []
+  let consMinor :=
+    .lam "n" natType
+      (.lam "head" natType
+        (.lam "tail" (vecType (.bvar 1))
+          (.lam "ih" (.const "P" []) (.bvar 0))))
+  let nilTarget := appN (.const "Vec.nil" []) [natType]
+  let consTarget :=
+    appN
+      (.const "Vec.cons" [])
+      [
+        natType,
+        natZero,
+        natZero,
+        nilTarget
+      ]
+  let recursor :=
+    appN
+      (.const "Vec.rec" [.zero])
+      [
+        natType,
+        motive,
+        nilMinor,
+        consMinor,
+        natSucc natZero,
+        consTarget
+      ]
+  let reduced ← expectOk (normalize MPC.Configs.IndexedPoc env [] recursor)
+  expectExprEq "indexed recursor nested iota" reduced (.const "p" [])
+  expectError "indexed constructor target arity"
+    (replay MPC.Configs.IndexedPoc emptyEnv (baseDeclarations ++ [.indexedInductive badIndexedTargetSpec]))
+  expectError "proposition-valued indexed inductive"
+    (replay MPC.Configs.IndexedPoc emptyEnv (baseDeclarations ++ [.indexedInductive propIndexedSpec]))
+
 def scriptInput : String :=
   "axiom Nat Type0\n" ++
   "axiom Nat.zero Nat\n" ++
@@ -214,4 +322,5 @@ def checkAdapters : IO Unit := do
 def main : IO Unit := do
   checkBasePackages
   checkSimpleInductives
+  checkIndexedInductives
   checkAdapters
