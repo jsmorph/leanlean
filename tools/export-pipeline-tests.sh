@@ -89,6 +89,9 @@ run_generated "arena-bogus-proof" "rejected" 1 "Faithfulness.Arena.Bogus1" "Lean
 run_generated "arena-proj-of-prop" "rejected" 1 "Faithfulness.Arena.ProjOfProp" "LeanLeanFaithfulness.Arena.ProjOfProp.badFalse" "LeanLean.Expr.const \"True\" [] vs LeanLean.Expr.const \"False\" []"
 run_static "arena-level-imax-normalization" "rejected" 1 "testdata/arena/level-imax-normalization.ndjson" "while replaying [\"down\"]"
 run_static "arena-constlevels" "rejected" 1 "testdata/arena/constlevels.ndjson" "while replaying [\"_test\"]"
+run_static "unsupported-partial-definition" "unsupported" 2 "testdata/unsupported/partial-definition.ndjson" "partial definition is outside the local export checker"
+run_static "unsupported-unsafe-axiom" "unsupported" 2 "testdata/unsupported/unsafe-axiom.ndjson" "trusted replay rejects unsafe axiom"
+run_static "unsupported-expression" "unsupported" 2 "testdata/unsupported/unsupported-expression.ndjson" "expression entry must have exactly one expression constructor"
 
 echo "arena-input: box-unbox"
 set +e
