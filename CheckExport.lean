@@ -17,7 +17,7 @@ def usage : String :=
   "usage: leanlean-check-export [--ordered | --dependency-aware] [<export.ndjson>]\n" ++
   "       leanlean-check-export [--ordered | --dependency-aware] --input <export.ndjson>\n" ++
   "       leanlean-check-export --self-check-roots <roots.txt> [<export.ndjson>]\n" ++
-  "       leanlean-check-export --gap-report [<export.ndjson>]\n" ++
+  "       leanlean-check-export --gap-report [--self-check-roots <roots.txt>] [<export.ndjson>]\n" ++
   "       IN=<export.ndjson> leanlean-check-export [--ordered | --dependency-aware]"
 
 def filePath (path : String) : Except String System.FilePath :=
@@ -137,13 +137,26 @@ def run (args : List String) : IO UInt32 := do
   | .ok config => do
       let input ← IO.FS.readFile config.inputPath
       if config.gapReport then
-        if config.rootsPath?.isSome then
-          IO.eprintln "error: --gap-report cannot be combined with --self-check-roots"
-          return 2
-        else
-          let outcome := Export.replayGapReportString input
-          printGapReport config outcome
-          return outcome.exitCode
+        match config.rootsPath? with
+        | some rootsPath =>
+            if config.replayMode != .ordered then
+              IO.eprintln "error: --self-check-roots requires ordered replay"
+              return 2
+            match ← parseRootFile rootsPath with
+            | .error err => do
+                IO.eprintln s!"error: could not read self-check roots {rootsPath}: {err}"
+                return 2
+            | .ok roots => do
+                if roots.isEmpty then
+                  IO.eprintln s!"error: self-check root file is empty: {rootsPath}"
+                  return 2
+                let outcome := Export.rootedReplayGapReportString input roots
+                printGapReport config outcome
+                return outcome.exitCode
+        | none =>
+            let outcome := Export.replayGapReportString input
+            printGapReport config outcome
+            return outcome.exitCode
       else match config.rootsPath? with
       | some rootsPath =>
           if config.replayMode != .ordered then

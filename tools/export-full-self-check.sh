@@ -73,6 +73,35 @@ run_export_full_self_check() {
     echo "error: $label output did not report checked declarations" >&2
     exit 1
   fi
+
+  echo "export-full-self-check-gap: $label"
+  set +e
+  output="$("$checker" --gap-report --self-check-roots "$roots_file" "$artifact" 2>&1)"
+  code="$?"
+  set -e
+
+  printf '%s\n' "$output"
+  if [[ "$code" != "0" ]]; then
+    echo "error: $label rooted gap report returned exit code $code; expected 0" >&2
+    exit 1
+  fi
+  first_line="${output%%$'\n'*}"
+  if [[ "$first_line" != "gap-report" ]]; then
+    echo "error: $label rooted gap report returned status $first_line; expected gap-report" >&2
+    exit 1
+  fi
+  if [[ "$output" != *"rooted-outcome: accepted"* ]]; then
+    echo "error: $label rooted gap report did not accept under the rooted policy" >&2
+    exit 1
+  fi
+  if [[ "$output" != *"summary: status=assumed"* ]]; then
+    echo "error: $label rooted gap report did not report trusted-base assumptions" >&2
+    exit 1
+  fi
+  if [[ "$output" != *"summary: status=trusted-check"* ]]; then
+    echo "error: $label rooted gap report did not report trusted generated checks" >&2
+    exit 1
+  fi
 }
 
 write_roots "syntax-self-check" "LeanLean.Syntax"

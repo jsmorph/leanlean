@@ -8,7 +8,7 @@ structure State where
   names : Array Lean.Name := #[Lean.Name.anonymous]
   levels : Array Level := #[.zero]
   exprs : Array Expr := #[]
-  declarations : List Declaration := []
+  declarationsRev : List Declaration := []
   sawQuotientPrimitives : Bool := false
   deriving Inhabited
 
@@ -409,7 +409,14 @@ def parseEntry (lineNumber : Nat) (state : State) (json : Lean.Json) : Result St
   else
     match parseDeclaration state json with
     | .ok (state, declarations) =>
-        pure { state with declarations := state.declarations ++ declarations }
+        pure
+          {
+            state with
+            declarationsRev :=
+              declarations.foldl
+                (fun entries declaration => declaration :: entries)
+                state.declarationsRev
+          }
     | .error err => parseError err
 
 def parseLine (lineNumber : Nat) (state : State) (line : String) : Result State := do
@@ -429,7 +436,7 @@ partial def parseLinesLoop (lineNumber : Nat) (state : State) : List String → 
 
 def parseDeclarations (input : String) : Result (List Declaration) := do
   let state ← parseLinesLoop 1 {} (input.splitOn "\n")
-  pure state.declarations
+  pure state.declarationsRev.reverse
 
 def rootContains (roots : List Name) (name : Name) : Bool :=
   roots.any fun root => root == name
@@ -494,6 +501,8 @@ inductive GapStatus where
   | rejected
   | assumedAfterRejection
   | unsupported
+  | assumed
+  | trustedCheck
   deriving DecidableEq, Repr
 
 def GapStatus.label : GapStatus → String
@@ -502,6 +511,8 @@ def GapStatus.label : GapStatus → String
   | .rejected => "rejected"
   | .assumedAfterRejection => "assumed-after-rejection"
   | .unsupported => "unsupported"
+  | .assumed => "assumed"
+  | .trustedCheck => "trusted-check"
 
 def joinStringsWith (separator : String) : List String → String
   | [] => ""
@@ -607,7 +618,7 @@ structure GapSummary where
 
 structure GapReportState where
   env : Env
-  rows : List GapRow
+  rowsRev : List GapRow
 
 def addGapSummary (summaries : List GapSummary) (row : GapRow) : List GapSummary :=
   match summaries with
@@ -693,22 +704,21 @@ def analyzeGapDeclaration
           .generatedCompared
         else
           .checked
-      pure { env, rows := state.rows ++ [replayGapRow declaration status ""] }
+      pure { env, rowsRev := replayGapRow declaration status "" :: state.rowsRev }
   | .error err =>
       match ← trustedEnvironmentAfterRejection state.env declaration with
       | some env =>
           pure
             {
               env
-              rows :=
-                state.rows ++
-                  [replayGapRow declaration .assumedAfterRejection err]
+              rowsRev :=
+                replayGapRow declaration .assumedAfterRejection err :: state.rowsRev
             }
       | none =>
           pure
             {
               state with
-              rows := state.rows ++ [replayGapRow declaration .rejected err]
+              rowsRev := replayGapRow declaration .rejected err :: state.rowsRev
             }
 
 partial def replayGapRowsWithFuel
@@ -740,9 +750,9 @@ def replayGapRows (declarations : List Declaration) : Result (List GapRow) := do
   let state ←
     replayGapRowsWithFuel
       (declarations.length + 1)
-      { env := [], rows := [] }
+      { env := [], rowsRev := [] }
       declarations
-  pure state.rows
+  pure state.rowsRev.reverse
 
 def formatReplayGapReport (declarations : List Declaration) : Result String := do
   let ordered : Checker.Outcome :=
@@ -786,6 +796,10 @@ structure RootedCheckResult where
   assumed : Nat
   trustedChecks : Nat
 
+structure RootedGapState where
+  env : Env
+  rowsRev : List GapRow
+
 def addTrustedBaseEntries
     (state : RootedCheckResult)
     (names : List Name)
@@ -818,6 +832,73 @@ def checkRootedDeclaration
     | .ok env => pure { state with env, checked := state.checked + 1 }
     | .error err =>
         .error s!"while replaying {repr (declarationReplayNames declaration)}: {err}"
+
+def analyzeRootedGapDeclaration
+    (roots : List Name)
+    (state : RootedGapState)
+    (declaration : Declaration) : RootedGapState :=
+  if shouldTrustNonRootCheck roots declaration then
+    { state with rowsRev := replayGapRow declaration .trustedCheck "" :: state.rowsRev }
+  else if shouldAssumeNonRoot roots declaration then
+    match trustedBaseForDeclaration? declaration with
+    | some infos =>
+        match addTrustedGapEntries state.env declaration.definedNames infos with
+        | .ok env =>
+            {
+              env
+              rowsRev := replayGapRow declaration .assumed "" :: state.rowsRev
+            }
+        | .error err =>
+            { state with rowsRev := replayGapRow declaration .rejected err :: state.rowsRev }
+    | none =>
+        let err := s!"cannot assume declaration: {repr declaration.definedNames}"
+        { state with rowsRev := replayGapRow declaration .rejected err :: state.rowsRev }
+  else
+    match addDeclaration state.env declaration with
+    | .ok env =>
+        let status :=
+          if generatedComparisonDeclaration declaration then
+            .generatedCompared
+          else
+            .checked
+        { env, rowsRev := replayGapRow declaration status "" :: state.rowsRev }
+    | .error err =>
+        let message := s!"while replaying {repr (declarationReplayNames declaration)}: {err}"
+        { state with rowsRev := replayGapRow declaration .rejected message :: state.rowsRev }
+
+def rootedReplayGapRows (roots : List Name) (declarations : List Declaration) : List GapRow :=
+  let state :=
+    declarations.foldl
+      (fun state declaration => analyzeRootedGapDeclaration roots state declaration)
+      { env := [], rowsRev := [] }
+  state.rowsRev.reverse
+
+def rootedGapOutcomeLine (declarations : List Declaration) (rows : List GapRow) : String :=
+  match rows.find? (fun row => row.status == .rejected) with
+  | some row =>
+      "rooted-outcome: rejected\n" ++
+        s!"rooted-message: {row.message}"
+  | none =>
+      "rooted-outcome: accepted\n" ++
+        s!"rooted-message: classified {declarations.length} declaration entries"
+
+def formatRootedReplayGapReport
+    (roots : List Name)
+    (declarations : List Declaration) : String :=
+  let rows := rootedReplayGapRows roots declarations
+  let header :=
+    rootedGapOutcomeLine declarations rows ++ "\n" ++
+    s!"roots: {roots.length}\n" ++
+    s!"declarations: {declarations.length}"
+  let summaries :=
+    "\n" ++ joinLines ((gapSummaries rows).map gapSummaryLine)
+  let rejectedRows := rows.filter fun row => row.status == .rejected
+  let details :=
+    if rejectedRows.isEmpty then
+      ""
+    else
+      "\n" ++ joinLines (rejectedRows.map gapDetailLine)
+  header ++ summaries ++ details
 
 def checkDeclarationsWithRootAssumptions
     (roots : List Name)
@@ -865,6 +946,11 @@ def replayGapReportString (input : String) : Checker.Outcome :=
       match formatReplayGapReport declarations with
       | .ok report => .accepted report
       | .error err => .internalFailure err
+
+def rootedReplayGapReportString (input : String) (roots : List Name) : Checker.Outcome :=
+  match parseDeclarations input with
+  | .error err => .accepted (formatUnsupportedGapReport err)
+  | .ok declarations => .accepted (formatRootedReplayGapReport roots declarations)
 
 def checkString (input : String) : Checker.Outcome :=
   checkStringOrdered input
