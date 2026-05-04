@@ -13,3 +13,5 @@ The first recursor form uses a motive whose result is `Prop`, not `Sort u`.  It 
 ## Tests
 
 The first fixture should keep the base PoC rejection for `PropOnly : Prop`.  The new manifest should accept the same declaration, generate `PropOnly.intro` and `PropOnly.rec`, infer the recursor type, and reduce `PropOnly.rec motive minor PropOnly.intro` to the minor premise.  A second rejection should show that disabling the general Prop package rejects the Prop-inductive package.
+
+The second fixture should admit an indexed proposition-valued family with a Prop-only motive.  It should keep large elimination out of scope while proving that the indexed recursor path can bind indices, target values, and minor premises over `Prop`.
