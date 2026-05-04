@@ -191,8 +191,9 @@ partial def proofIrrelevanceDefEq (manifest : Manifest) (env : Env) (levelParams
   else
     let leftType ← infer manifest env levelParams ctx left
     let rightType ← infer manifest env levelParams ctx right
-    defEq manifest env levelParams ctx leftType rightType
     isPropExpr manifest env levelParams ctx leftType
+    isPropExpr manifest env levelParams ctx rightType
+    defEq manifest env levelParams ctx leftType rightType
 
 partial def functionEtaDefEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (etaExpanded other : Expr) : Result Unit := do

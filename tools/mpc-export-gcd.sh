@@ -21,4 +21,4 @@ LEAN_PATH="$lean_path" "$lean4export_bin" \
   LeanLeanFaithfulness.ExportArithmetic.gcd_sum_diff_eq_one \
   > "$artifact"
 
-.lake/build/bin/mpc-check-export --assume-generated --limit 28 --trace "$artifact"
+.lake/build/bin/mpc-check-export --assume-generated --limit 29 --trace "$artifact"

@@ -359,6 +359,9 @@ def fnType : Expr :=
 def eqBeta (left right : Expr) : Expr :=
   appN (.const "Eq" [.succ .zero]) [betaType, left, right]
 
+def eqAlpha (left right : Expr) : Expr :=
+  appN (.const "Eq" [.succ .zero]) [alphaType, left, right]
+
 def hType : Expr :=
   pi "x" alphaType
     (pi "y" alphaType
@@ -441,6 +444,32 @@ def eqNdRecTransport : Expr :=
       eqReflA
     ]
 
+def eqSymmType : Expr :=
+  pi "a" alphaType
+    (pi "b" alphaType
+      (pi "h" (eqAlpha (.bvar 1) (.bvar 0))
+        (eqAlpha (.bvar 1) (.bvar 2))))
+
+def eqSymmMotive : Expr :=
+  .lam "x" alphaType
+    (.lam "hx" (eqAlpha (.bvar 3) (.bvar 0))
+      (eqAlpha (.bvar 1) (.bvar 4)))
+
+def eqSymmValue : Expr :=
+  .lam "a" alphaType
+    (.lam "b" alphaType
+      (.lam "h" (eqAlpha (.bvar 1) (.bvar 0))
+        (appN
+          (.const "Eq.rec" [.zero, .succ .zero])
+          [
+            alphaType,
+            .bvar 2,
+            eqSymmMotive,
+            appN (.const "Eq.refl" [.succ .zero]) [alphaType, .bvar 2],
+            .bvar 1,
+            .bvar 0
+          ])))
+
 def dPairSpec : SimpleInductiveSpec :=
   {
     name := "DPair"
@@ -500,6 +529,29 @@ def propIndexedSpec : IndexedInductiveSpec :=
         {
           name := "PropVec.nil"
           targetIndices := [natZero]
+        }
+      ]
+  }
+
+def sameSpec : IndexedInductiveSpec :=
+  {
+    name := "Same"
+    levelParams := ["u"]
+    params :=
+      [
+        { name := "A", type := .sort (.param "u") },
+        { name := "a", type := .bvar 0 }
+      ]
+    indices :=
+      [
+        { name := "b", type := .bvar 1 }
+      ]
+    resultLevel := .zero
+    constructors :=
+      [
+        {
+          name := "Same.refl"
+          targetIndices := [.bvar 0]
         }
       ]
   }
@@ -856,6 +908,11 @@ def checkIndexedRecursiveProofFields : IO Unit := do
   expectExprEq "Reach recursive proof-field value" reduced reachExpectedReduction
 
 def checkPropLargeElimination : IO Unit := do
+  let sameEnv ← expectOkLabel "fresh recursor universe replay"
+    (replay MPC.Configs.IndexedPropLargeElimPoc emptyEnv [.indexedInductive sameSpec])
+  match sameEnv.find? "Same.rec" with
+  | some info => expect "fresh recursor universe" (info.levelParams == ["u_1", "u"])
+  | none => throw <| IO.userError "fresh recursor universe: missing Same.rec"
   let env ← expectOkLabel "Reach large-elimination replay"
     (replay MPC.Configs.IndexedPropLargeElimPoc emptyEnv
       (baseDeclarations ++ reachPreDeclarations ++ [.indexedInductive reachSpec] ++ reachPostDeclarations))
@@ -874,6 +931,10 @@ def checkEquality : IO Unit := do
     (replay MPC.Configs.EqualityPoc emptyEnv
       (baseDeclarations ++ [.equalityPrimitives] ++ equalityDeclarations))
   expectEnvContains "equality primitives" env "Eq.rec"
+  expectOkLabel "proof irrelevance"
+    (defEq MPC.Configs.EqualityPoc env [] [] (.const "p" []) (.const "q" []))
+  expectError "sort mismatch conversion terminates"
+    (defEq MPC.Configs.EqualityPoc env [] [] propType type0)
   let inferred ← expectOkLabel "Eq.rec inference"
     (infer MPC.Configs.EqualityPoc env [] [] eqRecTransport)
   let inferred ← expectOkLabel "Eq.rec inferred type normalization"
@@ -890,6 +951,8 @@ def checkEquality : IO Unit := do
   let ndReduced ← expectOkLabel "Eq.ndrec reduction"
     (normalize MPC.Configs.EqualityPoc env [] eqNdRecTransport)
   expectExprEq "Eq.ndrec value" ndReduced (.const "b" [])
+  let _eqSymmEnv ← expectOkLabel "Eq.rec Prop motive replay"
+    (replay MPC.Configs.EqualityPoc env [.theorem "Alpha.eqSymm" [] eqSymmType eqSymmValue])
 
 def checkProjections : IO Unit := do
   let declarations := baseDeclarations ++ equalityDeclarations ++ [.inductive dPairSpec]

@@ -65,10 +65,28 @@ def indexedLargeElimEligible
       fieldsEligibleForLargeElim manifest env spec.levelParams ctor.targetIndices ctor.fields.length 0
         paramCtx ctor.fields
 
-def recursorMotiveLevel (specResultLevel : Level) (largeElimEligible : Bool) : Level :=
-  if isPropLevel specResultLevel && !largeElimEligible then .zero else .param "u"
+partial def freshLevelParamFrom (used : LevelContext) (index : Nat) : Name :=
+  let candidate := if index == 0 then "u" else s!"u_{index}"
+  if used.contains candidate then
+    freshLevelParamFrom used (index + 1)
+  else
+    candidate
+
+def freshLevelParam (used : LevelContext) : Name :=
+  freshLevelParamFrom used 0
+
+def recursorMotiveLevel
+    (specLevelParams : LevelContext) (specResultLevel : Level) (largeElimEligible : Bool) :
+    Level :=
+  if isPropLevel specResultLevel && !largeElimEligible then
+    .zero
+  else
+    .param (freshLevelParam specLevelParams)
 
 def recursorLevelParams (motiveLevel : Level) (specLevelParams : LevelContext) : LevelContext :=
-  if motiveLevel.defEq .zero then specLevelParams else "u" :: specLevelParams
+  match motiveLevel with
+  | .zero => specLevelParams
+  | .param name => name :: specLevelParams
+  | _ => specLevelParams
 
 end MPC.Packages.Inductive.Prop

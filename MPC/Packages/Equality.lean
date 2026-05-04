@@ -82,8 +82,8 @@ def primitiveInfos : List ConstantInfo :=
   [
     { name := "Eq", levelParams := ["u"], type := eqType, kind := .equalityType },
     { name := "Eq.refl", levelParams := ["u"], type := eqReflType, kind := .equalityRefl },
-    { name := "Eq.rec", levelParams := ["u", "v"], type := eqRecType, kind := .equalityRec },
-    { name := "Eq.ndrec", levelParams := ["u", "v"], type := eqNdRecType, kind := .equalityNdRec }
+    { name := "Eq.rec", levelParams := ["v", "u"], type := eqRecType, kind := .equalityRec },
+    { name := "Eq.ndrec", levelParams := ["v", "u"], type := eqNdRecType, kind := .equalityNdRec }
   ]
 
 def hasPrimitiveInfo (env : Env) (info : ConstantInfo) : Bool :=

@@ -340,7 +340,8 @@ def addSimpleInductive (manifest : Manifest) (env : Env) (spec : SimpleInductive
       }
   let largeElimEligible ← MPC.Packages.Inductive.Prop.simpleLargeElimEligible manifest env spec
   let motiveLevel :=
-    MPC.Packages.Inductive.Prop.recursorMotiveLevel spec.resultLevel largeElimEligible
+    MPC.Packages.Inductive.Prop.recursorMotiveLevel spec.levelParams spec.resultLevel
+      largeElimEligible
   let recursorLevelParams :=
     MPC.Packages.Inductive.Prop.recursorLevelParams motiveLevel spec.levelParams
   let recursorType := simpleRecursorType spec motiveLevel
@@ -405,7 +406,8 @@ def addIndexedInductive (manifest : Manifest) (env : Env) (spec : IndexedInducti
   let ctorInfos := spec.constructors.map (indexedRecursorConstructorInfo spec)
   let largeElimEligible ← MPC.Packages.Inductive.Prop.indexedLargeElimEligible manifest env spec
   let motiveLevel :=
-    MPC.Packages.Inductive.Prop.recursorMotiveLevel spec.resultLevel largeElimEligible
+    MPC.Packages.Inductive.Prop.recursorMotiveLevel spec.levelParams spec.resultLevel
+      largeElimEligible
   let recursorLevelParams :=
     MPC.Packages.Inductive.Prop.recursorLevelParams motiveLevel spec.levelParams
   let recursorType := indexedRecursorType spec ctorInfos motiveLevel
