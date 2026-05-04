@@ -16,6 +16,7 @@ inductive Expr where
   | lam : Name → Expr → Expr → Expr
   | forallE : Name → Expr → Expr → Expr
   | letE : Name → Expr → Expr → Expr → Expr
+  | proj : Name → Nat → Expr → Expr
   deriving BEq, Repr, Inhabited
 
 def Expr.mkApps (fn : Expr) : List Expr → Expr
@@ -48,6 +49,8 @@ partial def Expr.liftFrom (amount cutoff : Nat) : Expr → Expr
         (type.liftFrom amount cutoff)
         (value.liftFrom amount cutoff)
         (body.liftFrom amount (cutoff + 1))
+  | .proj structureName fieldIndex target =>
+      .proj structureName fieldIndex (target.liftFrom amount cutoff)
 
 def Expr.lift (amount : Nat) (expr : Expr) : Expr :=
   expr.liftFrom amount 0
@@ -78,9 +81,14 @@ partial def Expr.instantiateAt (depth : Nat) (value : Expr) : Expr → Expr
         (Expr.instantiateAt depth value type)
         (Expr.instantiateAt depth value letValue)
         (Expr.instantiateAt (depth + 1) value body)
+  | .proj structureName fieldIndex target =>
+      .proj structureName fieldIndex (Expr.instantiateAt depth value target)
 
 def Expr.instantiate1 (body value : Expr) : Expr :=
   Expr.instantiateAt 0 value body
+
+def Expr.instantiateSourceArgs (expr : Expr) (args : List Expr) : Expr :=
+  args.reverse.foldl (fun expr arg => Expr.instantiate1 expr arg) expr
 
 partial def Expr.instantiateLevels (subst : List (Name × Level)) : Expr → Expr
   | .bvar index => .bvar index
@@ -97,5 +105,7 @@ partial def Expr.instantiateLevels (subst : List (Name × Level)) : Expr → Exp
         (type.instantiateLevels subst)
         (value.instantiateLevels subst)
         (body.instantiateLevels subst)
+  | .proj structureName fieldIndex target =>
+      .proj structureName fieldIndex (target.instantiateLevels subst)
 
 end MPC

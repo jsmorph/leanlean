@@ -82,6 +82,8 @@ partial def infer (manifest : Manifest) (env : Env) (levelParams : LevelContext)
       check manifest env levelParams ctx value type
       let bodyType ← infer manifest env levelParams (ctx.extend name type) body
       pure (Expr.instantiate1 bodyType value)
+  | .proj _ _ _ =>
+      fail "projection expressions are not implemented yet"
 
 partial def inferSort (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (expr : Expr) : Result Level := do
@@ -135,6 +137,11 @@ partial def structuralDefEq (manifest : Manifest) (env : Env) (levelParams : Lev
       structuralDefEq manifest env levelParams ctx (Expr.instantiate1 leftBody leftValue) right
   | _, .letE _ _ rightValue rightBody =>
       structuralDefEq manifest env levelParams ctx left (Expr.instantiate1 rightBody rightValue)
+  | .proj leftStruct leftIndex leftTarget, .proj rightStruct rightIndex rightTarget =>
+      if leftStruct == rightStruct && leftIndex == rightIndex then
+        structuralDefEq manifest env levelParams ctx leftTarget rightTarget
+      else
+        fail "projections differ"
   | _, _ => fail s!"not definitionally equal: {repr left} and {repr right}"
 
 partial def isPropExpr (manifest : Manifest) (env : Env) (levelParams : LevelContext)
@@ -176,6 +183,7 @@ partial def containsConst (target : Name) : Expr → Bool
   | .forallE _ type body => containsConst target type || containsConst target body
   | .letE _ type value body =>
       containsConst target type || containsConst target value || containsConst target body
+  | .proj _ _ projectionTarget => containsConst target projectionTarget
 
 def getAppHeadName? (expr : Expr) : Option Name :=
   match expr.getAppFnArgs.1 with

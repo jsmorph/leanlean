@@ -18,9 +18,6 @@ def findIndexedConstructor? (name : Name) : List IndexedRecursorConstructorInfo 
   | ctor :: rest =>
       if ctor.name == name then some ctor else findIndexedConstructor? name rest
 
-def instantiateSourceArgs (expr : Expr) (args : List Expr) : Expr :=
-  args.reverse.foldl (fun expr arg => Expr.instantiate1 expr arg) expr
-
 mutual
 
 partial def reduceSimpleRecursor? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
@@ -104,7 +101,7 @@ partial def reduceIndexedRecursor? (manifest : Manifest) (env : Env) (levelParam
                             | fail s!"missing recursive field {rec.fieldIndex} for {ctorName}"
                           let recursiveIndices :=
                             rec.indices.map fun index =>
-                              instantiateSourceArgs index (paramArgs ++ fieldArgs)
+                              index.instantiateSourceArgs (paramArgs ++ fieldArgs)
                           pure
                             (Expr.mkApps recursor
                               (paramArgs ++ [motive] ++ minorArgs ++ recursiveIndices ++ [fieldValue]))
@@ -193,6 +190,8 @@ partial def whnf (manifest : Manifest) (env : Env) (levelParams : LevelContext)
   match expr with
   | .letE _ _ value body =>
       whnf manifest env levelParams (Expr.instantiate1 body value)
+  | .proj structureName fieldIndex target => do
+      pure (.proj structureName fieldIndex target)
   | .app fn arg =>
       let appExpr := Expr.app fn arg
       let (head, args) := Expr.getAppFnArgs appExpr
@@ -254,6 +253,8 @@ partial def normalize (manifest : Manifest) (env : Env) (levelParams : LevelCont
           (← normalize manifest env levelParams type)
           (← normalize manifest env levelParams value)
           (← normalize manifest env levelParams body))
+  | .proj structureName fieldIndex target =>
+      pure (.proj structureName fieldIndex (← normalize manifest env levelParams target))
   | _ => pure expr
 
 end MPC
