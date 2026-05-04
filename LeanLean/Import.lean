@@ -4,8 +4,32 @@ import LeanLean.Kernel
 namespace LeanLean
 namespace Import
 
+def encodedNamePrefix : String :=
+  "__leanlean_name:"
+
+def ordinaryNameComponent (component : String) : Bool :=
+  toString (Lean.Name.str Lean.Name.anonymous component) == component
+
+def ordinaryLeanName : Lean.Name → Bool
+  | .anonymous => true
+  | .str parent component =>
+      ordinaryLeanName parent && ordinaryNameComponent component
+  | .num parent _ =>
+      ordinaryLeanName parent
+
+def encodeLeanNameStructural : Lean.Name → String
+  | .anonymous => "A"
+  | .str parent component =>
+      "S" ++ encodeLeanNameStructural parent ++ toString component.length ++ ":" ++ component
+  | .num parent index =>
+      "N" ++ encodeLeanNameStructural parent ++ toString index ++ ";"
+
 def translateName (name : Lean.Name) : LeanLean.Name :=
-  toString name
+  let text := toString name
+  if ordinaryLeanName name && !text.startsWith encodedNamePrefix then
+    text
+  else
+    encodedNamePrefix ++ encodeLeanNameStructural name
 
 def translateBinderName : Lean.Name → String
   | .anonymous => "_"

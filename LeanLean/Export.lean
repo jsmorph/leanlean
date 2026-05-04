@@ -65,7 +65,7 @@ def getIndexed {α : Type} (what : String) (array : Array α) (index : Nat) : Re
   | none => .error s!"unknown {what} index: {index}"
 
 def localName (name : Lean.Name) : Name :=
-  toString name
+  Import.translateName name
 
 def localBinderName : Lean.Name → String
   | .anonymous => "_"
@@ -75,7 +75,8 @@ def nameAt (state : State) (index : Nat) : Result Lean.Name :=
   getIndexed "name" state.names index
 
 def localNameAt (state : State) (index : Nat) : Result Name := do
-  pure (localName (← nameAt state index))
+  let name ← nameAt state index
+  pure (localName name)
 
 def localBinderNameAt (state : State) (index : Nat) : Result String := do
   pure (localBinderName (← nameAt state index))
