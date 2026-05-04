@@ -122,7 +122,9 @@ def indexedConstructorType (spec : IndexedInductiveSpec) (ctor : IndexedConstruc
 def indexedMotiveType (spec : IndexedInductiveSpec) : Expr :=
   let indexArgs := sourceOrderBvars spec.indices.length 0
   let targetType := indexedTargetAt spec spec.indices.length indexArgs
-  bindForall spec.indices (.forallE "target" targetType (.sort (.param "u")))
+  bindForall spec.indices
+    (.forallE "target" targetType
+      (.sort (MPC.Packages.Inductive.Prop.recursorMotiveLevel spec.resultLevel)))
 
 def indexedRecursorName (spec : IndexedInductiveSpec) : Name :=
   spec.name ++ ".rec"
@@ -291,46 +293,48 @@ def addIndexedInductive (manifest : Manifest) (env : Env) (spec : IndexedInducti
   if !manifest.supportsIndexedInductives then
     fail "indexed inductives are disabled by the manifest"
   else if spec.resultLevel.defEq .zero then
-    fail "the MPC indexed inductive package is data-only"
+    MPC.Packages.Inductive.Prop.checkPropInductiveEnabled manifest
   else
-    let _ ← inferSort manifest env spec.levelParams [] (indexedInductiveType spec)
-    let inductiveInfo : ConstantInfo :=
+    pure ()
+  let _ ← inferSort manifest env spec.levelParams [] (indexedInductiveType spec)
+  let inductiveInfo : ConstantInfo :=
+    {
+      name := spec.name
+      levelParams := spec.levelParams
+      type := indexedInductiveType spec
+      kind := .indexedInductiveType spec
+    }
+  let env ← Env.add env inductiveInfo
+  let paramCtx := extendBinders [] spec.params
+  for ctor in spec.constructors do
+    checkIndexedConstructor manifest env spec paramCtx ctor
+  let mut env := env
+  for pair in enumerate spec.constructors do
+    let ctor := pair.2
+    env ← Env.add env
       {
-        name := spec.name
+        name := ctor.name
         levelParams := spec.levelParams
-        type := indexedInductiveType spec
-        kind := .indexedInductiveType spec
+        type := indexedConstructorType spec ctor
+        kind := .constructor spec.name pair.1 ctor.fields.length
       }
-    let env ← Env.add env inductiveInfo
-    let paramCtx := extendBinders [] spec.params
-    for ctor in spec.constructors do
-      checkIndexedConstructor manifest env spec paramCtx ctor
-    let mut env := env
-    for pair in enumerate spec.constructors do
-      let ctor := pair.2
-      env ← Env.add env
-        {
-          name := ctor.name
-          levelParams := spec.levelParams
-          type := indexedConstructorType spec ctor
-          kind := .constructor spec.name pair.1 ctor.fields.length
-        }
-    let ctorInfos := spec.constructors.map (indexedRecursorConstructorInfo spec)
-    let recursorLevelParams := "u" :: spec.levelParams
-    let recursorType := indexedRecursorType spec ctorInfos
-    let _ ← inferSort manifest env recursorLevelParams [] recursorType
-    Env.add env
-      {
-        name := indexedRecursorName spec
-        levelParams := recursorLevelParams
-        type := recursorType
-        kind :=
-          .indexedRecursor
-            {
-              inductiveName := spec.name
-              constructors := ctorInfos
-            }
-      }
+  let ctorInfos := spec.constructors.map (indexedRecursorConstructorInfo spec)
+  let recursorLevelParams :=
+    MPC.Packages.Inductive.Prop.recursorLevelParams spec.resultLevel spec.levelParams
+  let recursorType := indexedRecursorType spec ctorInfos
+  let _ ← inferSort manifest env recursorLevelParams [] recursorType
+  Env.add env
+    {
+      name := indexedRecursorName spec
+      levelParams := recursorLevelParams
+      type := recursorType
+      kind :=
+        .indexedRecursor
+          {
+            inductiveName := spec.name
+            constructors := ctorInfos
+          }
+    }
 
 def addDecl (manifest : Manifest) (env : Env) : Declaration → Result Env
   | declaration => do

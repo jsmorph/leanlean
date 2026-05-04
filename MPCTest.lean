@@ -188,6 +188,9 @@ def etaNatAddOne : Expr :=
 def vecType (index : Expr) : Expr :=
   appN (.const "Vec" []) [natType, index]
 
+def propVecType (index : Expr) : Expr :=
+  appN (.const "PropVec" []) [natType, index]
+
 def vecSpec : IndexedInductiveSpec :=
   {
     name := "Vec"
@@ -502,6 +505,31 @@ def checkIndexedInductives : IO Unit := do
   expectError "proposition-valued indexed inductive"
     (replay MPC.Configs.IndexedPoc emptyEnv (baseDeclarations ++ [.indexedInductive propIndexedSpec]))
 
+def checkIndexedPropInductives : IO Unit := do
+  let env ← expectOkLabel "indexed Prop replay"
+    (replay MPC.Configs.IndexedPropPoc emptyEnv (baseDeclarations ++ [.indexedInductive propIndexedSpec]))
+  expectEnvContains "indexed Prop inductive constructor" env "PropVec.nil"
+  expectEnvContains "indexed Prop inductive recursor" env "PropVec.rec"
+  let _recursorType ← expectOkLabel "indexed Prop recursor inference"
+    (infer MPC.Configs.IndexedPropPoc env [] [] (.const "PropVec.rec" []))
+  let motive :=
+    .lam "n" natType
+      (.lam "target" (propVecType (.bvar 0)) (.const "P" []))
+  let nilTarget := appN (.const "PropVec.nil" []) [natType]
+  let recursor :=
+    appN
+      (.const "PropVec.rec" [])
+      [
+        natType,
+        motive,
+        .const "p" [],
+        natZero,
+        nilTarget
+      ]
+  let reduced ← expectOkLabel "indexed Prop recursor reduction"
+    (normalize MPC.Configs.IndexedPropPoc env [] recursor)
+  expectExprEq "indexed Prop recursor value" reduced (.const "p" [])
+
 def checkEquality : IO Unit := do
   expectError "equality primitives disabled"
     (replay MPC.Configs.Poc emptyEnv [.equalityPrimitives])
@@ -715,6 +743,7 @@ def main : IO Unit := do
   checkSimpleInductives
   checkPropInductives
   checkIndexedInductives
+  checkIndexedPropInductives
   checkEquality
   checkProjections
   checkPrimitiveNat
