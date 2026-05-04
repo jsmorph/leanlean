@@ -54,7 +54,7 @@
   - [ ] Add export-checker tests for unsupported input.
   - [ ] Inventory Lean's kernel-overridden primitive reductions and add specified table entries, source citations, implementation rules, and export tests for each admitted primitive.
   - [x] Extend self-check coverage to local declarations compiled through Lean's `brecOn` and `below` artifacts by replaying the recursive aux support needed by source-facing roots.
-  - [ ] Specify the remaining generated-support boundary for no-confusion helpers, constructor eliminators, match helpers, sparse-case helpers, derived instances, and representation declarations.
+  - [x] Specify the remaining generated-support boundary for no-confusion helpers, constructor eliminators, match helpers, sparse-case helpers, derived instances, and representation declarations.
   - [ ] Add local Arena smoke tests and a sample checker configuration.
   - [ ] Add module-checker tests for accepted declarations, unsupported declarations, and rejected declarations inside the supported fragment.
   - [x] Record the checker interfaces in `spec.md`, `faithfulness.md`, and `devnotes.md`.
