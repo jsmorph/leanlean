@@ -313,15 +313,23 @@ def parseQuotientPrimitive (state : State) (json : Lean.Json) : Result (State ×
   else
     pure (withQuotientPrimitives state)
 
-def parseDefinition (state : State) (json : Lean.Json) : Result Declaration := do
+def equalityPrimitiveDefinition (name : Name) : Bool :=
+  name == "Eq.ndrec"
+
+def parseDefinition (state : State) (json : Lean.Json) : Result (List Declaration) := do
   let name ← localNameAt state (← natField json "name")
   requireSafeDefinition name (← field json "safety")
-  pure
-    (.definition
-      name
-      (← levelParamList state (← field json "levelParams"))
-      (← exprAt state (← natField json "type"))
-      (← exprAt state (← natField json "value")))
+  if state.sawEqualityPrimitives && equalityPrimitiveDefinition name then
+    pure []
+  else
+    pure
+      [
+        .definition
+          name
+          (← levelParamList state (← field json "levelParams"))
+          (← exprAt state (← natField json "type"))
+          (← exprAt state (← natField json "value"))
+      ]
 
 def parseTheorem (state : State) (json : Lean.Json) : Result Declaration := do
   pure
@@ -526,7 +534,7 @@ def parseDeclaration (state : State) (json : Lean.Json) :
       let (state, declarations) ← parseAxiom state value
       pure (state, declarations, {})
   | none, some value, none, none, none, none =>
-      pure (state, [← parseDefinition state value], {})
+      pure (state, (← parseDefinition state value), {})
   | none, none, some value, none, none, none =>
       pure (state, [← parseTheorem state value], {})
   | none, none, none, some value, none, none =>
