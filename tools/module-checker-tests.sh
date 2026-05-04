@@ -41,6 +41,36 @@ run_module_expect() {
   fi
 }
 
+run_module_gap_report_expect() {
+  local label="$1"
+  local module="$2"
+  local root="$3"
+  local expected_fragment="$4"
+  local output
+  local code
+
+  echo "module-gap-report: $label"
+  set +e
+  output="$("$checker" --gap-report --module "$module" --decl "$root" 2>&1)"
+  code="$?"
+  set -e
+
+  printf '%s\n' "$output"
+  if [[ "$code" != "0" ]]; then
+    echo "error: $label gap report returned exit code $code; expected 0" >&2
+    exit 1
+  fi
+  local first_line="${output%%$'\n'*}"
+  if [[ "$first_line" != "gap-report" ]]; then
+    echo "error: $label gap report returned status $first_line; expected gap-report" >&2
+    exit 1
+  fi
+  if [[ "$output" != *"$expected_fragment"* ]]; then
+    echo "error: $label gap report did not contain expected fragment: $expected_fragment" >&2
+    exit 1
+  fi
+}
+
 run_module_expect \
   "accepted-transparent-id" \
   "accepted" \
@@ -64,3 +94,15 @@ run_module_expect \
   "LeanLean.Export" \
   "LeanLean.Export.checkString" \
   "Nat.Linear.Poly.denote_reverse"
+
+run_module_gap_report_expect \
+  "accepted-transparent-id" \
+  "Faithfulness.Accepted" \
+  "LeanLeanFaithfulness.Accepted.transparentId" \
+  "ordered-outcome: accepted"
+
+run_module_gap_report_expect \
+  "unsafe-policy-skip" \
+  "Faithfulness.UnsupportedModule" \
+  "LeanLeanFaithfulness.UnsupportedModule.unsafeId" \
+  "policy-skip: name=LeanLeanFaithfulness.UnsupportedModule.unsafeId"

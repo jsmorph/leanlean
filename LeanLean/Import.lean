@@ -655,6 +655,25 @@ partial def collectEnvironmentClosure
           loop pending (name :: seen) (info :: infos)
   loop roots [] []
 
+partial def collectEnvironmentClosureUnchecked
+    (env : Lean.Environment)
+    (roots : List Lean.Name) : Result (List Lean.ConstantInfo) := do
+  let rec loop
+      (pending seen : List Lean.Name)
+      (infos : List Lean.ConstantInfo) : Result (List Lean.ConstantInfo) := do
+    match pending with
+    | [] => pure infos.reverse
+    | name :: rest =>
+        if seen.any fun existing => existing == name then
+          loop rest seen infos
+        else
+          let some info := env.find? name
+            | .error s!"unknown Lean environment constant in import closure: {name}"
+          let dependencies := environmentConstantInfoDependencyNames env info
+          let pending := appendLeanNames rest dependencies
+          loop pending (name :: seen) (info :: infos)
+  loop roots [] []
+
 def appendLeanStructureInfo
     (infos : List Lean.StructureInfo)
     (info : Lean.StructureInfo) : List Lean.StructureInfo :=

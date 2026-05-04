@@ -72,7 +72,7 @@
 - [ ] Phase 14: Complete replay checker boundary.
   - [ ] Make whole-artifact replay, not rooted replay with trusted non-root definitions, the main checker claim.
   - [x] Add a replay gap report over parsed `lean4export` artifacts.
-  - [ ] Add a replay gap report over loaded `ConstantInfo` maps.
+  - [x] Add a replay gap report over loaded `ConstantInfo` maps.
   - [ ] Check every safe ordinary declaration in the supplied replay set, while postponing generated constructors and recursors for comparison.
   - [ ] Match Lean's `Environment.replay` policy for unsafe and partial constants, or state the stricter policy as a deliberate external-checker rule.
   - [ ] Replace string names with structured names or specify and test an injective accepted-name encoding.

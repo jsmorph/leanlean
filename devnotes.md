@@ -103,6 +103,7 @@ The first implementation target is a small data fragment.  It includes closed un
 - [x] Add unsupported export-checker tests.
 - [x] Add module-checker tests for accepted, unsupported, and rejected outcomes.
 - [x] Add an export replay gap report for whole-artifact checker diagnostics.
+- [x] Add a module replay gap report for loaded `ConstantInfo` closure diagnostics.
 
 ## Current Decisions
 
@@ -177,6 +178,8 @@ Lean's structure extension is now imported for the fields that affect kernel-fac
 The first external checker interface was `leanlean-check-module`.  It is a module-loader bridge over the existing root-name closure importer, and it remains useful because it can compare local replay against Lean's loaded environment.  It returns typed outcomes: accepted roots return `0`, local replay rejections after translation return `1`, unsupported Lean artifacts return `2`, and internal checker failures return `3`.  The executable initializes Lean's search path from the current Lake build directory and loads environment extensions so that structure metadata and projection metadata are available during closure extraction.
 
 The module-checker tests now cover all three user-facing non-internal outcomes.  `LeanLeanFaithfulness.Accepted.transparentId` accepts, `LeanLeanFaithfulness.UnsupportedModule.unsafeId` returns unsupported because Lean records it as an unsafe definition, and `LeanLean.Export.checkString` returns rejected after local replay reaches `Nat.Linear.Poly.denote_reverse`.  A simple source-level `partial def` in the same unsupported test module appears in Lean 4.29.1's loaded environment as a safe opaque constant, so the module checker treats that root as an ordinary opaque declaration.  Explicit partial records in `lean4export` input remain unsupported.
+
+The module checker now has a diagnostic `--gap-report` mode.  It collects the loaded `ConstantInfo` closure without applying the ordinary trusted-replay rejection gate, reports unsafe and partial constants as replay-policy skips, and translates the remaining safe non-partial constants through the ordinary local declaration path.  This mode follows Lean replay's skip policy for diagnostics while leaving the normal module checker stricter: an unsafe root still returns unsupported outside gap-report mode.  The module-checker test script covers both an accepted root and an unsafe skipped root.
 
 The module checker can check selected roots from LeanLean's own compiled modules.  The accepted roots currently include `LeanLean.Level` with 367 declaration entries, `LeanLean.Literal` with 363 entries, `LeanLean.Expr` with 382 entries, `LeanLean.Binder` with 388 entries, `LeanLean.Level.defEq` with 375 entries, `LeanLean.checkDefEqIn` with 556 entries, and `LeanLean.replayDeclarations` with 617 entries.  The runs found an importer bug around Lean's representation of `Quot.sound`: Lean stores `Quot`, `Quot.mk`, `Quot.lift`, and `Quot.ind` as quotient records, but stores `Quot.sound` as an axiom, so the snapshot importer must add quotient primitives once and then check the exported `Quot.sound` type against the primitive declaration.
 
