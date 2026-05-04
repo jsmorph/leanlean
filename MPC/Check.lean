@@ -105,11 +105,10 @@ partial def infer (manifest : Manifest) (env : Env) (levelParams : LevelContext)
       let domainSort ← inferSort manifest env levelParams ctx domain
       let bodySort ← inferSort manifest env levelParams (ctx.extend name domain) body
       pure (.sort (inferPiSort manifest domainSort bodySort))
-  | .letE name type value body => do
+  | .letE _ type value body => do
       let _ ← inferSort manifest env levelParams ctx type
       check manifest env levelParams ctx value type
-      let bodyType ← infer manifest env levelParams (ctx.extend name type) body
-      pure (Expr.instantiate1 bodyType value)
+      infer manifest env levelParams ctx (Expr.instantiate1 body value)
   | .proj structureName fieldIndex target => do
       if !manifest.supportsProjections then
         fail "projection expressions are disabled by the manifest"
@@ -126,8 +125,24 @@ partial def inferSort (manifest : Manifest) (env : Env) (levelParams : LevelCont
 
 partial def check (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (expr expectedType : Expr) : Result Unit := do
-  let inferred ← infer manifest env levelParams ctx expr
-  defEq manifest env levelParams ctx inferred expectedType
+  match expr with
+  | .lam name domain body => do
+      let expectedType ← whnf manifest env levelParams expectedType
+      match expectedType with
+      | .forallE _ expectedDomain expectedBody => do
+          let _ ← inferSort manifest env levelParams ctx domain
+          defEq manifest env levelParams ctx domain expectedDomain
+          check manifest env levelParams (ctx.extend name domain) body expectedBody
+      | _ =>
+          let inferred ← infer manifest env levelParams ctx expr
+          defEq manifest env levelParams ctx inferred expectedType
+  | .letE _ type value body => do
+      let _ ← inferSort manifest env levelParams ctx type
+      check manifest env levelParams ctx value type
+      check manifest env levelParams ctx (Expr.instantiate1 body value) expectedType
+  | _ =>
+      let inferred ← infer manifest env levelParams ctx expr
+      defEq manifest env levelParams ctx inferred expectedType
 
 partial def structuralDefEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (left right : Expr) : Result Unit := do

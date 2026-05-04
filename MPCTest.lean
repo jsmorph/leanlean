@@ -709,6 +709,12 @@ def checkBasePackages : IO Unit := do
   let env ← expectOk (replay MPC.Configs.Poc emptyEnv baseDeclarations)
   let literalType ← expectOk (infer MPC.Configs.Poc env [] [] (.lit (.nat 3)))
   expectExprEq "natural literal type" literalType natType
+  let zetaExpr :=
+    .letE "F" (pi "n" natType propType)
+      (.lam "n" natType (.const "P" []))
+      (.letE "h" (.app (.bvar 0) natZero) (.const "p" []) (.bvar 0))
+  expectOkLabel "let body checks with zeta"
+    (check MPC.Configs.Poc env [] [] zetaExpr (.const "P" []))
   let twoCtor := .app (.const "Nat.succ" []) (.app (.const "Nat.succ" []) (.const "Nat.zero" []))
   expectOkLabel "natural literal constructor equality"
     (defEq MPC.Configs.Poc env [] [] (.lit (.nat 2)) twoCtor)
