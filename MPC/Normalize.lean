@@ -24,11 +24,11 @@ partial def reduceSimpleRecursor? (manifest : Manifest) (env : Env) (levelParams
     | some inductInfo =>
         match inductInfo.kind with
         | .inductiveType spec =>
-            let required := 1 + spec.constructors.length + 1
+            let required := spec.params.length + 1 + spec.constructors.length + 1
             if args.length < required then
               pure none
             else
-              let minorArgs := (args.drop 1).take spec.constructors.length
+              let minorArgs := (args.drop (spec.params.length + 1)).take spec.constructors.length
               let some target := listGet? args (required - 1)
                 | pure none
               let trailing := args.drop required
@@ -43,7 +43,7 @@ partial def reduceSimpleRecursor? (manifest : Manifest) (env : Env) (levelParams
                       else
                         let some minor := listGet? minorArgs ctorIndex
                           | pure none
-                        let value := Expr.mkApps minor targetArgs
+                        let value := Expr.mkApps minor (targetArgs.drop spec.params.length)
                         pure (some (Expr.mkApps value trailing))
                   | none => pure none
               | _ => pure none

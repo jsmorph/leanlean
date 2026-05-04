@@ -32,26 +32,43 @@ def simpleInductiveType (spec : SimpleInductiveSpec) : Expr :=
 def simpleInductiveLevels (spec : SimpleInductiveSpec) : List Level :=
   spec.levelParams.map .param
 
+def sourceOrderBvars (count offset : Nat) : List Expr :=
+  (List.range count).map fun index =>
+    .bvar (offset + count - 1 - index)
+
+def simpleParamArgs (spec : SimpleInductiveSpec) (offset : Nat) : List Expr :=
+  sourceOrderBvars spec.params.length offset
+
+def simpleInductiveTargetAt (spec : SimpleInductiveSpec) (paramOffset : Nat) : Expr :=
+  Expr.mkApps (.const spec.name (simpleInductiveLevels spec)) (simpleParamArgs spec paramOffset)
+
 def simpleInductiveTarget (spec : SimpleInductiveSpec) : Expr :=
-  Expr.mkApps (.const spec.name (simpleInductiveLevels spec)) []
+  simpleInductiveTargetAt spec 0
 
 def simpleConstructorType (spec : SimpleInductiveSpec) (ctor : SimpleConstructorSpec) : Expr :=
-  bindForall ctor.fields (simpleInductiveTarget spec)
+  let target := simpleInductiveTargetAt spec ctor.fields.length
+  bindForall (spec.params ++ ctor.fields) target
 
 def simpleMotiveType (spec : SimpleInductiveSpec) : Expr :=
   .forallE "target" (simpleInductiveTarget spec) (.sort (.param "u"))
 
-def simpleCtorAppFromFields (spec : SimpleInductiveSpec) (ctor : SimpleConstructorSpec) : Expr :=
-  let fieldArgs :=
-    (List.range ctor.fields.length).map fun index =>
-      .bvar (ctor.fields.length - 1 - index)
-  Expr.mkApps (.const ctor.name (simpleInductiveLevels spec)) fieldArgs
+def simpleCtorAppFromFields (spec : SimpleInductiveSpec) (previousMinors : Nat)
+    (ctor : SimpleConstructorSpec) : Expr :=
+  let paramArgs := simpleParamArgs spec (ctor.fields.length + previousMinors + 1)
+  let fieldArgs := sourceOrderBvars ctor.fields.length 0
+  Expr.mkApps (.const ctor.name (simpleInductiveLevels spec)) (paramArgs ++ fieldArgs)
+
+def liftFieldBindersForOuter (amount : Nat) : Nat → List Binder → List Binder
+  | _, [] => []
+  | boundFields, binder :: rest =>
+      { binder with type := binder.type.liftFrom amount boundFields } ::
+        liftFieldBindersForOuter amount (boundFields + 1) rest
 
 def simpleMinorType (spec : SimpleInductiveSpec) (previousMinors : Nat)
     (ctor : SimpleConstructorSpec) : Expr :=
   let motiveIndex := ctor.fields.length + previousMinors
-  let body := .app (.bvar motiveIndex) (simpleCtorAppFromFields spec ctor)
-  bindForall ctor.fields body
+  let body := .app (.bvar motiveIndex) (simpleCtorAppFromFields spec previousMinors ctor)
+  bindForall (liftFieldBindersForOuter (previousMinors + 1) 0 ctor.fields) body
 
 def simpleRecursorName (spec : SimpleInductiveSpec) : Name :=
   spec.name ++ ".rec"
@@ -71,16 +88,18 @@ def simpleRecursorType (spec : SimpleInductiveSpec) : Expr :=
         name := pair.2.name ++ ".minor"
         type := simpleMinorType spec pair.1 pair.2
       }
-  let target := { name := "target", type := simpleInductiveTarget spec }
+  let target := { name := "target", type := simpleInductiveTargetAt spec (minorBinders.length + 1) }
   let body := .app (.bvar (minorBinders.length + 1)) (.bvar 0)
-  bindForall (motive :: minorBinders ++ [target]) body
+  bindForall spec.params (bindForall (motive :: minorBinders ++ [target]) body)
+
+def extendBinders : Context → List Binder → Context
+  | ctx, [] => ctx
+  | ctx, binder :: rest => extendBinders (ctx.extend binder.name binder.type) rest
 
 def addSimpleInductive (manifest : Manifest) (env : Env) (spec : SimpleInductiveSpec) :
     Result Env := do
   if manifest.inductives != .simple then
     fail "simple inductives are disabled by the manifest"
-  else if !spec.params.isEmpty then
-    fail "the MPC PoC simple inductive package does not support parameters yet"
   else if spec.resultLevel.defEq .zero then
     fail "the MPC PoC simple inductive package is data-only"
   else
@@ -91,10 +110,11 @@ def addSimpleInductive (manifest : Manifest) (env : Env) (spec : SimpleInductive
         levelParams := spec.levelParams
         type := simpleInductiveType spec
         kind := .inductiveType spec
-      }
+    }
     let env ← Env.add env inductiveInfo
+    let paramCtx := extendBinders [] spec.params
     for ctor in spec.constructors do
-      checkSimpleInductiveFields manifest env spec.levelParams spec.name [] ctor.fields
+      checkSimpleInductiveFields manifest env spec.levelParams spec.name paramCtx ctor.fields
     let mut env := env
     for pair in enumerate spec.constructors do
       let ctor := pair.2

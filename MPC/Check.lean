@@ -20,6 +20,20 @@ def sortLevel? : Expr → Option Level
   | .sort level => some level
   | _ => none
 
+def requireNatLiteralSupport (env : Env) : Result Unit := do
+  if env.contains "Nat" && env.contains "Nat.zero" && env.contains "Nat.succ" then
+    pure ()
+  else
+    fail "natural literals require Nat, Nat.zero, and Nat.succ in the environment"
+
+def natLiteralConstructorSpine (env : Env) : Nat → Result Expr
+  | 0 => do
+      requireNatLiteralSupport env
+      pure (.const "Nat.zero" [])
+  | n + 1 => do
+      requireNatLiteralSupport env
+      pure (.app (.const "Nat.succ" []) (← natLiteralConstructorSpine env n))
+
 mutual
 
 partial def infer (manifest : Manifest) (env : Env) (levelParams : LevelContext)
@@ -43,10 +57,9 @@ partial def infer (manifest : Manifest) (env : Env) (levelParams : LevelContext)
   | .lit (.nat _) => do
       if manifest.literals != .nat then
         fail "natural literals are disabled by the manifest"
-      else if env.contains "Nat" then
-        pure (.const "Nat" [])
       else
-        fail "natural literals require Nat in the environment"
+        requireNatLiteralSupport env
+        pure (.const "Nat" [])
   | .lit (.str _) =>
       fail "string literals are outside the MPC PoC"
   | .app fn arg => do
@@ -99,6 +112,16 @@ partial def structuralDefEq (manifest : Manifest) (env : Env) (levelParams : Lev
           if pair.1.defEq pair.2 then pure () else fail "constant levels differ"
   | .lit left, .lit right =>
       if left == right then pure () else fail "literals differ"
+  | .lit (.nat value), _ =>
+      if manifest.literals != .nat then
+        fail "natural literals are disabled by the manifest"
+      else
+        structuralDefEq manifest env levelParams ctx (← natLiteralConstructorSpine env value) right
+  | _, .lit (.nat value) =>
+      if manifest.literals != .nat then
+        fail "natural literals are disabled by the manifest"
+      else
+        structuralDefEq manifest env levelParams ctx left (← natLiteralConstructorSpine env value)
   | .app leftFn leftArg, .app rightFn rightArg =>
       structuralDefEq manifest env levelParams ctx leftFn rightFn
       structuralDefEq manifest env levelParams ctx leftArg rightArg
