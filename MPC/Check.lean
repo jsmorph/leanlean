@@ -172,21 +172,21 @@ partial def structuralDefEq (manifest : Manifest) (env : Env) (levelParams : Lev
       else
         structuralDefEq manifest env levelParams ctx left (← natLiteralConstructorSpine env value)
   | .app leftFn leftArg, .app rightFn rightArg =>
-      structuralDefEq manifest env levelParams ctx leftFn rightFn
-      structuralDefEq manifest env levelParams ctx leftArg rightArg
+      defEq manifest env levelParams ctx leftFn rightFn
+      defEq manifest env levelParams ctx leftArg rightArg
   | .lam _ leftType leftBody, .lam _ rightType rightBody =>
-      structuralDefEq manifest env levelParams ctx leftType rightType
-      structuralDefEq manifest env levelParams (ctx.extend "_" leftType) leftBody rightBody
+      defEq manifest env levelParams ctx leftType rightType
+      defEq manifest env levelParams (ctx.extend "_" leftType) leftBody rightBody
   | .forallE _ leftType leftBody, .forallE _ rightType rightBody =>
-      structuralDefEq manifest env levelParams ctx leftType rightType
-      structuralDefEq manifest env levelParams (ctx.extend "_" leftType) leftBody rightBody
+      defEq manifest env levelParams ctx leftType rightType
+      defEq manifest env levelParams (ctx.extend "_" leftType) leftBody rightBody
   | .letE _ _ leftValue leftBody, _ =>
-      structuralDefEq manifest env levelParams ctx (Expr.instantiate1 leftBody leftValue) right
+      defEq manifest env levelParams ctx (Expr.instantiate1 leftBody leftValue) right
   | _, .letE _ _ rightValue rightBody =>
-      structuralDefEq manifest env levelParams ctx left (Expr.instantiate1 rightBody rightValue)
+      defEq manifest env levelParams ctx left (Expr.instantiate1 rightBody rightValue)
   | .proj leftStruct leftIndex leftTarget, .proj rightStruct rightIndex rightTarget =>
       if leftStruct == rightStruct && leftIndex == rightIndex then
-        structuralDefEq manifest env levelParams ctx leftTarget rightTarget
+        defEq manifest env levelParams ctx leftTarget rightTarget
       else
         fail "projections differ"
   | _, _ => fail s!"not definitionally equal: {repr left} and {repr right}"
