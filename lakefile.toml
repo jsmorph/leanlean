@@ -73,3 +73,7 @@ supportInterpreter = true
 name = "leanlean-self-check"
 root = "SelfCheck"
 supportInterpreter = true
+
+[[lean_exe]]
+name = "mpctest"
+root = "MPCTest"

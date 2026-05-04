@@ -22,6 +22,16 @@ def Expr.mkApps (fn : Expr) : List Expr → Expr
   | [] => fn
   | arg :: args => Expr.mkApps (.app fn arg) args
 
+def Expr.constLevels? : Expr → Option (Name × List Level)
+  | .const name levels => some (name, levels)
+  | _ => none
+
+partial def Expr.getAppFnArgs : Expr → Expr × List Expr
+  | .app fn arg =>
+      let (head, args) := fn.getAppFnArgs
+      (head, args ++ [arg])
+  | expr => (expr, [])
+
 partial def Expr.liftFrom (amount cutoff : Nat) : Expr → Expr
   | .bvar index =>
       if cutoff <= index then .bvar (index + amount) else .bvar index
@@ -53,19 +63,24 @@ partial def Expr.instantiateAt (depth : Nat) (value : Expr) : Expr → Expr
   | .sort level => .sort level
   | .const name levels => .const name levels
   | .lit literal => .lit literal
-  | .app fn arg => .app (fn.instantiateAt depth value) (arg.instantiateAt depth value)
+  | .app fn arg =>
+      .app (Expr.instantiateAt depth value fn) (Expr.instantiateAt depth value arg)
   | .lam name type body =>
-      .lam name (type.instantiateAt depth value) (body.instantiateAt (depth + 1) value)
+      .lam name
+        (Expr.instantiateAt depth value type)
+        (Expr.instantiateAt (depth + 1) value body)
   | .forallE name type body =>
-      .forallE name (type.instantiateAt depth value) (body.instantiateAt (depth + 1) value)
+      .forallE name
+        (Expr.instantiateAt depth value type)
+        (Expr.instantiateAt (depth + 1) value body)
   | .letE name type letValue body =>
       .letE name
-        (type.instantiateAt depth value)
-        (letValue.instantiateAt depth value)
-        (body.instantiateAt (depth + 1) value)
+        (Expr.instantiateAt depth value type)
+        (Expr.instantiateAt depth value letValue)
+        (Expr.instantiateAt (depth + 1) value body)
 
 def Expr.instantiate1 (body value : Expr) : Expr :=
-  body.instantiateAt 0 value
+  Expr.instantiateAt 0 value body
 
 partial def Expr.instantiateLevels (subst : List (Name × Level)) : Expr → Expr
   | .bvar index => .bvar index

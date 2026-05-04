@@ -54,7 +54,7 @@ partial def infer (manifest : Manifest) (env : Env) (levelParams : LevelContext)
       match fnType with
       | .forallE _ domain body => do
           check manifest env levelParams ctx arg domain
-          pure (body.instantiate1 arg)
+          pure (Expr.instantiate1 body arg)
       | _ => fail s!"function expected, got {repr fnType}"
   | .lam name domain body => do
       let _ ← inferSort manifest env levelParams ctx domain
@@ -68,14 +68,14 @@ partial def infer (manifest : Manifest) (env : Env) (levelParams : LevelContext)
       let _ ← inferSort manifest env levelParams ctx type
       check manifest env levelParams ctx value type
       let bodyType ← infer manifest env levelParams (ctx.extend name type) body
-      pure (bodyType.instantiate1 value)
+      pure (Expr.instantiate1 bodyType value)
 
 partial def inferSort (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (expr : Expr) : Result Level := do
   let type ← whnf manifest env levelParams (← infer manifest env levelParams ctx expr)
   match type with
   | .sort level => pure level
-  | _ => fail s!"sort expected, got {repr type}"
+  | _ => fail s!"sort expected for {repr expr}, got {repr type}"
 
 partial def check (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (expr expectedType : Expr) : Result Unit := do
@@ -109,9 +109,9 @@ partial def structuralDefEq (manifest : Manifest) (env : Env) (levelParams : Lev
       structuralDefEq manifest env levelParams ctx leftType rightType
       structuralDefEq manifest env levelParams (ctx.extend "_" leftType) leftBody rightBody
   | .letE _ _ leftValue leftBody, _ =>
-      structuralDefEq manifest env levelParams ctx (leftBody.instantiate1 leftValue) right
+      structuralDefEq manifest env levelParams ctx (Expr.instantiate1 leftBody leftValue) right
   | _, .letE _ _ rightValue rightBody =>
-      structuralDefEq manifest env levelParams ctx left (rightBody.instantiate1 rightValue)
+      structuralDefEq manifest env levelParams ctx left (Expr.instantiate1 rightBody rightValue)
   | _, _ => fail s!"not definitionally equal: {repr left} and {repr right}"
 
 partial def isPropExpr (manifest : Manifest) (env : Env) (levelParams : LevelContext)
@@ -139,5 +139,33 @@ partial def defEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
   | .error _ => proofIrrelevanceDefEq manifest env levelParams ctx left right
 
 end
+
+def bindForall (binders : List Binder) (body : Expr) : Expr :=
+  binders.foldr (fun binder body => .forallE binder.name binder.type body) body
+
+partial def containsConst (target : Name) : Expr → Bool
+  | .bvar _ => false
+  | .sort _ => false
+  | .const name _ => name == target
+  | .lit _ => false
+  | .app fn arg => containsConst target fn || containsConst target arg
+  | .lam _ type body => containsConst target type || containsConst target body
+  | .forallE _ type body => containsConst target type || containsConst target body
+  | .letE _ type value body =>
+      containsConst target type || containsConst target value || containsConst target body
+
+def getAppHeadName? (expr : Expr) : Option Name :=
+  match expr.getAppFnArgs.1 with
+  | .const name _ => some name
+  | _ => none
+
+partial def simpleStrictlyPositive (target : Name) (expr : Expr) : Bool :=
+  if getAppHeadName? expr == some target then
+    true
+  else
+    match expr with
+    | .forallE _ domain body =>
+        !containsConst target domain && simpleStrictlyPositive target body
+    | _ => !containsConst target expr
 
 end MPC

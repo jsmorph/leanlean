@@ -3,13 +3,32 @@ import MPC.Manifest
 
 namespace MPC
 
+structure SimpleConstructorSpec where
+  name : Name
+  fields : List Binder := []
+  deriving BEq, Repr, Inhabited
+
+structure SimpleInductiveSpec where
+  name : Name
+  levelParams : LevelContext := []
+  params : List Binder := []
+  resultLevel : Level
+  constructors : List SimpleConstructorSpec
+  deriving BEq, Repr, Inhabited
+
+structure SimpleRecursorInfo where
+  inductiveName : Name
+  constructors : List (Name × Nat)
+  deriving BEq, Repr, Inhabited
+
 inductive ConstantKind where
   | axiom
   | definition
   | opaque
   | theorem
-  | constructor : Name → Nat → ConstantKind
-  | recursor : Name → ConstantKind
+  | inductiveType : SimpleInductiveSpec → ConstantKind
+  | constructor : Name → Nat → Nat → ConstantKind
+  | recursor : SimpleRecursorInfo → ConstantKind
   deriving BEq, Repr, Inhabited
 
 structure ConstantInfo where
