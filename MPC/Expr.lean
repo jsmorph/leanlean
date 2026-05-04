@@ -108,4 +108,24 @@ partial def Expr.instantiateLevels (subst : List (Name × Level)) : Expr → Exp
   | .proj structureName fieldIndex target =>
       .proj structureName fieldIndex (target.instantiateLevels subst)
 
+partial def Expr.alphaEq : Expr → Expr → Bool
+  | .bvar left, .bvar right => left == right
+  | .sort left, .sort right => left.defEq right
+  | .const leftName leftLevels, .const rightName rightLevels =>
+      leftName == rightName &&
+        leftLevels.length == rightLevels.length &&
+        (leftLevels.zip rightLevels).all fun pair => pair.1.defEq pair.2
+  | .lit left, .lit right => left == right
+  | .app leftFn leftArg, .app rightFn rightArg =>
+      leftFn.alphaEq rightFn && leftArg.alphaEq rightArg
+  | .lam _ leftType leftBody, .lam _ rightType rightBody =>
+      leftType.alphaEq rightType && leftBody.alphaEq rightBody
+  | .forallE _ leftType leftBody, .forallE _ rightType rightBody =>
+      leftType.alphaEq rightType && leftBody.alphaEq rightBody
+  | .letE _ leftType leftValue leftBody, .letE _ rightType rightValue rightBody =>
+      leftType.alphaEq rightType && leftValue.alphaEq rightValue && leftBody.alphaEq rightBody
+  | .proj leftStruct leftIndex leftTarget, .proj rightStruct rightIndex rightTarget =>
+      leftStruct == rightStruct && leftIndex == rightIndex && leftTarget.alphaEq rightTarget
+  | _, _ => false
+
 end MPC

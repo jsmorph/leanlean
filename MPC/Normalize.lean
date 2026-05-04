@@ -18,7 +18,136 @@ def findIndexedConstructor? (name : Name) : List IndexedRecursorConstructorInfo 
   | ctor :: rest =>
       if ctor.name == name then some ctor else findIndexedConstructor? name rest
 
+def natTypeExpr : Expr :=
+  .const "Nat" []
+
+def boolTypeExpr : Expr :=
+  .const "Bool" []
+
+def natBinaryNatPrimitiveType : Expr :=
+  .forallE "a" natTypeExpr (.forallE "b" natTypeExpr natTypeExpr)
+
+def natBinaryBoolPrimitiveType : Expr :=
+  .forallE "a" natTypeExpr (.forallE "b" natTypeExpr boolTypeExpr)
+
+def checkNatBinaryNatPrimitiveDeclaration (name : Name) (info : ConstantInfo) :
+    Result Unit := do
+  if !info.levelParams.isEmpty then
+    fail s!"{name} primitive reduction requires no universe parameters"
+  else if !info.type.alphaEq natBinaryNatPrimitiveType then
+    fail s!"{name} primitive reduction requires the specified Nat -> Nat -> Nat type"
+  else
+    match info.kind, info.value? with
+    | .definition, some _ => pure ()
+    | _, _ => fail s!"{name} primitive reduction requires a transparent definition"
+
+def checkNatBinaryBoolPrimitiveDeclaration (name : Name) (info : ConstantInfo) :
+    Result Unit := do
+  if !info.levelParams.isEmpty then
+    fail s!"{name} primitive reduction requires no universe parameters"
+  else if !info.type.alphaEq natBinaryBoolPrimitiveType then
+    fail s!"{name} primitive reduction requires the specified Nat -> Nat -> Bool type"
+  else
+    match info.kind, info.value? with
+    | .definition, some _ => pure ()
+    | _, _ => fail s!"{name} primitive reduction requires a transparent definition"
+
+def boolCtorExpr (env : Env) (value : Bool) : Result Expr := do
+  let name := if value then "Bool.true" else "Bool.false"
+  match env.find? name with
+  | some { kind := .constructor inductiveName _ fieldCount, levelParams, type, .. } =>
+      if inductiveName != "Bool" then
+        fail s!"{name} primitive reduction requires a Bool constructor, got {inductiveName}"
+      else if fieldCount != 0 then
+        fail s!"{name} primitive reduction requires a nullary Bool constructor"
+      else if !levelParams.isEmpty || !type.alphaEq boolTypeExpr then
+        fail s!"{name} primitive reduction requires Bool constructor type"
+      else
+        pure (.const name [])
+  | some _ => fail s!"{name} primitive reduction requires a Bool constructor"
+  | none => fail s!"{name} primitive reduction requires a Bool constructor"
+
 mutual
+
+partial def natValue? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (expr : Expr) : Result (Option Nat) := do
+  match ← whnf manifest env levelParams expr with
+  | .lit (.nat value) => pure (some value)
+  | .const "Nat.zero" [] => pure (some 0)
+  | .app (.const "Nat.succ" []) pred => do
+      match ← natValue? manifest env levelParams pred with
+      | some value => pure (some (value + 1))
+      | none => pure none
+  | _ => pure none
+
+partial def reduceNatAdd? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (info : ConstantInfo) (levels : List Level) (args : List Expr) :
+    Result (Option Expr) := do
+  if !manifest.supportsNatPrimitiveReductions || !levels.isEmpty || args.length != 2 then
+    pure none
+  else
+    checkNatBinaryNatPrimitiveDeclaration "Nat.add" info
+    let some left := listGet? args 0
+      | pure none
+    let some rightArg := listGet? args 1
+      | pure none
+    let right ← whnf manifest env levelParams rightArg
+    match right with
+    | .lit (.nat 0) => pure (some left)
+    | .lit (.nat (pred + 1)) =>
+        pure (some (.app (.const "Nat.succ" []) (Expr.mkApps (.const "Nat.add" []) [left, .lit (.nat pred)])))
+    | _ =>
+        match right.getAppFnArgs with
+        | (.const "Nat.zero" [], []) => pure (some left)
+        | (.const "Nat.succ" [], [pred]) =>
+            pure (some (.app (.const "Nat.succ" []) (Expr.mkApps (.const "Nat.add" []) [left, pred])))
+        | _ => pure none
+
+partial def reduceNatBinaryNat? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (name : Name) (info : ConstantInfo) (levels : List Level) (args : List Expr)
+    (op : Nat → Nat → Nat) : Result (Option Expr) := do
+  if !manifest.supportsNatPrimitiveReductions || !levels.isEmpty || args.length != 2 then
+    pure none
+  else
+    checkNatBinaryNatPrimitiveDeclaration name info
+    let some leftArg := listGet? args 0
+      | pure none
+    let some rightArg := listGet? args 1
+      | pure none
+    match
+        ← natValue? manifest env levelParams leftArg,
+        ← natValue? manifest env levelParams rightArg with
+    | some left, some right => pure (some (.lit (.nat (op left right))))
+    | _, _ => pure none
+
+partial def reduceNatBinaryBool? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (name : Name) (info : ConstantInfo) (levels : List Level) (args : List Expr)
+    (op : Nat → Nat → Bool) : Result (Option Expr) := do
+  if !manifest.supportsNatPrimitiveReductions || !levels.isEmpty || args.length != 2 then
+    pure none
+  else
+    checkNatBinaryBoolPrimitiveDeclaration name info
+    let some leftArg := listGet? args 0
+      | pure none
+    let some rightArg := listGet? args 1
+      | pure none
+    match
+        ← natValue? manifest env levelParams leftArg,
+        ← natValue? manifest env levelParams rightArg with
+    | some left, some right => pure (some (← boolCtorExpr env (op left right)))
+    | _, _ => pure none
+
+partial def reduceNatPrimitive? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (name : Name) (info : ConstantInfo) (levels : List Level) (args : List Expr) :
+    Result (Option Expr) := do
+  match name with
+  | "Nat.add" => reduceNatAdd? manifest env levelParams info levels args
+  | "Nat.mul" => reduceNatBinaryNat? manifest env levelParams name info levels args (fun left right => left * right)
+  | "Nat.pow" => reduceNatBinaryNat? manifest env levelParams name info levels args (fun left right => Nat.pow left right)
+  | "Nat.sub" => reduceNatBinaryNat? manifest env levelParams name info levels args (fun left right => left - right)
+  | "Nat.beq" => reduceNatBinaryBool? manifest env levelParams name info levels args (fun left right => left == right)
+  | "Nat.ble" => reduceNatBinaryBool? manifest env levelParams name info levels args (fun left right => left <= right)
+  | _ => pure none
 
 partial def reduceProjection? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (structureName : Name) (fieldIndex : Nat) (target : Expr) : Result (Option Expr) := do
@@ -221,37 +350,47 @@ partial def whnf (manifest : Manifest) (env : Env) (levelParams : LevelContext)
   | .app fn arg =>
       let appExpr := Expr.app fn arg
       let (head, args) := Expr.getAppFnArgs appExpr
-      let head ← whnf manifest env levelParams head
-      match head with
-      | Expr.const name levels =>
-          match env.find? name with
-          | some { kind := .recursor info, .. } =>
-              match ← reduceSimpleRecursor? manifest env levelParams name info levels args with
-              | some reduced => whnf manifest env levelParams reduced
-              | none => pure (Expr.mkApps head args)
-          | some { kind := .indexedRecursor info, .. } =>
-              match ← reduceIndexedRecursor? manifest env levelParams name info levels args with
-              | some reduced => whnf manifest env levelParams reduced
-              | none => pure (Expr.mkApps head args)
-          | some { kind := .quotientLift, .. } =>
-              match ← reduceQuotLift? manifest env levelParams levels args with
-              | some reduced => whnf manifest env levelParams reduced
-              | none => pure (Expr.mkApps head args)
-          | some { kind := .equalityRec, .. } =>
-              match ← reduceEqRec? manifest env levelParams args with
-              | some reduced => whnf manifest env levelParams reduced
-              | none => pure (Expr.mkApps head args)
-          | some { kind := .equalityNdRec, .. } =>
-              match ← reduceEqRec? manifest env levelParams args with
-              | some reduced => whnf manifest env levelParams reduced
-              | none => pure (Expr.mkApps head args)
+      let primitiveReduction? ←
+        match head with
+        | .const name levels =>
+            match env.find? name with
+            | some info => reduceNatPrimitive? manifest env levelParams name info levels args
+            | none => pure none
+        | _ => pure none
+      match primitiveReduction? with
+      | some reduced => whnf manifest env levelParams reduced
+      | none =>
+          let head ← whnf manifest env levelParams head
+          match head with
+          | Expr.const name levels =>
+              match env.find? name with
+              | some { kind := .recursor info, .. } =>
+                  match ← reduceSimpleRecursor? manifest env levelParams name info levels args with
+                  | some reduced => whnf manifest env levelParams reduced
+                  | none => pure (Expr.mkApps head args)
+              | some { kind := .indexedRecursor info, .. } =>
+                  match ← reduceIndexedRecursor? manifest env levelParams name info levels args with
+                  | some reduced => whnf manifest env levelParams reduced
+                  | none => pure (Expr.mkApps head args)
+              | some { kind := .quotientLift, .. } =>
+                  match ← reduceQuotLift? manifest env levelParams levels args with
+                  | some reduced => whnf manifest env levelParams reduced
+                  | none => pure (Expr.mkApps head args)
+              | some { kind := .equalityRec, .. } =>
+                  match ← reduceEqRec? manifest env levelParams args with
+                  | some reduced => whnf manifest env levelParams reduced
+                  | none => pure (Expr.mkApps head args)
+              | some { kind := .equalityNdRec, .. } =>
+                  match ← reduceEqRec? manifest env levelParams args with
+                  | some reduced => whnf manifest env levelParams reduced
+                  | none => pure (Expr.mkApps head args)
+              | _ => pure (Expr.mkApps head args)
+          | .lam _ _ body =>
+              match args with
+              | first :: rest =>
+                  whnf manifest env levelParams (Expr.mkApps (Expr.instantiate1 body first) rest)
+              | [] => pure head
           | _ => pure (Expr.mkApps head args)
-      | .lam _ _ body =>
-          match args with
-          | first :: rest =>
-              whnf manifest env levelParams (Expr.mkApps (Expr.instantiate1 body first) rest)
-          | [] => pure head
-      | _ => pure (Expr.mkApps head args)
   | .const name levels =>
       match env.find? name with
       | some info =>

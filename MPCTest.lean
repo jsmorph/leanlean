@@ -62,6 +62,17 @@ def boolSpec : SimpleInductiveSpec :=
       ]
   }
 
+def primitiveBoolSpec : SimpleInductiveSpec :=
+  {
+    name := "Bool"
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        { name := "Bool.false" },
+        { name := "Bool.true" }
+      ]
+  }
+
 def badRecursiveSpec : SimpleInductiveSpec :=
   {
     name := "Bad"
@@ -116,6 +127,39 @@ def natZero : Expr :=
 
 def natSucc (value : Expr) : Expr :=
   .app (.const "Nat.succ" []) value
+
+def boolType : Expr :=
+  .const "Bool" []
+
+def boolFalse : Expr :=
+  .const "Bool.false" []
+
+def boolTrue : Expr :=
+  .const "Bool.true" []
+
+def natBinaryNatType : Expr :=
+  pi "a" natType (pi "b" natType natType)
+
+def natBinaryBoolType : Expr :=
+  pi "a" natType (pi "b" natType boolType)
+
+def natBinaryNatZeroValue : Expr :=
+  .lam "a" natType (.lam "b" natType natZero)
+
+def natBinaryBoolFalseValue : Expr :=
+  .lam "a" natType (.lam "b" natType boolFalse)
+
+def primitiveNatDeclarations : List Declaration :=
+  [
+    .inductive primitiveBoolSpec,
+    .axiom "m" [] natType,
+    .definition "Nat.add" [] natBinaryNatType natBinaryNatZeroValue,
+    .definition "Nat.mul" [] natBinaryNatType natBinaryNatZeroValue,
+    .definition "Nat.pow" [] natBinaryNatType natBinaryNatZeroValue,
+    .definition "Nat.sub" [] natBinaryNatType natBinaryNatZeroValue,
+    .definition "Nat.beq" [] natBinaryBoolType natBinaryBoolFalseValue,
+    .definition "Nat.ble" [] natBinaryBoolType natBinaryBoolFalseValue
+  ]
 
 def vecType (index : Expr) : Expr :=
   appN (.const "Vec" []) [natType, index]
@@ -465,6 +509,60 @@ def checkProjections : IO Unit := do
   expectError "projection field out of range"
     (infer MPC.Configs.ProjectionPoc env [] [] (.proj "DPair" 2 dPairTarget))
 
+def checkPrimitiveNat : IO Unit := do
+  let declarations := baseDeclarations ++ primitiveNatDeclarations
+  let baseEnv ← expectOkLabel "primitive Nat baseline replay"
+    (replay MPC.Configs.Poc emptyEnv declarations)
+  let addBase ← expectOkLabel "primitive Nat disabled delta"
+    (normalize MPC.Configs.Poc baseEnv [] (appN (.const "Nat.add" []) [.const "m" [], natZero]))
+  expectExprEq "primitive Nat disabled uses transparent value" addBase natZero
+  let env ← expectOkLabel "primitive Nat replay"
+    (replay MPC.Configs.PrimitiveNatPoc emptyEnv declarations)
+  let addZero ← expectOkLabel "Nat.add zero reduction"
+    (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.add" []) [.const "m" [], natZero]))
+  expectExprEq "Nat.add zero value" addZero (.const "m" [])
+  let addOne ← expectOkLabel "Nat.add one reduction"
+    (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.add" []) [.const "m" [], .lit (.nat 1)]))
+  expectExprEq "Nat.add one value" addOne (natSucc (.const "m" []))
+  expectOkLabel "Nat.add conversion"
+    (defEq MPC.Configs.PrimitiveNatPoc env [] [] (appN (.const "Nat.add" []) [.const "m" [], .lit (.nat 1)]) (natSucc (.const "m" [])))
+  let mulValue ← expectOkLabel "Nat.mul primitive reduction"
+    (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.mul" []) [.lit (.nat 65536), .lit (.nat 65536)]))
+  expectExprEq "Nat.mul primitive value" mulValue (.lit (.nat 4294967296))
+  let powValue ← expectOkLabel "Nat.pow primitive reduction"
+    (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.pow" []) [.lit (.nat 2), .lit (.nat 32)]))
+  expectExprEq "Nat.pow primitive value" powValue (.lit (.nat 4294967296))
+  let subPositive ← expectOkLabel "Nat.sub positive primitive reduction"
+    (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.sub" []) [.lit (.nat 1114112), .lit (.nat 12)]))
+  expectExprEq "Nat.sub positive value" subPositive (.lit (.nat 1114100))
+  let subTruncated ← expectOkLabel "Nat.sub truncated primitive reduction"
+    (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.sub" []) [.lit (.nat 12), .lit (.nat 1114112)]))
+  expectExprEq "Nat.sub truncated value" subTruncated (.lit (.nat 0))
+  let beqTrue ← expectOkLabel "Nat.beq true primitive reduction"
+    (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.beq" []) [.lit (.nat 9), .lit (.nat 9)]))
+  expectExprEq "Nat.beq true value" beqTrue boolTrue
+  let beqFalse ← expectOkLabel "Nat.beq false primitive reduction"
+    (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.beq" []) [.lit (.nat 9), natZero]))
+  expectExprEq "Nat.beq false value" beqFalse boolFalse
+  let bleTrue ← expectOkLabel "Nat.ble true primitive reduction"
+    (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.ble" []) [natZero, .lit (.nat 9)]))
+  expectExprEq "Nat.ble true value" bleTrue boolTrue
+  let bleFalse ← expectOkLabel "Nat.ble false primitive reduction"
+    (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.ble" []) [.lit (.nat 9), natZero]))
+  expectExprEq "Nat.ble false value" bleFalse boolFalse
+  let badNatAddInfo : ConstantInfo :=
+    { name := "Nat.add", levelParams := [], type := natBinaryBoolType, value? := some natBinaryBoolFalseValue, kind := .definition }
+  expectError "Nat.add primitive declaration shape"
+    (normalize MPC.Configs.PrimitiveNatPoc (badNatAddInfo :: env) [] (appN (.const "Nat.add" []) [natZero, natZero]))
+  let badNatBeqInfo : ConstantInfo :=
+    { name := "Nat.beq", levelParams := [], type := natBinaryBoolType, kind := .axiom }
+  expectError "Nat.beq primitive declaration kind"
+    (normalize MPC.Configs.PrimitiveNatPoc (badNatBeqInfo :: env) [] (appN (.const "Nat.beq" []) [natZero, natZero]))
+  let badBoolTrueInfo : ConstantInfo :=
+    { name := "Bool.true", levelParams := [], type := natType, kind := .constructor "Bool" 1 0 }
+  expectError "Nat.beq primitive Bool constructor shape"
+    (normalize MPC.Configs.PrimitiveNatPoc (badBoolTrueInfo :: env) [] (appN (.const "Nat.beq" []) [natZero, natZero]))
+
 def checkQuotients : IO Unit := do
   expectError "quotient primitives disabled"
     (replay MPC.Configs.Poc emptyEnv [.quotientPrimitives])
@@ -534,5 +632,6 @@ def main : IO Unit := do
   checkIndexedInductives
   checkEquality
   checkProjections
+  checkPrimitiveNat
   checkQuotients
   checkAdapters
