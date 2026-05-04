@@ -64,6 +64,8 @@ inductive ConstantKind where
   | indexedRecursor : IndexedRecursorInfo → ConstantKind
   | equalityType
   | equalityRefl
+  | equalityRec
+  | equalityNdRec
   | quotientType
   | quotientMk
   | quotientLift

@@ -1,4 +1,4 @@
-import MPC.Check
+import MPC.Packages.Equality
 
 namespace MPC.Packages.Quotient
 
@@ -20,7 +20,7 @@ def prop : Expr :=
   .sort .zero
 
 def eqApp (level : Level) (type left right : Expr) : Expr :=
-  Expr.mkApps (.const "Eq" [level]) [type, left, right]
+  MPC.Packages.Equality.eqApp level type left right
 
 def quotApp (level : Level) (type relation : Expr) : Expr :=
   Expr.mkApps (.const "Quot" [level]) [type, relation]
@@ -39,16 +39,6 @@ def betaBinder : Binder :=
 
 def relationBinder : Binder :=
   { name := "r", type := relationTypeForAlpha0 }
-
-def eqType : Expr :=
-  bindForall
-    [alphaBinder, { name := "left", type := .bvar 0 }, { name := "right", type := .bvar 1 }]
-    prop
-
-def eqReflType : Expr :=
-  bindForall
-    [alphaBinder, { name := "value", type := .bvar 0 }]
-    (eqApp u (.bvar 1) (.bvar 0) (.bvar 0))
 
 def quotType : Expr :=
   bindForall [alphaBinder, relationBinder] sortU
@@ -119,8 +109,6 @@ def quotSoundType : Expr :=
 
 def primitiveInfos : List ConstantInfo :=
   [
-    { name := "Eq", levelParams := ["u"], type := eqType, kind := .equalityType },
-    { name := "Eq.refl", levelParams := ["u"], type := eqReflType, kind := .equalityRefl },
     { name := "Quot", levelParams := ["u"], type := quotType, kind := .quotientType },
     { name := "Quot.mk", levelParams := ["u"], type := quotMkType, kind := .quotientMk },
     { name := "Quot.lift", levelParams := ["u", "v"], type := quotLiftType, kind := .quotientLift },
@@ -146,6 +134,8 @@ def addQuotientPrimitives (manifest : Manifest) (env : Env) : Result Env := do
     fail "quotient primitives are disabled by the manifest"
   else if manifest.prop != .enabled then
     fail "quotient primitives require Prop"
+  else if !MPC.Packages.Equality.hasPrimitives env then
+    fail "quotient primitives require equality primitives"
   else
     addPrimitives manifest env primitiveInfos
 

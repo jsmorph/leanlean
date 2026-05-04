@@ -172,6 +172,22 @@ def hType : Expr :=
       (pi "rel" (appN (.const "r" []) [.bvar 1, .bvar 0])
         (eqBeta (.app (.const "f" []) (.bvar 2)) (.app (.const "f" []) (.bvar 1)))))
 
+def predType : Expr :=
+  pi "x" alphaType type0
+
+def predA : Expr :=
+  .app (.const "Pred" []) (.const "a" [])
+
+def equalityDeclarations : List Declaration :=
+  [
+    .axiom "Alpha" [] type0,
+    .axiom "Beta" [] type0,
+    .axiom "Pred" [] predType,
+    .axiom "a" [] alphaType,
+    .axiom "predProof" [] predA,
+    .axiom "b" [] betaType
+  ]
+
 def quotientDeclarations : List Declaration :=
   [
     .axiom "Alpha" [] type0,
@@ -195,6 +211,41 @@ def quotLiftA : Expr :=
       .const "f" [],
       .const "h" [],
       quotMkA
+    ]
+
+def eqReflA : Expr :=
+  appN (.const "Eq.refl" [.succ .zero]) [alphaType, .const "a" []]
+
+def eqRecMotive : Expr :=
+  .lam "x" alphaType
+    (.lam "h" (appN (.const "Eq" [.succ .zero]) [alphaType, .const "a" [], .bvar 0])
+      (.app (.const "Pred" []) (.bvar 1)))
+
+def eqRecTransport : Expr :=
+  appN
+    (.const "Eq.rec" [.succ .zero, .succ .zero])
+    [
+      alphaType,
+      .const "a" [],
+      eqRecMotive,
+      .const "predProof" [],
+      .const "a" [],
+      eqReflA
+    ]
+
+def eqNdRecMotive : Expr :=
+  .lam "x" alphaType betaType
+
+def eqNdRecTransport : Expr :=
+  appN
+    (.const "Eq.ndrec" [.succ .zero, .succ .zero])
+    [
+      alphaType,
+      .const "a" [],
+      eqNdRecMotive,
+      .const "b" [],
+      .const "a" [],
+      eqReflA
     ]
 
 def badIndexedTargetSpec : IndexedInductiveSpec :=
@@ -321,14 +372,43 @@ def checkIndexedInductives : IO Unit := do
   expectError "proposition-valued indexed inductive"
     (replay MPC.Configs.IndexedPoc emptyEnv (baseDeclarations ++ [.indexedInductive propIndexedSpec]))
 
+def checkEquality : IO Unit := do
+  expectError "equality primitives disabled"
+    (replay MPC.Configs.Poc emptyEnv [.equalityPrimitives])
+  expectError "duplicate equality primitives"
+    (replay MPC.Configs.EqualityPoc emptyEnv [.equalityPrimitives, .equalityPrimitives])
+  let env ← expectOkLabel "equality replay"
+    (replay MPC.Configs.EqualityPoc emptyEnv
+      (baseDeclarations ++ [.equalityPrimitives] ++ equalityDeclarations))
+  expectEnvContains "equality primitives" env "Eq.rec"
+  let inferred ← expectOkLabel "Eq.rec inference"
+    (infer MPC.Configs.EqualityPoc env [] [] eqRecTransport)
+  let inferred ← expectOkLabel "Eq.rec inferred type normalization"
+    (normalize MPC.Configs.EqualityPoc env [] inferred)
+  expectExprEq "Eq.rec type" inferred predA
+  let reduced ← expectOkLabel "Eq.rec reduction"
+    (normalize MPC.Configs.EqualityPoc env [] eqRecTransport)
+  expectExprEq "Eq.rec value" reduced (.const "predProof" [])
+  let ndInferred ← expectOkLabel "Eq.ndrec inference"
+    (infer MPC.Configs.EqualityPoc env [] [] eqNdRecTransport)
+  let ndInferred ← expectOkLabel "Eq.ndrec inferred type normalization"
+    (normalize MPC.Configs.EqualityPoc env [] ndInferred)
+  expectExprEq "Eq.ndrec type" ndInferred betaType
+  let ndReduced ← expectOkLabel "Eq.ndrec reduction"
+    (normalize MPC.Configs.EqualityPoc env [] eqNdRecTransport)
+  expectExprEq "Eq.ndrec value" ndReduced (.const "b" [])
+
 def checkQuotients : IO Unit := do
   expectError "quotient primitives disabled"
     (replay MPC.Configs.Poc emptyEnv [.quotientPrimitives])
+  expectError "quotient primitives without equality"
+    (replay MPC.Configs.QuotPoc emptyEnv [.quotientPrimitives])
   expectError "duplicate quotient primitives"
-    (replay MPC.Configs.QuotPoc emptyEnv [.quotientPrimitives, .quotientPrimitives])
+    (replay MPC.Configs.QuotPoc emptyEnv
+      [.equalityPrimitives, .quotientPrimitives, .quotientPrimitives])
   let env ← expectOkLabel "quotient replay"
     (replay MPC.Configs.QuotPoc emptyEnv
-      (baseDeclarations ++ [.quotientPrimitives] ++ quotientDeclarations))
+      (baseDeclarations ++ [.equalityPrimitives, .quotientPrimitives] ++ quotientDeclarations))
   expectEnvContains "quotient primitives" env "Quot.lift"
   let inferred ← expectOkLabel "quotient lift inference"
     (infer MPC.Configs.QuotPoc env [] [] quotLiftA)
@@ -385,5 +465,6 @@ def main : IO Unit := do
   checkBasePackages
   checkSimpleInductives
   checkIndexedInductives
+  checkEquality
   checkQuotients
   checkAdapters

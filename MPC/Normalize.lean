@@ -151,6 +151,43 @@ partial def reduceQuotLift? (manifest : Manifest) (env : Env) (levelParams : Lev
           | _ => pure none
       | _ => pure none
 
+partial def reduceEqRec? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (args : List Expr) : Result (Option Expr) := do
+  if !manifest.supportsEquality then
+    pure none
+  else
+    let required := 6
+    if args.length < required then
+      pure none
+    else
+      let some typeArg := listGet? args 0
+        | pure none
+      let some aArg := listGet? args 1
+        | pure none
+      let some minorArg := listGet? args 3
+        | pure none
+      let some bArg := listGet? args 4
+        | pure none
+      let some proofArg := listGet? args 5
+        | pure none
+      let trailing := args.drop required
+      let proofWhnf ← whnf manifest env levelParams proofArg
+      let (proofHead, proofArgs) := proofWhnf.getAppFnArgs
+      match proofHead with
+      | Expr.const reflName _ =>
+          match env.find? reflName with
+          | some { kind := .equalityRefl, .. } =>
+              let some reflTypeArg := listGet? proofArgs 0
+                | pure none
+              let some reflValueArg := listGet? proofArgs 1
+                | pure none
+              if reflTypeArg == typeArg && reflValueArg == aArg && bArg == aArg then
+                pure (some (Expr.mkApps minorArg trailing))
+              else
+                pure none
+          | _ => pure none
+      | _ => pure none
+
 partial def whnf (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (expr : Expr) : Result Expr := do
   match expr with
@@ -173,6 +210,14 @@ partial def whnf (manifest : Manifest) (env : Env) (levelParams : LevelContext)
               | none => pure (Expr.mkApps head args)
           | some { kind := .quotientLift, .. } =>
               match ← reduceQuotLift? manifest env levelParams levels args with
+              | some reduced => whnf manifest env levelParams reduced
+              | none => pure (Expr.mkApps head args)
+          | some { kind := .equalityRec, .. } =>
+              match ← reduceEqRec? manifest env levelParams args with
+              | some reduced => whnf manifest env levelParams reduced
+              | none => pure (Expr.mkApps head args)
+          | some { kind := .equalityNdRec, .. } =>
+              match ← reduceEqRec? manifest env levelParams args with
               | some reduced => whnf manifest env levelParams reduced
               | none => pure (Expr.mkApps head args)
           | _ => pure (Expr.mkApps head args)

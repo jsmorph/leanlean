@@ -1,4 +1,5 @@
 import MPC.Check
+import MPC.Packages.Equality
 import MPC.Packages.Quotient
 
 namespace MPC
@@ -350,6 +351,8 @@ def addDecl (manifest : Manifest) (env : Env) : Declaration → Result Env
           addSimpleInductive manifest env spec
       | .indexedInductive spec =>
           addIndexedInductive manifest env spec
+      | .equalityPrimitives =>
+          MPC.Packages.Equality.addEqualityPrimitives manifest env
       | .quotientPrimitives =>
           MPC.Packages.Quotient.addQuotientPrimitives manifest env
 

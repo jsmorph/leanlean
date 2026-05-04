@@ -28,11 +28,17 @@ inductive QuotientMode where
   | primitive
   deriving BEq, Repr, Inhabited
 
+inductive EqualityMode where
+  | disabled
+  | primitive
+  deriving BEq, Repr, Inhabited
+
 structure Manifest where
   declarations : DeclarationMode := .disabled
   prop : PropMode := .disabled
   literals : LiteralMode := .none
   inductives : InductiveMode := .none
+  equality : EqualityMode := .disabled
   quotients : QuotientMode := .disabled
   deriving BEq, Repr, Inhabited
 
@@ -50,5 +56,8 @@ def Manifest.supportsIndexedInductives (manifest : Manifest) : Bool :=
 
 def Manifest.supportsQuotients (manifest : Manifest) : Bool :=
   manifest.quotients == .primitive
+
+def Manifest.supportsEquality (manifest : Manifest) : Bool :=
+  manifest.equality == .primitive
 
 end MPC
