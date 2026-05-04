@@ -15,10 +15,26 @@ structure ModuleRoots where
   roots : List Lean.Name
   skipped : Nat
 
+structure GeneratedInventoryRow where
+  moduleName : Lean.Name
+  name : Lean.Name
+  className : String
+  declarationKind : String
+  dependencyShape : String
+  dependencyCount : Nat
+  outcome : Checker.Outcome
+
+structure GeneratedInventorySummary where
+  className : String
+  declarationKind : String
+  status : Checker.Status
+  count : Nat
+
 inductive Mode where
   | targetClosure
   | moduleClosure
   | roots : Bool → Bool → Mode
+  | generatedInventory : Bool → Mode
 
 def targets : List ModuleTarget :=
   [
@@ -43,7 +59,7 @@ def targets : List ModuleTarget :=
   ]
 
 def usage : String :=
-  "usage: leanlean-self-check [--module-closure | --roots [--all] [--first-failure]]"
+  "usage: leanlean-self-check [--module-closure | --roots [--all] [--first-failure] | --generated-inventory [--all]]"
 
 def parseArgs : List String → Except String Mode
   | [] => pure .targetClosure
@@ -53,6 +69,8 @@ def parseArgs : List String → Except String Mode
   | ["--roots", "--first-failure"] => pure (.roots false true)
   | ["--roots", "--all", "--first-failure"] => pure (.roots true true)
   | ["--roots", "--first-failure", "--all"] => pure (.roots true true)
+  | ["--generated-inventory"] => pure (.generatedInventory false)
+  | ["--generated-inventory", "--all"] => pure (.generatedInventory true)
   | ["--help"] => .error usage
   | arg :: _ => .error s!"unknown argument: {arg}"
 
@@ -142,6 +160,20 @@ def moduleRoots (env : Lean.Environment) (moduleName : Lean.Name) :
         | some info => trustedRoot? env info
         | none => false
     pure { roots, skipped := names.length - roots.length }
+  else
+    .error s!"module data is missing for {moduleName}"
+
+def moduleConstantInfos (env : Lean.Environment) (moduleName : Lean.Name) :
+    Except String (List Lean.ConstantInfo) := do
+  let some moduleIdx := env.getModuleIdx? moduleName
+    | .error s!"module is not loaded: {moduleName}"
+  if h : moduleIdx.toNat < env.header.moduleData.size then
+    let data := env.header.moduleData[moduleIdx.toNat]
+    let names := (data.constNames.qsort fun left right => left.quickCmp right == .lt).toList
+    names.mapM fun name =>
+      match env.find? name with
+      | some info => pure info
+      | none => .error s!"module data contains unknown declaration: {name}"
   else
     .error s!"module data is missing for {moduleName}"
 
@@ -361,6 +393,131 @@ def checkSelfCheckRoots (env : Lean.Environment) (roots : List Lean.Name) : Chec
       | .ok _ => .accepted s!"checked {declarations.length} declaration entries"
       | .error err => .rejected err
 
+def constantInfoName : Lean.ConstantInfo → Lean.Name
+  | .axiomInfo value => value.name
+  | .defnInfo value => value.name
+  | .thmInfo value => value.name
+  | .opaqueInfo value => value.name
+  | .inductInfo value => value.name
+  | .ctorInfo value => value.name
+  | .recInfo value => value.name
+  | .quotInfo value => value.name
+
+def declarationKind : Lean.ConstantInfo → String
+  | .axiomInfo _ => "axiom"
+  | .defnInfo _ => "definition"
+  | .thmInfo _ => "theorem"
+  | .opaqueInfo _ => "opaque"
+  | .inductInfo _ => "inductive"
+  | .ctorInfo _ => "constructor"
+  | .recInfo _ => "recursor"
+  | .quotInfo _ => "quotient"
+
+def dependencyShape : Lean.ConstantInfo → String
+  | .axiomInfo _ => "type"
+  | .defnInfo _ => "type+value"
+  | .thmInfo _ => "type+proof"
+  | .opaqueInfo _ => "type+value"
+  | .inductInfo _ => "inductive-metadata"
+  | .ctorInfo _ => "constructor-metadata"
+  | .recInfo _ => "recursor-metadata"
+  | .quotInfo _ => "quotient-primitive"
+
+def generatedSupportClass (env : Lean.Environment) (info : Lean.ConstantInfo) : String :=
+  let name := constantInfoName info
+  let text := toString name
+  if recursiveAuxSupportName env name then
+    "recursive-aux"
+  else if text.contains ".match_" then
+    "match-helper"
+  else if text.contains ".noConfusion" then
+    "no-confusion"
+  else if text.endsWith ".ctorElim" then
+    "constructor-eliminator"
+  else if text.contains "_sparseCasesOn_" || text.contains "._sparseCasesOn_" then
+    "sparse-case-helper"
+  else if text.contains ".repr" || text.contains ".instRepr" then
+    "repr-support"
+  else if text.contains ".instDecidable" then
+    "derived-decidable"
+  else if text.contains ".instInhabited" then
+    "derived-inhabited"
+  else if text.contains ".instBEq" || text.startsWith "LeanLean.inst" then
+    "derived-instance"
+  else if text.contains "_proof_" then
+    "generated-proof"
+  else if text.contains "_unsafe_rec" then
+    "unsafe-recursive-support"
+  else if Lean.isAuxRecursor env name then
+    "aux-recursor"
+  else if text.contains "._" then
+    "private-or-aux"
+  else
+    match info with
+    | .thmInfo _ => "theorem"
+    | .defnInfo value =>
+        match value.safety with
+        | .safe => "non-source-definition"
+        | .«unsafe» => "unsafe-definition"
+        | .«partial» => "partial-definition"
+    | .axiomInfo value =>
+        if value.isUnsafe then "unsafe-axiom" else "non-source-axiom"
+    | .opaqueInfo value =>
+        if value.isUnsafe then "unsafe-opaque" else "non-source-opaque"
+    | .inductInfo _ | .ctorInfo _ | .recInfo _ | .quotInfo _ => "non-source-kernel-declaration"
+
+def inventoryRow (env : Lean.Environment) (moduleName : Lean.Name) (info : Lean.ConstantInfo) :
+    GeneratedInventoryRow :=
+  let name := constantInfoName info
+  {
+    moduleName
+    name
+    className := generatedSupportClass env info
+    declarationKind := declarationKind info
+    dependencyShape := dependencyShape info
+    dependencyCount := (Import.environmentConstantInfoDependencyNames env info).length
+    outcome := checkSelfCheckRoots env [name]
+  }
+
+def inventoryRows (env : Lean.Environment) (moduleName : Lean.Name) :
+    Except String (List GeneratedInventoryRow) := do
+  let infos ← moduleConstantInfos env moduleName
+  let skipped := infos.filter fun info => !(trustedRoot? env info)
+  pure (skipped.map (inventoryRow env moduleName))
+
+def updateInventorySummary
+    (summaries : List GeneratedInventorySummary)
+    (row : GeneratedInventoryRow) : List GeneratedInventorySummary :=
+  match summaries with
+  | [] =>
+      [
+        {
+          className := row.className
+          declarationKind := row.declarationKind
+          status := row.outcome.status
+          count := 1
+        }
+      ]
+  | summary :: rest =>
+      if summary.className == row.className &&
+          summary.declarationKind == row.declarationKind &&
+          summary.status == row.outcome.status then
+        { summary with count := summary.count + 1 } :: rest
+      else
+        summary :: updateInventorySummary rest row
+
+def inventorySummaries (rows : List GeneratedInventoryRow) : List GeneratedInventorySummary :=
+  rows.foldl updateInventorySummary []
+
+def inventorySummaryLine (summary : GeneratedInventorySummary) : String :=
+  s!"summary: class={summary.className} kind={summary.declarationKind} \
+    outcome={Checker.Outcome.label { status := summary.status, message := "" }} count={summary.count}"
+
+def inventoryDetailLine (row : GeneratedInventoryRow) : String :=
+  s!"detail: module={row.moduleName} name={row.name} class={row.className} \
+    kind={row.declarationKind} dependencies={row.dependencyShape}:{row.dependencyCount} \
+    outcome={row.outcome.label}"
+
 def checkModule (env : Lean.Environment) (moduleName : Lean.Name) :
     List RootResult :=
   match moduleRoots env moduleName with
@@ -490,6 +647,11 @@ unsafe def checkTargetSelectedRoots (target : ModuleTarget) : IO RootResult := d
                     message := s!"{outcome.message}; roots {repr target.roots}" }
           }
 
+unsafe def inventoryTarget (target : ModuleTarget) : IO (Except String (List GeneratedInventoryRow)) := do
+  match ← Checker.loadModuleEnvironment target.moduleName with
+  | .ok env => pure (inventoryRows env target.moduleName)
+  | .error err => pure (.error s!"could not load module: {err}")
+
 def statusCount (status : Checker.Status) (results : List RootResult) : Nat :=
   results.foldl
     (fun count result =>
@@ -522,6 +684,21 @@ def printResults (showAll : Bool) (results : List RootResult) : IO Unit := do
     if showAll || result.outcome.status != .accepted then
       printResult result
 
+def printInventory (showAll : Bool) (rows : List GeneratedInventoryRow) : IO Unit := do
+  let moduleNames :=
+    rows.foldl
+      (fun names row =>
+        if names.any (· == row.moduleName) then names else names ++ [row.moduleName])
+      []
+  for moduleName in moduleNames do
+    let moduleRows := rows.filter (·.moduleName == moduleName)
+    IO.println s!"module {moduleName}: inventoried {moduleRows.length} skipped declarations"
+  for summary in inventorySummaries rows do
+    IO.println (inventorySummaryLine summary)
+  if showAll then
+    for row in rows do
+      IO.println (inventoryDetailLine row)
+
 unsafe def run (args : List String) : IO UInt32 := do
   match parseArgs args with
   | .error err => do
@@ -530,30 +707,57 @@ unsafe def run (args : List String) : IO UInt32 := do
         IO.eprintln s!"error: {err}"
       return 2
   | .ok mode => do
-      let mut results := []
-      let showAll :=
-        match mode with
-        | .targetClosure => true
-        | .moduleClosure => true
-        | .roots showAll _ => showAll
       match mode with
+      | .generatedInventory showAll =>
+          let mut rows := []
+          let mut failed := false
+          for target in targets do
+            match ← inventoryTarget target with
+            | .ok targetRows => rows := rows ++ targetRows
+            | .error err => do
+                IO.eprintln s!"error: {target.moduleName}: {err}"
+                failed := true
+          printInventory showAll rows
+          if failed then
+            return 1
+          else
+            return 0
       | .targetClosure =>
+          let mut results := []
           for target in targets do
             results := results ++ [← checkTargetSelectedRoots target]
+          printResults true results
+          if results.all fun result => result.outcome.status == .accepted then
+            return 0
+          else
+            return 1
       | .moduleClosure =>
+          let mut results := []
           for target in targets do
             results := results ++ [← checkTargetClosure target]
-      | .roots _ true =>
+          printResults true results
+          if results.all fun result => result.outcome.status == .accepted then
+            return 0
+          else
+            return 1
+      | .roots showAll true =>
+          let mut results := []
           for target in targets do
             results := results ++ (← checkTargetUntilFailure target)
-      | .roots _ false =>
+          printResults showAll results
+          if results.all fun result => result.outcome.status == .accepted then
+            return 0
+          else
+            return 1
+      | .roots showAll false =>
+          let mut results := []
           for target in targets do
             results := results ++ (← checkTarget target)
-      printResults showAll results
-      if results.all fun result => result.outcome.status == .accepted then
-        return 0
-      else
-        return 1
+          printResults showAll results
+          if results.all fun result => result.outcome.status == .accepted then
+            return 0
+          else
+            return 1
 
 end LeanLean.SelfCheck
 
