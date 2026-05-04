@@ -386,7 +386,7 @@ partial def reduceQuotLift? (manifest : Manifest) (env : Env) (levelParams : Lev
                 | pure none
               let some valueArg := listGet? quotientArgs 2
                 | pure none
-              if mkTypeArg == typeArg && mkRelationArg == relationArg then
+              if mkTypeArg.alphaEq typeArg && mkRelationArg.alphaEq relationArg then
                 pure (some (Expr.mkApps (.app fnArg valueArg) trailing))
               else
                 pure none

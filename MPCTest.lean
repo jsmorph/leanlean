@@ -405,8 +405,26 @@ def quotientDeclarations : List Declaration :=
     .axiom "a" [] alphaType
   ]
 
+def relLamLeft : Expr :=
+  .lam "x" alphaType (.lam "y" alphaType (.const "P" []))
+
+def relLamRight : Expr :=
+  .lam "a" alphaType (.lam "b" alphaType (.const "P" []))
+
+def hLamType : Expr :=
+  pi "x" alphaType
+    (pi "y" alphaType
+      (pi "rel" (appN relLamRight [.bvar 1, .bvar 0])
+        (eqBeta (.app (.const "f" []) (.bvar 2)) (.app (.const "f" []) (.bvar 1)))))
+
+def quotientAlphaRelationDeclarations : List Declaration :=
+  quotientDeclarations ++ [.axiom "hLam" [] hLamType]
+
 def quotMkA : Expr :=
   appN (.const "Quot.mk" [.succ .zero]) [alphaType, .const "r" [], .const "a" []]
+
+def quotMkRelLamA : Expr :=
+  appN (.const "Quot.mk" [.succ .zero]) [alphaType, relLamLeft, .const "a" []]
 
 def quotLiftA : Expr :=
   appN
@@ -418,6 +436,18 @@ def quotLiftA : Expr :=
       .const "f" [],
       .const "h" [],
       quotMkA
+    ]
+
+def quotLiftAlphaRenamedRelation : Expr :=
+  appN
+    (.const "Quot.lift" [.succ .zero, .succ .zero])
+    [
+      alphaType,
+      relLamRight,
+      betaType,
+      .const "f" [],
+      .const "hLam" [],
+      quotMkRelLamA
     ]
 
 def eqReflA : Expr :=
@@ -1153,6 +1183,12 @@ def checkFunctionEta : IO Unit := do
     (defEq MPC.Configs.FunctionEtaPoc etaEnv [] [] etaExpandedF (.const "f" []))
   expectOkLabel "function eta lambda right"
     (defEq MPC.Configs.FunctionEtaPoc etaEnv [] [] (.const "f" []) etaExpandedF)
+  let etaDefinitionEnv ← expectOkLabel "function eta definition replay"
+    (addDecl MPC.Configs.FunctionEtaPoc etaEnv
+      (.definition "etaSource" [] (pi "x" natType natType) etaExpandedF))
+  expectOkLabel "function eta unfolds definition"
+    (defEq MPC.Configs.FunctionEtaPoc etaDefinitionEnv [] []
+      (.const "etaSource" []) (.const "f" []))
   let primitiveEtaManifest := { MPC.Configs.PrimitiveNatPoc with functionEta := .enabled }
   let primitiveEnv ← expectOkLabel "function eta primitive replay"
     (replay primitiveEtaManifest emptyEnv (baseDeclarations ++ primitiveNatDeclarations))
@@ -1194,6 +1230,14 @@ def checkQuotients : IO Unit := do
   let reduced ← expectOkLabel "quotient lift reduction"
     (normalize MPC.Configs.QuotPoc env [] quotLiftA)
   expectExprEq "quotient lift value" reduced (.app (.const "f" []) (.const "a" []))
+  let alphaRelationEnv ← expectOkLabel "quotient alpha relation replay"
+    (replay MPC.Configs.QuotPoc emptyEnv
+      (baseDeclarations ++ [.equalityPrimitives, .quotientPrimitives] ++
+        quotientAlphaRelationDeclarations))
+  let alphaRelationReduced ← expectOkLabel "quotient alpha relation reduction"
+    (normalize MPC.Configs.QuotPoc alphaRelationEnv [] quotLiftAlphaRenamedRelation)
+  expectExprEq "quotient alpha relation value"
+    alphaRelationReduced (.app (.const "f" []) (.const "a" []))
 
 def scriptInput : String :=
   "axiom Nat Type0\n" ++

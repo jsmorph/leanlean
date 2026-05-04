@@ -215,6 +215,7 @@ partial def functionEtaDefEq (manifest : Manifest) (env : Env) (levelParams : Le
   if !manifest.supportsFunctionEta then
     fail "function eta is disabled by the manifest"
   else
+    let etaExpanded ← whnf manifest env levelParams etaExpanded
     match etaExpanded with
     | .lam name domain body => do
         let otherType ← whnf manifest env levelParams (← infer manifest env levelParams ctx other)
