@@ -415,6 +415,13 @@ partial def reduceEqRec? (manifest : Manifest) (env : Env) (levelParams : LevelC
       let trailing := args.drop required
       let proofWhnf ← whnf manifest env levelParams proofArg
       let (proofHead, proofArgs) := proofWhnf.getAppFnArgs
+      let reduceToMinorIfEndpointsMatch : Result (Option Expr) := do
+        let aWhnf ← whnf manifest env levelParams aArg
+        let bWhnf ← whnf manifest env levelParams bArg
+        if aWhnf.alphaEq bWhnf then
+          pure (some (Expr.mkApps minorArg trailing))
+        else
+          pure none
       match proofHead with
       | Expr.const reflName _ =>
           match env.find? reflName with
@@ -426,9 +433,9 @@ partial def reduceEqRec? (manifest : Manifest) (env : Env) (levelParams : LevelC
               if reflTypeArg == typeArg && reflValueArg == aArg && bArg == aArg then
                 pure (some (Expr.mkApps minorArg trailing))
               else
-                pure none
-          | _ => pure none
-      | _ => pure none
+                reduceToMinorIfEndpointsMatch
+          | _ => reduceToMinorIfEndpointsMatch
+      | _ => reduceToMinorIfEndpointsMatch
 
 partial def whnf (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (expr : Expr) : Result Expr := do

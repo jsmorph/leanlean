@@ -429,6 +429,18 @@ def eqRecTransport : Expr :=
       eqReflA
     ]
 
+def eqRecKTransport : Expr :=
+  appN
+    (.const "Eq.rec" [.succ .zero, .succ .zero])
+    [
+      alphaType,
+      .const "a" [],
+      eqRecMotive,
+      .const "predProof" [],
+      .const "a" [],
+      .const "aEqA" []
+    ]
+
 def eqNdRecMotive : Expr :=
   .lam "x" alphaType betaType
 
@@ -929,7 +941,10 @@ def checkEquality : IO Unit := do
     (replay MPC.Configs.EqualityPoc emptyEnv [.equalityPrimitives, .equalityPrimitives])
   let env ← expectOkLabel "equality replay"
     (replay MPC.Configs.EqualityPoc emptyEnv
-      (baseDeclarations ++ [.equalityPrimitives] ++ equalityDeclarations))
+      (baseDeclarations ++
+        [.equalityPrimitives] ++
+        equalityDeclarations ++
+        [.axiom "aEqA" [] (eqAlpha (.const "a" []) (.const "a" []))]))
   expectEnvContains "equality primitives" env "Eq.rec"
   expectOkLabel "proof irrelevance"
     (defEq MPC.Configs.EqualityPoc env [] [] (.const "p" []) (.const "q" []))
@@ -943,6 +958,9 @@ def checkEquality : IO Unit := do
   let reduced ← expectOkLabel "Eq.rec reduction"
     (normalize MPC.Configs.EqualityPoc env [] eqRecTransport)
   expectExprEq "Eq.rec value" reduced (.const "predProof" [])
+  let kReduced ← expectOkLabel "Eq.rec K reduction"
+    (normalize MPC.Configs.EqualityPoc env [] eqRecKTransport)
+  expectExprEq "Eq.rec K value" kReduced (.const "predProof" [])
   let ndInferred ← expectOkLabel "Eq.ndrec inference"
     (infer MPC.Configs.EqualityPoc env [] [] eqNdRecTransport)
   let ndInferred ← expectOkLabel "Eq.ndrec inferred type normalization"
