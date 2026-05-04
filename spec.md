@@ -110,6 +110,8 @@ Typing follows the ordinary rules for a dependently typed lambda calculus.  `Sor
 
 Some Lean constants are ordinary declarations in export data but have kernel-overridden computation behavior.  A local checker that replays exported Lean terms must match those computation rules when Lean's kernel conversion used them, even if the source file also contains a logical model for the same constant.  This specification admits only named primitive reductions in the following table; adding another entry requires a source citation, a preservation argument, and regression tests that compare local conversion with Lean.  A listed rule is attached to the reserved kernel constant with the stated declaration shape, not to an arbitrary user declaration with the same printed name.
 
+The candidate inventory for Lean 4.29.1 lives in [Lean 4.29.1 Primitive Reduction Inventory](primitive-inventory.md).  The inventory records source evidence but does not itself admit a conversion rule.  The table below remains the complete set of primitive reductions in this specification.
+
 | Constant | Rule | Source evidence |
 | --- | --- | --- |
 | `Nat.add` | The declaration has no universe parameters and type `Nat → Nat → Nat`.  A saturated application `Nat.add a Nat.zero` reduces to `a`, and `Nat.add a (Nat.succ b)` reduces to `Nat.succ (Nat.add a b)`.  The rule inspects the weak-head normal form of the second argument before ordinary delta unfolding of `Nat.add`. | Lean 4.29.1 marks `Nat.add` in `Init/Prelude.lean` with `@[extern "lean_nat_add", implicit_reducible]` and states that the kernel and compiler override the logical model. |

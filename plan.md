@@ -52,7 +52,8 @@
   - [x] Add hand-edited export-checker tests for supported-fragment rejection.
   - [x] Add `leanlean-self-check` for a named kernel-only slice of this repository's compiled declarations.
   - [ ] Add export-checker tests for unsupported input.
-  - [ ] Inventory Lean's kernel-overridden primitive reductions and add specified table entries, source citations, implementation rules, and export tests for each admitted primitive.
+  - [x] Inventory Lean's kernel-overridden primitive reductions from the Lean 4.29.1 source tree.
+  - [ ] Add specified table entries, source citations, implementation rules, and export tests for each newly admitted primitive.
   - [x] Extend self-check coverage to local declarations compiled through Lean's `brecOn` and `below` artifacts by replaying the recursive aux support needed by source-facing roots.
   - [x] Specify the remaining generated-support boundary for no-confusion helpers, constructor eliminators, match helpers, sparse-case helpers, derived instances, and representation declarations.
   - [ ] Add local Arena smoke tests and a sample checker configuration.
