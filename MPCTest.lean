@@ -14,6 +14,12 @@ def expectError {α : Type} (label : String) : Result α → IO Unit
   | .ok _ => throw <| IO.userError s!"expected failure: {label}"
   | .error _ => pure ()
 
+def expect (label : String) (condition : Bool) : IO Unit :=
+  if condition then
+    pure ()
+  else
+    throw <| IO.userError label
+
 def expectExprEq (label : String) (left right : Expr) : IO Unit :=
   if left == right then
     pure ()
@@ -592,6 +598,23 @@ def checkFunctionEta : IO Unit := do
   expectOkLabel "function eta uses configured body conversion"
     (defEq primitiveEtaManifest primitiveEnv [] [] etaNatAddOne (.const "Nat.succ" []))
 
+def checkUniverseComparison : IO Unit := do
+  let u : Level := .param "u"
+  let v : Level := .param "v"
+  let one : Level := .succ .zero
+  expect "universe comparison removes dominated max summands"
+    (Level.defEq (.max one (.succ u)) (.succ u))
+  expect "universe comparison proves imax zero equation"
+    (Level.defEq (.imax .zero u) u)
+  expect "universe comparison proves imax one equation"
+    (Level.defEq (.imax one u) u)
+  expect "universe comparison proves imax idempotence"
+    (Level.defEq (.imax u u) u)
+  expect "universe comparison proves unresolved imax upper bound"
+    (Level.le (.imax u v) (.max u v))
+  expect "universe comparison keeps unrelated parameters distinct"
+    (!(Level.defEq u v))
+
 def checkQuotients : IO Unit := do
   expectError "quotient primitives disabled"
     (replay MPC.Configs.Poc emptyEnv [.quotientPrimitives])
@@ -656,6 +679,7 @@ def checkAdapters : IO Unit := do
     (MPC.Adapters.NDJSON.checkString MPC.Configs.Poc badNdjsonAuditInput)
 
 def main : IO Unit := do
+  checkUniverseComparison
   checkBasePackages
   checkSimpleInductives
   checkIndexedInductives
