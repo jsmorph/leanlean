@@ -62,7 +62,7 @@
   - [x] Record the checker interfaces in `spec.md`, `faithfulness.md`, and `devnotes.md`.
 - [ ] Phase 13: Generated-support self-check.
   - [x] Add an inventory mode that classifies every self-check skipped declaration by generated-support class, module, declaration kind, dependency shape, and current replay outcome.
-  - [ ] Add a separate generated-support self-check mode that reports accepted, rejected, unsupported, and assumed declarations without changing the source-facing self-check claim.
+  - [x] Add a separate generated-support self-check mode that reports accepted, rejected, unsupported, and assumed declarations without changing the source-facing self-check claim.
   - [ ] Specify and check generated match helpers whose values are ordinary dependent eliminator applications.
   - [ ] Specify and check generated no-confusion helpers and constructor eliminators.
   - [ ] Specify and check sparse-case helpers, including the library and primitive dependencies they require.

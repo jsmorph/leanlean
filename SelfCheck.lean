@@ -30,11 +30,30 @@ structure GeneratedInventorySummary where
   status : Checker.Status
   count : Nat
 
+structure GeneratedAssumptionRow where
+  targetModuleName : Lean.Name
+  name : Lean.Name
+  className : String
+  declarationKind : String
+
+structure GeneratedSupportReport where
+  moduleName : Lean.Name
+  candidates : List GeneratedInventoryRow
+  assumptions : List GeneratedAssumptionRow
+  outcome : Checker.Outcome
+
+structure GeneratedSupportSummary where
+  className : String
+  declarationKind : String
+  status : String
+  count : Nat
+
 inductive Mode where
   | targetClosure
   | moduleClosure
   | roots : Bool → Bool → Mode
   | generatedInventory : Bool → Mode
+  | generatedSupport : Bool → Mode
 
 def targets : List ModuleTarget :=
   [
@@ -59,7 +78,7 @@ def targets : List ModuleTarget :=
   ]
 
 def usage : String :=
-  "usage: leanlean-self-check [--module-closure | --roots [--all] [--first-failure] | --generated-inventory [--all]]"
+  "usage: leanlean-self-check [--module-closure | --roots [--all] [--first-failure] | --generated-inventory [--all] | --generated-support [--all]]"
 
 def parseArgs : List String → Except String Mode
   | [] => pure .targetClosure
@@ -71,6 +90,8 @@ def parseArgs : List String → Except String Mode
   | ["--roots", "--first-failure", "--all"] => pure (.roots true true)
   | ["--generated-inventory"] => pure (.generatedInventory false)
   | ["--generated-inventory", "--all"] => pure (.generatedInventory true)
+  | ["--generated-support"] => pure (.generatedSupport false)
+  | ["--generated-support", "--all"] => pure (.generatedSupport true)
   | ["--help"] => .error usage
   | arg :: _ => .error s!"unknown argument: {arg}"
 
@@ -393,6 +414,30 @@ def checkSelfCheckRoots (env : Lean.Environment) (roots : List Lean.Name) : Chec
       | .ok _ => .accepted s!"checked {declarations.length} declaration entries"
       | .error err => .rejected err
 
+partial def collectSelfCheckAssumptions
+    (env : Lean.Environment)
+    (roots : List Lean.Name) : Except String (List Lean.Name) := do
+  let rec loop
+      (pending seen assumptions : List Lean.Name) : Except String (List Lean.Name) := do
+    match pending with
+    | [] => pure assumptions
+    | name :: rest =>
+        if seen.any fun existing => existing == name then
+          loop rest seen assumptions
+        else
+          let some info := env.find? name
+            | .error s!"unknown Lean environment constant in self-check assumption closure: {name}"
+          let _ ← checkSelfCheckConstantSafety info
+          let assumptions :=
+            if selfCheckAssumption? env roots info then
+              Import.appendLeanNames assumptions [name]
+            else
+              assumptions
+          let dependencies := selfCheckDependencyNames env roots info
+          let pending := Import.appendLeanNames rest dependencies
+          loop pending (name :: seen) assumptions
+  loop roots [] []
+
 def constantInfoName : Lean.ConstantInfo → Lean.Name
   | .axiomInfo value => value.name
   | .defnInfo value => value.name
@@ -517,6 +562,95 @@ def inventoryDetailLine (row : GeneratedInventoryRow) : String :=
   s!"detail: module={row.moduleName} name={row.name} class={row.className} \
     kind={row.declarationKind} dependencies={row.dependencyShape}:{row.dependencyCount} \
     outcome={row.outcome.label}"
+
+def acceptedGeneratedNames (rows : List GeneratedInventoryRow) : List Lean.Name :=
+  rows.foldl
+    (fun names row =>
+      if row.outcome.status == .accepted then
+        Import.appendLeanNames names [row.name]
+      else
+        names)
+    []
+
+def nameListDifference (names removed : List Lean.Name) : List Lean.Name :=
+  names.filter fun name => !(removed.any fun other => other == name)
+
+def assumptionRow (env : Lean.Environment) (targetModuleName : Lean.Name) (name : Lean.Name) :
+    Except String GeneratedAssumptionRow := do
+  let some info := env.find? name
+    | .error s!"self-check assumption is not in the environment: {name}"
+  pure
+    {
+      targetModuleName
+      name
+      className := generatedSupportClass env info
+      declarationKind := declarationKind info
+    }
+
+def generatedSupportReport (env : Lean.Environment) (moduleName : Lean.Name) :
+    Except String GeneratedSupportReport := do
+  let rootSet ← moduleRoots env moduleName
+  let candidates ← inventoryRows env moduleName
+  let sourceAssumptions ← collectSelfCheckAssumptions env rootSet.roots
+  let acceptedRoots := acceptedGeneratedNames candidates
+  let combinedRoots := Import.appendLeanNames rootSet.roots acceptedRoots
+  let combinedAssumptions ← collectSelfCheckAssumptions env combinedRoots
+  let newAssumptionNames := nameListDifference combinedAssumptions sourceAssumptions
+  let assumptions ← newAssumptionNames.mapM (assumptionRow env moduleName)
+  pure
+    {
+      moduleName
+      candidates
+      assumptions
+      outcome := checkSelfCheckRoots env combinedRoots
+    }
+
+def generatedStatusCount (status : Checker.Status) (rows : List GeneratedInventoryRow) : Nat :=
+  rows.foldl
+    (fun count row =>
+      if row.outcome.status == status then count + 1 else count)
+    0
+
+def updateGeneratedSupportSummary
+    (summaries : List GeneratedSupportSummary)
+    (className declarationKind status : String) : List GeneratedSupportSummary :=
+  match summaries with
+  | [] => [{ className, declarationKind, status, count := 1 }]
+  | summary :: rest =>
+      if summary.className == className &&
+          summary.declarationKind == declarationKind &&
+          summary.status == status then
+        { summary with count := summary.count + 1 } :: rest
+      else
+        summary :: updateGeneratedSupportSummary rest className declarationKind status
+
+def generatedSupportSummaries (rows : List GeneratedInventoryRow) :
+    List GeneratedSupportSummary :=
+  rows.foldl
+    (fun summaries row =>
+      updateGeneratedSupportSummary summaries row.className row.declarationKind row.outcome.label)
+    []
+
+def generatedAssumptionSummaries (rows : List GeneratedAssumptionRow) :
+    List GeneratedSupportSummary :=
+  rows.foldl
+    (fun summaries row =>
+      updateGeneratedSupportSummary summaries row.className row.declarationKind "assumed")
+    []
+
+def generatedSupportSummaryLine (linePrefix : String) (summary : GeneratedSupportSummary) :
+    String :=
+  s!"{linePrefix}: class={summary.className} kind={summary.declarationKind} \
+    status={summary.status} count={summary.count}"
+
+def generatedSupportCandidateLine (row : GeneratedInventoryRow) : String :=
+  s!"candidate: module={row.moduleName} name={row.name} class={row.className} \
+    kind={row.declarationKind} dependencies={row.dependencyShape}:{row.dependencyCount} \
+    outcome={row.outcome.label}"
+
+def generatedAssumptionLine (row : GeneratedAssumptionRow) : String :=
+  s!"assumption: target-module={row.targetModuleName} name={row.name} class={row.className} \
+    kind={row.declarationKind}"
 
 def checkModule (env : Lean.Environment) (moduleName : Lean.Name) :
     List RootResult :=
@@ -652,6 +786,12 @@ unsafe def inventoryTarget (target : ModuleTarget) : IO (Except String (List Gen
   | .ok env => pure (inventoryRows env target.moduleName)
   | .error err => pure (.error s!"could not load module: {err}")
 
+unsafe def generatedSupportTarget (target : ModuleTarget) :
+    IO (Except String GeneratedSupportReport) := do
+  match ← Checker.loadModuleEnvironment target.moduleName with
+  | .ok env => pure (generatedSupportReport env target.moduleName)
+  | .error err => pure (.error s!"could not load module: {err}")
+
 def statusCount (status : Checker.Status) (results : List RootResult) : Nat :=
   results.foldl
     (fun count result =>
@@ -699,6 +839,32 @@ def printInventory (showAll : Bool) (rows : List GeneratedInventoryRow) : IO Uni
     for row in rows do
       IO.println (inventoryDetailLine row)
 
+def printGeneratedSupportReport (showAll : Bool) (report : GeneratedSupportReport) : IO Unit := do
+  IO.println
+    s!"module {report.moduleName}: generated-support candidates {report.candidates.length}, \
+      accepted {generatedStatusCount .accepted report.candidates}, \
+      rejected {generatedStatusCount .rejected report.candidates}, \
+      unsupported {generatedStatusCount .unsupported report.candidates}, \
+      assumed {report.assumptions.length}"
+  IO.println
+    s!"support-outcome: module={report.moduleName} outcome={report.outcome.label} \
+      message={report.outcome.message}"
+  for summary in generatedSupportSummaries report.candidates do
+    IO.println (generatedSupportSummaryLine "candidate-summary" summary)
+  for summary in generatedAssumptionSummaries report.assumptions do
+    IO.println (generatedSupportSummaryLine "assumption-summary" summary)
+  if showAll then
+    for row in report.candidates do
+      IO.println (generatedSupportCandidateLine row)
+    for row in report.assumptions do
+      IO.println (generatedAssumptionLine row)
+
+def printGeneratedSupportReports
+    (showAll : Bool)
+    (reports : List GeneratedSupportReport) : IO Unit := do
+  for report in reports do
+    printGeneratedSupportReport showAll report
+
 unsafe def run (args : List String) : IO UInt32 := do
   match parseArgs args with
   | .error err => do
@@ -718,6 +884,20 @@ unsafe def run (args : List String) : IO UInt32 := do
                 IO.eprintln s!"error: {target.moduleName}: {err}"
                 failed := true
           printInventory showAll rows
+          if failed then
+            return 1
+          else
+            return 0
+      | .generatedSupport showAll =>
+          let mut reports := []
+          let mut failed := false
+          for target in targets do
+            match ← generatedSupportTarget target with
+            | .ok report => reports := reports ++ [report]
+            | .error err => do
+                IO.eprintln s!"error: {target.moduleName}: {err}"
+                failed := true
+          printGeneratedSupportReports showAll reports
           if failed then
             return 1
           else
