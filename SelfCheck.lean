@@ -222,6 +222,7 @@ def trustedDefinitionValueNeeded (name : Lean.Name) : Bool :=
     name == `Nat.add ||
     name == `Nat.mul ||
     name == `Nat.pow ||
+    name == `Nat.sub ||
     name == `Nat.beq ||
     name == `Nat.ble ||
     name == `DecidableEq

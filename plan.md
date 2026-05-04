@@ -51,6 +51,7 @@
   - [x] Add generated export-checker rejection tests adapted from Lean Kernel Arena source fixtures.
   - [x] Add hand-edited export-checker tests for supported-fragment rejection.
   - [x] Add `leanlean-self-check` for a named kernel-only slice of this repository's compiled declarations.
+  - [x] Add export-backed self-check for the same named source-facing roots through `lean4export` and `leanlean-check-export`.
   - [x] Add export-checker tests for unsupported input.
   - [x] Inventory Lean's kernel-overridden primitive reductions from the Lean 4.29.1 source tree.
   - [x] Add specified table entries, source citations, implementation rules, and export tests for each newly admitted primitive.
@@ -293,6 +294,7 @@ Acceptance criteria:
 - The accepted export tests cover a custom inductive recursor, a theorem declaration, an opaque declaration, a raw natural literal, closed natural subtraction, quotient primitives, a subtype value, a compiled recursive list definition, and the gcd/parity arithmetic theorem.
 - Generated rejection tests cover a theorem proof with the wrong type and a projection whose structure argument is ill-typed.
 - Static export-checker tests cover supported-fragment rejection for `imax` normalization and bad constant-level unfolding.
+- Export-backed self-check exports the named source-facing `LeanLean.Syntax` and `LeanLean.Kernel` roots and accepts them with `leanlean-check-export`.
 - Unsupported-input tests cover unsupported parser or replay boundaries with readable source companions.
 - `leanlean-check-export` supports the Arena input convention, translates accepted export records into declaration replay scripts, and returns `0` for accepted inputs, `1` for supported-fragment rejections, and `2` for unsupported inputs.
 - Local smoke tests include an accepted exported artifact, a rejected supported-fragment artifact, and an unsupported artifact.
