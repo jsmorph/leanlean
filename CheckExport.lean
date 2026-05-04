@@ -11,11 +11,13 @@ structure Config where
   inputPath : System.FilePath
   replayMode : ReplayMode
   rootsPath? : Option System.FilePath
+  gapReport : Bool
 
 def usage : String :=
   "usage: leanlean-check-export [--ordered | --dependency-aware] [<export.ndjson>]\n" ++
   "       leanlean-check-export [--ordered | --dependency-aware] --input <export.ndjson>\n" ++
   "       leanlean-check-export --self-check-roots <roots.txt> [<export.ndjson>]\n" ++
+  "       leanlean-check-export --gap-report [<export.ndjson>]\n" ++
   "       IN=<export.ndjson> leanlean-check-export [--ordered | --dependency-aware]"
 
 def filePath (path : String) : Except String System.FilePath :=
@@ -27,14 +29,16 @@ def filePath (path : String) : Except String System.FilePath :=
 def configFromPath
     (replayMode : ReplayMode)
     (rootsPath? : Option System.FilePath)
+    (gapReport : Bool)
     (path : String) : Except String Config := do
-  pure { inputPath := (← filePath path), replayMode, rootsPath? }
+  pure { inputPath := (← filePath path), replayMode, rootsPath?, gapReport }
 
 def configFromEnv
     (replayMode : ReplayMode)
-    (rootsPath? : Option System.FilePath) : IO (Except String Config) := do
+    (rootsPath? : Option System.FilePath)
+    (gapReport : Bool) : IO (Except String Config) := do
   match ← IO.getEnv "IN" with
-  | some path => pure (configFromPath replayMode rootsPath? path)
+  | some path => pure (configFromPath replayMode rootsPath? gapReport path)
   | none => pure (.error "missing input path")
 
 def setInputPath (input? : Option String) (path : String) : Except String (Option String) := do
@@ -59,36 +63,43 @@ def setReplayMode (mode? : Option ReplayMode) (newMode : ReplayMode) :
 partial def parseArgsLoop
     (input? : Option String)
     (mode? : Option ReplayMode)
-    (rootsPath? : Option System.FilePath) :
-    List String → Except String (Option String × Option ReplayMode × Option System.FilePath)
-  | [] => pure (input?, mode?, rootsPath?)
+    (rootsPath? : Option System.FilePath)
+    (gapReport : Bool) :
+    List String → Except String (Option String × Option ReplayMode × Option System.FilePath × Bool)
+  | [] => pure (input?, mode?, rootsPath?, gapReport)
   | "--ordered" :: rest => do
-      parseArgsLoop input? (← setReplayMode mode? .ordered) rootsPath? rest
+      parseArgsLoop input? (← setReplayMode mode? .ordered) rootsPath? gapReport rest
   | "--dependency-aware" :: rest => do
-      parseArgsLoop input? (← setReplayMode mode? .dependencyAware) rootsPath? rest
+      parseArgsLoop input? (← setReplayMode mode? .dependencyAware) rootsPath? gapReport rest
   | "--self-check-roots" :: path :: rest => do
       if rootsPath?.isSome then
         .error "multiple self-check root files"
       else
-        parseArgsLoop input? mode? (some (← filePath path)) rest
+        parseArgsLoop input? mode? (some (← filePath path)) gapReport rest
   | "--self-check-roots" :: [] => .error "missing value after --self-check-roots"
+  | "--gap-report" :: rest => do
+      if gapReport then
+        .error "multiple gap report flags"
+      else
+        parseArgsLoop input? mode? rootsPath? true rest
   | "--input" :: path :: rest => do
-      parseArgsLoop (← setInputPath input? path) mode? rootsPath? rest
+      parseArgsLoop (← setInputPath input? path) mode? rootsPath? gapReport rest
   | "--input" :: [] => .error "missing value after --input"
   | "--help" :: _ => .error usage
   | arg :: rest =>
       if arg.startsWith "-" then
         .error s!"unknown argument: {arg}"
       else do
-        parseArgsLoop (← setInputPath input? arg) mode? rootsPath? rest
+        parseArgsLoop (← setInputPath input? arg) mode? rootsPath? gapReport rest
 
 def parseArgs : List String → IO (Except String Config)
   | args => do
-      match parseArgsLoop none none none args with
+      match parseArgsLoop none none none false args with
       | .error err => pure (.error err)
-      | .ok (some path, mode?, rootsPath?) =>
-          pure (configFromPath (mode?.getD .ordered) rootsPath? path)
-      | .ok (none, mode?, rootsPath?) => configFromEnv (mode?.getD .ordered) rootsPath?
+      | .ok (some path, mode?, rootsPath?, gapReport) =>
+          pure (configFromPath (mode?.getD .ordered) rootsPath? gapReport path)
+      | .ok (none, mode?, rootsPath?, gapReport) =>
+          configFromEnv (mode?.getD .ordered) rootsPath? gapReport
 
 def parseRootFile (path : System.FilePath) : IO (Except String (List Name)) := do
   try
@@ -107,6 +118,15 @@ def printOutcome (config : Config) (outcome : Checker.Outcome) : IO Unit := do
   if outcome.message != "" then
     IO.println s!"message: {outcome.message}"
 
+def printGapReport (config : Config) (outcome : Checker.Outcome) : IO Unit := do
+  match outcome.status with
+  | .unsupported | .internalFailure => printOutcome config outcome
+  | .accepted | .rejected => do
+      IO.println "gap-report"
+      IO.println s!"artifact: {config.inputPath}"
+      if outcome.message != "" then
+        IO.println outcome.message
+
 def run (args : List String) : IO UInt32 := do
   match ← parseArgs args with
   | .error err => do
@@ -116,7 +136,15 @@ def run (args : List String) : IO UInt32 := do
       return 2
   | .ok config => do
       let input ← IO.FS.readFile config.inputPath
-      match config.rootsPath? with
+      if config.gapReport then
+        if config.rootsPath?.isSome then
+          IO.eprintln "error: --gap-report cannot be combined with --self-check-roots"
+          return 2
+        else
+          let outcome := Export.replayGapReportString input
+          printGapReport config outcome
+          return outcome.exitCode
+      else match config.rootsPath? with
       | some rootsPath =>
           if config.replayMode != .ordered then
             IO.eprintln "error: --self-check-roots requires ordered replay"

@@ -77,6 +77,35 @@ run_static() {
   run_checker_expect "$label" "$artifact" "$expected_status" "$expected_code" "$expected_fragment"
 }
 
+run_gap_report_expect() {
+  local label="$1"
+  local artifact="$2"
+  local expected_fragment="$3"
+  local output
+  local code
+
+  echo "gap-report: $label"
+  set +e
+  output="$("$checker" --gap-report "$artifact" 2>&1)"
+  code="$?"
+  set -e
+
+  printf '%s\n' "$output"
+  if [[ "$code" != "0" ]]; then
+    echo "error: $label gap report returned exit code $code; expected 0" >&2
+    exit 1
+  fi
+  local first_line="${output%%$'\n'*}"
+  if [[ "$first_line" != "gap-report" ]]; then
+    echo "error: $label gap report returned status $first_line; expected gap-report" >&2
+    exit 1
+  fi
+  if [[ "$output" != *"$expected_fragment"* ]]; then
+    echo "error: $label gap report did not contain expected fragment: $expected_fragment" >&2
+    exit 1
+  fi
+}
+
 run_generated "box-unbox" "accepted" 0 "Faithfulness.ExportSmoke" "LeanLeanFaithfulness.ExportSmoke.unbox"
 run_generated "true-theorem" "accepted" 0 "Faithfulness.Accepted" "LeanLeanFaithfulness.Accepted.trueTheorem"
 run_generated "opaque-definition" "accepted" 0 "Faithfulness.Accepted" "LeanLeanFaithfulness.Accepted.opaqueTrue"
@@ -94,6 +123,9 @@ run_static "arena-constlevels" "rejected" 1 "testdata/arena/constlevels.ndjson" 
 run_static "unsupported-partial-definition" "unsupported" 2 "testdata/unsupported/partial-definition.ndjson" "partial definition is outside the local export checker"
 run_static "unsupported-unsafe-axiom" "unsupported" 2 "testdata/unsupported/unsafe-axiom.ndjson" "trusted replay rejects unsafe axiom"
 run_static "unsupported-expression" "unsupported" 2 "testdata/unsupported/unsupported-expression.ndjson" "expression entry must have exactly one expression constructor"
+
+run_gap_report_expect "box-unbox" "$artifact_dir/box-unbox.ndjson" "ordered-outcome: accepted"
+run_gap_report_expect "arena-level-imax-normalization" "testdata/arena/level-imax-normalization.ndjson" "status=assumed-after-rejection"
 
 echo "arena-input: box-unbox"
 set +e

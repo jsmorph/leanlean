@@ -488,6 +488,247 @@ def trustedBaseForDeclaration? : Declaration → Option (List ConstantInfo)
   | .theorem name levelParams type _ => some [ConstantInfo.mkAxiom name levelParams type]
   | _ => none
 
+inductive GapStatus where
+  | checked
+  | generatedCompared
+  | rejected
+  | assumedAfterRejection
+  deriving DecidableEq, Repr
+
+def GapStatus.label : GapStatus → String
+  | .checked => "checked"
+  | .generatedCompared => "generated-compared"
+  | .rejected => "rejected"
+  | .assumedAfterRejection => "assumed-after-rejection"
+
+def joinStringsWith (separator : String) : List String → String
+  | [] => ""
+  | [value] => value
+  | value :: rest => value ++ separator ++ joinStringsWith separator rest
+
+def joinStrings (values : List String) : String :=
+  joinStringsWith "," values
+
+def joinLines (values : List String) : String :=
+  joinStringsWith "\n" values
+
+def joinNames (names : List Name) : String :=
+  joinStrings names
+
+def declarationKind : Declaration → String
+  | .axiom .. => "axiom"
+  | .definition .. => "definition"
+  | .definitionWithHint .. => "definition"
+  | .opaqueDefinition .. => "opaque"
+  | .theorem .. => "theorem"
+  | .inductive .. => "inductive"
+  | .inductiveBlock .. => "inductive-block"
+  | .kernelInductive .. => "kernel-inductive"
+  | .generatedConstructor .. => "generated-constructor"
+  | .generatedRecursor .. => "generated-recursor"
+  | .generatedRecursorWithInfo .. => "generated-recursor"
+  | .structureInfo .. => "structure-info"
+  | .projection .. => "projection"
+  | .quotientPrimitives => "quotient-primitives"
+  | .primitiveCheck .. => "primitive-check"
+
+def primaryReplayName (declaration : Declaration) : Name :=
+  match declarationReplayNames declaration with
+  | name :: _ => name
+  | [] => "_anonymous"
+
+def generatedClassName (name : Name) : String :=
+  if recursiveAuxSupportName name then
+    "recursive-aux"
+  else if name.contains ".match_" then
+    "match-helper"
+  else if name.contains ".noConfusion" then
+    "no-confusion"
+  else if name.endsWith ".ctorElim" then
+    "constructor-eliminator"
+  else if name.contains "_sparseCasesOn_" || name.contains "._sparseCasesOn_" then
+    "sparse-case-helper"
+  else if name.contains ".repr" || name.contains ".instRepr" then
+    "repr-support"
+  else if name.contains ".instDecidable" then
+    "derived-decidable"
+  else if name.contains ".instInhabited" then
+    "derived-inhabited"
+  else if name.contains ".instBEq" || name.startsWith "inst" then
+    "derived-instance"
+  else if name.contains "_proof_" then
+    "generated-proof"
+  else if name.contains "._" then
+    "private-or-aux"
+  else
+    "ordinary"
+
+def declarationClassName (declaration : Declaration) : String :=
+  match declaration with
+  | .generatedConstructor name ..
+  | .generatedRecursor name ..
+  | .generatedRecursorWithInfo name ..
+  | .primitiveCheck name .. => generatedClassName name
+  | _ => generatedClassName (primaryReplayName declaration)
+
+def admittedPrimitiveNames : List Name :=
+  ["Nat.add", "Nat.mul", "Nat.pow", "Nat.sub", "Nat.beq", "Nat.ble"]
+
+def declarationPrimitiveDependencies (declaration : Declaration) : List Name :=
+  declaration.usedConstants.filter fun name => admittedPrimitiveNames.contains name
+
+def generatedComparisonDeclaration : Declaration → Bool
+  | .generatedConstructor .. => true
+  | .generatedRecursor .. => true
+  | .generatedRecursorWithInfo .. => true
+  | .primitiveCheck .. => true
+  | _ => false
+
+structure GapRow where
+  names : List Name
+  kind : String
+  className : String
+  dependencyCount : Nat
+  primitiveDependencies : List Name
+  status : GapStatus
+  message : String
+
+structure GapSummary where
+  status : GapStatus
+  kind : String
+  className : String
+  count : Nat
+
+structure GapReportState where
+  env : Env
+  rows : List GapRow
+
+def addGapSummary (summaries : List GapSummary) (row : GapRow) : List GapSummary :=
+  match summaries with
+  | [] => [{ status := row.status, kind := row.kind, className := row.className, count := 1 }]
+  | summary :: rest =>
+      if summary.status == row.status &&
+          summary.kind == row.kind &&
+          summary.className == row.className then
+        { summary with count := summary.count + 1 } :: rest
+      else
+        summary :: addGapSummary rest row
+
+def gapSummaries (rows : List GapRow) : List GapSummary :=
+  rows.foldl addGapSummary []
+
+def gapSummaryLine (summary : GapSummary) : String :=
+  s!"summary: status={summary.status.label} kind={summary.kind} class={summary.className} count={summary.count}"
+
+def gapDetailLine (row : GapRow) : String :=
+  let primitiveText :=
+    match row.primitiveDependencies with
+    | [] => "none"
+    | names => joinNames names
+  let message :=
+    if row.message.isEmpty then
+      ""
+    else
+      s!" message={row.message}"
+  s!"detail: status={row.status.label} kind={row.kind} class={row.className} \
+    names={joinNames row.names} dependencies={row.dependencyCount} primitives={primitiveText}{message}"
+
+def addTrustedGapEntries
+    (env : Env)
+    (names : List Name)
+    (infos : List ConstantInfo) : Result Env := do
+  let mut env := env
+  for info in infos do
+    if env.contains info.name then
+      .error s!"duplicate trusted-base declaration: {info.name}"
+    else if !names.contains info.name then
+      .error s!"trusted-base declaration name mismatch: {info.name}"
+    else
+      env := info :: env
+  pure env
+
+def trustedEnvironmentAfterRejection (env : Env) (declaration : Declaration) :
+    Result (Option Env) := do
+  match trustedBaseForDeclaration? declaration with
+  | none => pure none
+  | some infos =>
+      pure (some (← addTrustedGapEntries env declaration.definedNames infos))
+
+def replayGapRow (declaration : Declaration) (status : GapStatus) (message : String) :
+    GapRow :=
+  {
+    names := declarationReplayNames declaration
+    kind := declarationKind declaration
+    className := declarationClassName declaration
+    dependencyCount := declaration.usedConstants.length
+    primitiveDependencies := declarationPrimitiveDependencies declaration
+    status
+    message
+  }
+
+def analyzeGapDeclaration
+    (state : GapReportState)
+    (declaration : Declaration) : Result GapReportState := do
+  match addDeclaration state.env declaration with
+  | .ok env =>
+      let status :=
+        if generatedComparisonDeclaration declaration then
+          .generatedCompared
+        else
+          .checked
+      pure { env, rows := state.rows ++ [replayGapRow declaration status ""] }
+  | .error err =>
+      match ← trustedEnvironmentAfterRejection state.env declaration with
+      | some env =>
+          pure
+            {
+              env
+              rows :=
+                state.rows ++
+                  [replayGapRow declaration .assumedAfterRejection err]
+            }
+      | none =>
+          pure
+            {
+              state with
+              rows := state.rows ++ [replayGapRow declaration .rejected err]
+            }
+
+def replayGapRows (declarations : List Declaration) : Result (List GapRow) := do
+  let state ←
+    declarations.foldlM
+      analyzeGapDeclaration
+      { env := [], rows := [] }
+  pure state.rows
+
+def formatReplayGapReport (declarations : List Declaration) : Result String := do
+  let ordered : Checker.Outcome :=
+    match addDeclarations [] declarations with
+    | .ok _ => .accepted s!"checked {declarations.length} declaration entries"
+    | .error err => .rejected err
+  let dependencyAware : Checker.Outcome :=
+    match replayDeclarations [] declarations with
+    | .ok _ => .accepted s!"checked {declarations.length} declaration entries"
+    | .error err => .rejected err
+  let rows ← replayGapRows declarations
+  let header :=
+    s!"ordered-outcome: {ordered.label}\n" ++
+    s!"ordered-message: {ordered.message}\n" ++
+    s!"dependency-aware-outcome: {dependencyAware.label}\n" ++
+    s!"dependency-aware-message: {dependencyAware.message}\n" ++
+    s!"declarations: {declarations.length}"
+  let summaries :=
+    "\n" ++ joinLines ((gapSummaries rows).map gapSummaryLine)
+  let rejectedRows :=
+    rows.filter fun row =>
+      row.status == .rejected || row.status == .assumedAfterRejection
+  let details :=
+    if rejectedRows.isEmpty then
+      ""
+    else
+      "\n" ++ joinLines (rejectedRows.map gapDetailLine)
+  pure (header ++ summaries ++ details)
+
 structure RootedCheckResult where
   env : Env
   checked : Nat
@@ -565,6 +806,14 @@ def checkStringWithRootAssumptions (input : String) (roots : List Name) : Checke
   match parseDeclarations input with
   | .error err => .unsupported err
   | .ok declarations => checkDeclarationsWithRootAssumptions roots declarations
+
+def replayGapReportString (input : String) : Checker.Outcome :=
+  match parseDeclarations input with
+  | .error err => .unsupported err
+  | .ok declarations =>
+      match formatReplayGapReport declarations with
+      | .ok report => .accepted report
+      | .error err => .internalFailure err
 
 def checkString (input : String) : Checker.Outcome :=
   checkStringOrdered input
