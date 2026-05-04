@@ -161,6 +161,17 @@ def primitiveNatDeclarations : List Declaration :=
     .definition "Nat.ble" [] natBinaryBoolType natBinaryBoolFalseValue
   ]
 
+def etaDeclarations : List Declaration :=
+  [
+    .axiom "f" [] (pi "x" natType natType)
+  ]
+
+def etaExpandedF : Expr :=
+  .lam "x" natType (.app (.const "f" []) (.bvar 0))
+
+def etaNatAddOne : Expr :=
+  .lam "x" natType (appN (.const "Nat.add" []) [.bvar 0, .lit (.nat 1)])
+
 def vecType (index : Expr) : Expr :=
   appN (.const "Vec" []) [natType, index]
 
@@ -563,6 +574,24 @@ def checkPrimitiveNat : IO Unit := do
   expectError "Nat.beq primitive Bool constructor shape"
     (normalize MPC.Configs.PrimitiveNatPoc (badBoolTrueInfo :: env) [] (appN (.const "Nat.beq" []) [natZero, natZero]))
 
+def checkFunctionEta : IO Unit := do
+  let declarations := baseDeclarations ++ etaDeclarations
+  let baseEnv ← expectOkLabel "function eta baseline replay"
+    (replay MPC.Configs.Poc emptyEnv declarations)
+  expectError "function eta disabled"
+    (defEq MPC.Configs.Poc baseEnv [] [] etaExpandedF (.const "f" []))
+  let etaEnv ← expectOkLabel "function eta replay"
+    (replay MPC.Configs.FunctionEtaPoc emptyEnv declarations)
+  expectOkLabel "function eta lambda left"
+    (defEq MPC.Configs.FunctionEtaPoc etaEnv [] [] etaExpandedF (.const "f" []))
+  expectOkLabel "function eta lambda right"
+    (defEq MPC.Configs.FunctionEtaPoc etaEnv [] [] (.const "f" []) etaExpandedF)
+  let primitiveEtaManifest := { MPC.Configs.PrimitiveNatPoc with functionEta := .enabled }
+  let primitiveEnv ← expectOkLabel "function eta primitive replay"
+    (replay primitiveEtaManifest emptyEnv (baseDeclarations ++ primitiveNatDeclarations))
+  expectOkLabel "function eta uses configured body conversion"
+    (defEq primitiveEtaManifest primitiveEnv [] [] etaNatAddOne (.const "Nat.succ" []))
+
 def checkQuotients : IO Unit := do
   expectError "quotient primitives disabled"
     (replay MPC.Configs.Poc emptyEnv [.quotientPrimitives])
@@ -633,5 +662,6 @@ def main : IO Unit := do
   checkEquality
   checkProjections
   checkPrimitiveNat
+  checkFunctionEta
   checkQuotients
   checkAdapters

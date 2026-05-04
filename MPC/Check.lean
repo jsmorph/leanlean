@@ -194,11 +194,33 @@ partial def proofIrrelevanceDefEq (manifest : Manifest) (env : Env) (levelParams
     defEq manifest env levelParams ctx leftType rightType
     isPropExpr manifest env levelParams ctx leftType
 
+partial def functionEtaDefEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (ctx : Context) (etaExpanded other : Expr) : Result Unit := do
+  if !manifest.supportsFunctionEta then
+    fail "function eta is disabled by the manifest"
+  else
+    match etaExpanded with
+    | .lam name domain body => do
+        let otherType ← whnf manifest env levelParams (← infer manifest env levelParams ctx other)
+        match otherType with
+        | .forallE _ expectedDomain _ => do
+            defEq manifest env levelParams ctx domain expectedDomain
+            let expectedBody := .app (other.lift 1) (.bvar 0)
+            defEq manifest env levelParams (ctx.extend name domain) body expectedBody
+        | _ => fail "function eta target is not a function"
+    | _ => fail "function eta expansion is not a lambda"
+
 partial def defEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (left right : Expr) : Result Unit := do
   match structuralDefEq manifest env levelParams ctx left right with
   | .ok () => pure ()
-  | .error _ => proofIrrelevanceDefEq manifest env levelParams ctx left right
+  | .error _ =>
+      match functionEtaDefEq manifest env levelParams ctx left right with
+      | .ok () => pure ()
+      | .error _ =>
+          match functionEtaDefEq manifest env levelParams ctx right left with
+          | .ok () => pure ()
+          | .error _ => proofIrrelevanceDefEq manifest env levelParams ctx left right
 
 end
 
