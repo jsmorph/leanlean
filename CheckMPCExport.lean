@@ -2,16 +2,27 @@ import MPC.Adapters.Export
 
 namespace MPC.CheckExport
 
+inductive TelemetryFormat where
+  | off
+  | text
+  | jsonl
+  deriving BEq, Inhabited
+
+structure ReplayOptions where
+  trace : Bool := false
+  telemetry : TelemetryFormat := .off
+  deriving Inhabited
+
 structure Config where
   inputPath : System.FilePath
   limit? : Option Nat := none
-  trace : Bool := false
+  replayOptions : ReplayOptions := {}
   assumeGenerated : Bool := false
 
 def usage : String :=
   "usage: mpc-check-export [<export.ndjson>]\n" ++
   "       mpc-check-export --input <export.ndjson>\n" ++
-  "       mpc-check-export [--limit <n>] [--trace] [--assume-generated] <export.ndjson>\n" ++
+  "       mpc-check-export [--limit <n>] [--trace] [--stats|--stats-jsonl] [--assume-generated] <export.ndjson>\n" ++
   "       IN=<export.ndjson> mpc-check-export"
 
 def filePath (path : String) : Except String System.FilePath :=
@@ -22,16 +33,18 @@ def filePath (path : String) : Except String System.FilePath :=
 
 def configFromPath
     (limit? : Option Nat)
-    (trace assumeGenerated : Bool)
+    (replayOptions : ReplayOptions)
+    (assumeGenerated : Bool)
     (path : String) :
     Except String Config := do
-  pure { inputPath := (← filePath path), limit?, trace, assumeGenerated }
+  pure { inputPath := (← filePath path), limit?, replayOptions, assumeGenerated }
 
 def configFromEnv
     (limit? : Option Nat)
-    (trace assumeGenerated : Bool) : IO (Except String Config) := do
+    (replayOptions : ReplayOptions)
+    (assumeGenerated : Bool) : IO (Except String Config) := do
   match ← IO.getEnv "IN" with
-  | some path => pure (configFromPath limit? trace assumeGenerated path)
+  | some path => pure (configFromPath limit? replayOptions assumeGenerated path)
   | none => pure (.error "missing input path")
 
 def setInputPath (input? : Option String) (path : String) : Except String (Option String) := do
@@ -47,40 +60,54 @@ def parseNatArgument (label value : String) : Except String Nat :=
   | some n => pure n
   | none => .error s!"invalid {label}: {value}"
 
+def setTelemetryFormat
+    (options : ReplayOptions)
+    (format : TelemetryFormat) :
+    Except String ReplayOptions :=
+  if options.telemetry != .off then
+    .error "multiple telemetry formats"
+  else
+    pure { options with telemetry := format }
+
 partial def parseArgsLoop
     (input? : Option String)
     (limit? : Option Nat)
-    (trace assumeGenerated : Bool) :
-    List String → Except String (Option String × Option Nat × Bool × Bool)
-  | [] => pure (input?, limit?, trace, assumeGenerated)
+    (replayOptions : ReplayOptions)
+    (assumeGenerated : Bool) :
+    List String → Except String (Option String × Option Nat × ReplayOptions × Bool)
+  | [] => pure (input?, limit?, replayOptions, assumeGenerated)
   | "--input" :: path :: rest => do
-      parseArgsLoop (← setInputPath input? path) limit? trace assumeGenerated rest
+      parseArgsLoop (← setInputPath input? path) limit? replayOptions assumeGenerated rest
   | "--input" :: [] => .error "missing value after --input"
   | "--limit" :: value :: rest => do
       if limit?.isSome then
         .error "multiple limits"
       else
-        parseArgsLoop input? (some (← parseNatArgument "limit" value)) trace assumeGenerated rest
+        parseArgsLoop input? (some (← parseNatArgument "limit" value)) replayOptions assumeGenerated rest
   | "--limit" :: [] => .error "missing value after --limit"
   | "--trace" :: rest =>
-      parseArgsLoop input? limit? true assumeGenerated rest
+      parseArgsLoop input? limit? { replayOptions with trace := true } assumeGenerated rest
+  | "--stats" :: rest => do
+      parseArgsLoop input? limit? (← setTelemetryFormat replayOptions .text) assumeGenerated rest
+  | "--stats-jsonl" :: rest => do
+      parseArgsLoop input? limit? (← setTelemetryFormat replayOptions .jsonl) assumeGenerated rest
   | "--assume-generated" :: rest =>
-      parseArgsLoop input? limit? trace true rest
+      parseArgsLoop input? limit? replayOptions true rest
   | "--help" :: _ => .error usage
   | arg :: rest =>
       if arg.startsWith "-" then
         .error s!"unknown argument: {arg}"
       else do
-        parseArgsLoop (← setInputPath input? arg) limit? trace assumeGenerated rest
+        parseArgsLoop (← setInputPath input? arg) limit? replayOptions assumeGenerated rest
 
 def parseArgs : List String → IO (Except String Config)
   | args => do
-      match parseArgsLoop none none false false args with
+      match parseArgsLoop none none {} false args with
       | .error err => pure (.error err)
-      | .ok (some path, limit?, trace, assumeGenerated) =>
-          pure (configFromPath limit? trace assumeGenerated path)
-      | .ok (none, limit?, trace, assumeGenerated) =>
-          configFromEnv limit? trace assumeGenerated
+      | .ok (some path, limit?, replayOptions, assumeGenerated) =>
+          pure (configFromPath limit? replayOptions assumeGenerated path)
+      | .ok (none, limit?, replayOptions, assumeGenerated) =>
+          configFromEnv limit? replayOptions assumeGenerated
 
 def printOutcome (status : String) (path : System.FilePath) (message : String) : IO Unit := do
   IO.println status
@@ -88,19 +115,102 @@ def printOutcome (status : String) (path : System.FilePath) (message : String) :
   if message != "" then
     IO.println s!"message: {message}"
 
+inductive ReplayStatus where
+  | checked
+  | rejected
+
+def ReplayStatus.label : ReplayStatus → String
+  | .checked => "checked"
+  | .rejected => "rejected"
+
+structure DeclarationTelemetry where
+  index : Nat
+  kind : String
+  name : String
+  elapsedMs : Nat
+  cumulativeMs : Nat
+  status : ReplayStatus
+
+def jsonNat (value : Nat) : Lean.Json :=
+  Lean.Json.num (Lean.JsonNumber.fromNat value)
+
+def DeclarationTelemetry.toJson (entry : DeclarationTelemetry) : Lean.Json :=
+  Lean.Json.mkObj [
+    ("event", Lean.Json.str "declaration"),
+    ("index", jsonNat entry.index),
+    ("kind", Lean.Json.str entry.kind),
+    ("name", Lean.Json.str entry.name),
+    ("status", Lean.Json.str entry.status.label),
+    ("elapsed_ms", jsonNat entry.elapsedMs),
+    ("cumulative_ms", jsonNat entry.cumulativeMs)
+  ]
+
+def DeclarationTelemetry.text (entry : DeclarationTelemetry) : String :=
+  s!"stats: index={entry.index} status={entry.status.label} elapsed_ms={entry.elapsedMs} cumulative_ms={entry.cumulativeMs} kind={entry.kind} name={entry.name}"
+
+def emitDeclarationTelemetry
+    (format : TelemetryFormat)
+    (entry : DeclarationTelemetry) :
+    IO Unit := do
+  match format with
+  | .off => pure ()
+  | .text => IO.println entry.text
+  | .jsonl => IO.println entry.toJson.compress
+  if format != .off then
+    (← IO.getStdout).flush
+
 partial def replayLoop
     (manifest : Manifest)
-    (trace : Bool) :
-    Nat → Env → List Declaration → IO (Result Env)
-  | _, env, [] => pure (.ok env)
-  | index, env, declaration :: rest => do
-      if trace then
-        IO.println s!"replay: {index} {MPC.Adapters.Export.declarationKindLabel declaration} {MPC.Adapters.Export.declarationNameLabel declaration}"
-        (← IO.getStdout).flush
-      match addDecl manifest env declaration with
-      | .ok env => replayLoop manifest trace (index + 1) env rest
-      | .error err =>
-          pure (.error { message := s!"while replaying {MPC.Adapters.Export.declarationKindLabel declaration} {MPC.Adapters.Export.declarationNameLabel declaration}: {err.message}" })
+    (options : ReplayOptions) :
+    Nat → Nat → Env → List Declaration → IO (Result Env)
+  | _, _, env, [] => pure (.ok env)
+  | index, cumulativeMs, env, declaration :: rest => do
+      if options.telemetry == .off then
+        if options.trace then
+          let kind := MPC.Adapters.Export.declarationKindLabel declaration
+          let name := MPC.Adapters.Export.declarationNameLabel declaration
+          IO.println s!"replay: {index} {kind} {name}"
+          (← IO.getStdout).flush
+        match addDecl manifest env declaration with
+        | .ok env => replayLoop manifest options (index + 1) cumulativeMs env rest
+        | .error err =>
+            let kind := MPC.Adapters.Export.declarationKindLabel declaration
+            let name := MPC.Adapters.Export.declarationNameLabel declaration
+            pure (.error { message := s!"while replaying {kind} {name}: {err.message}" })
+      else
+        let kind := MPC.Adapters.Export.declarationKindLabel declaration
+        let name := MPC.Adapters.Export.declarationNameLabel declaration
+        if options.trace then
+          IO.println s!"replay: {index} {kind} {name}"
+          (← IO.getStdout).flush
+        let startMs ← IO.monoMsNow
+        match addDecl manifest env declaration with
+        | .ok env =>
+            let stopMs ← IO.monoMsNow
+            let elapsedMs := stopMs - startMs
+            let cumulativeMs := cumulativeMs + elapsedMs
+            emitDeclarationTelemetry options.telemetry {
+              index,
+              kind,
+              name,
+              elapsedMs,
+              cumulativeMs,
+              status := .checked
+            }
+            replayLoop manifest options (index + 1) cumulativeMs env rest
+        | .error err =>
+            let stopMs ← IO.monoMsNow
+            let elapsedMs := stopMs - startMs
+            let cumulativeMs := cumulativeMs + elapsedMs
+            emitDeclarationTelemetry options.telemetry {
+              index,
+              kind,
+              name,
+              elapsedMs,
+              cumulativeMs,
+              status := .rejected
+            }
+            pure (.error { message := s!"while replaying {kind} {name}: {err.message}" })
 
 def generatedSupportAssumptionName (name : Name) : Bool :=
   name.endsWith ".noConfusion" ||
@@ -154,7 +264,7 @@ def generatedAssumptionCount (config : Config) (state : MPC.Adapters.Export.Pars
 def replayConfig (config : Config) (state : MPC.Adapters.Export.ParseState) :
     IO (Result Env) := do
   let declarations := prepareDeclarations config state
-  match ← replayLoop MPC.Configs.LeanCore429 config.trace 0 emptyEnv declarations with
+  match ← replayLoop MPC.Configs.LeanCore429 config.replayOptions 0 0 emptyEnv declarations with
   | .error err => pure (.error err)
   | .ok env =>
       match config.limit? with
