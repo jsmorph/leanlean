@@ -349,6 +349,8 @@ def addDecl (manifest : Manifest) (env : Env) : Declaration → Result Env
           addSimpleInductive manifest env spec
       | .indexedInductive spec =>
           addIndexedInductive manifest env spec
+      | .quotientPrimitives =>
+          fail "quotient primitives are not implemented yet"
 
 def replay (manifest : Manifest) : Env → List Declaration → Result Env
   | env, [] => pure env

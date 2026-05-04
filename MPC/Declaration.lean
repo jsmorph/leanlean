@@ -9,6 +9,7 @@ inductive Declaration where
   | theorem : Name → LevelContext → Expr → Expr → Declaration
   | inductive : SimpleInductiveSpec → Declaration
   | indexedInductive : IndexedInductiveSpec → Declaration
+  | quotientPrimitives
   deriving BEq, Repr, Inhabited
 
 end MPC

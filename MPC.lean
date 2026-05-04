@@ -22,5 +22,6 @@ import MPC.Packages.Inductive.Reduction
 import MPC.Configs.Poc
 import MPC.Configs.LeanCore429
 import MPC.Configs.IndexedPoc
+import MPC.Configs.QuotPoc
 import MPC.Adapters.Script
 import MPC.Adapters.NDJSON

@@ -62,6 +62,13 @@ inductive ConstantKind where
   | constructor : Name → Nat → Nat → ConstantKind
   | recursor : SimpleRecursorInfo → ConstantKind
   | indexedRecursor : IndexedRecursorInfo → ConstantKind
+  | equalityType
+  | equalityRefl
+  | quotientType
+  | quotientMk
+  | quotientLift
+  | quotientInd
+  | quotientSound
   deriving BEq, Repr, Inhabited
 
 structure ConstantInfo where
