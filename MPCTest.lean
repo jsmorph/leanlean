@@ -79,6 +79,56 @@ def primitiveBoolSpec : SimpleInductiveSpec :=
       ]
   }
 
+def recNatSpec : SimpleInductiveSpec :=
+  {
+    name := "RecNat"
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        { name := "RecNat.zero" },
+        {
+          name := "RecNat.succ"
+          fields := [{ name := "n", type := .const "RecNat" [] }]
+        }
+      ]
+  }
+
+def recNatType : Expr :=
+  .const "RecNat" []
+
+def recNatZero : Expr :=
+  .const "RecNat.zero" []
+
+def recNatSucc (value : Expr) : Expr :=
+  .app (.const "RecNat.succ" []) value
+
+def recNatMotiveType : Expr :=
+  pi "target" recNatType propType
+
+def recNatCasesOnType : Expr :=
+  pi "motive" recNatMotiveType
+    (pi "zeroCase" (.app (.bvar 0) recNatZero)
+      (pi "succCase"
+        (pi "n" recNatType (.app (.bvar 2) (recNatSucc (.bvar 0))))
+        (pi "target" recNatType (.app (.bvar 3) (.bvar 0)))))
+
+def recNatCasesOnValue : Expr :=
+  .lam "motive" recNatMotiveType
+    (.lam "zeroCase" (.app (.bvar 0) recNatZero)
+      (.lam "succCase"
+        (pi "n" recNatType (.app (.bvar 2) (recNatSucc (.bvar 0))))
+        (.lam "target" recNatType
+          (appN
+            (.const "RecNat.rec" [.zero])
+            [
+              .bvar 3,
+              .bvar 2,
+              .lam "n" recNatType
+                (.lam "ih" (.app (.bvar 4) (.bvar 0))
+                  (.app (.bvar 3) (.bvar 1))),
+              .bvar 0
+            ]))))
+
 def badRecursiveSpec : SimpleInductiveSpec :=
   {
     name := "Bad"
@@ -576,6 +626,32 @@ def checkSimpleInductives : IO Unit := do
       ]
   let boxReduced ← expectOk (normalize MPC.Configs.Poc boxEnv [] boxRecursor)
   expectExprEq "parameterized simple recursor iota" boxReduced (.const "p" [])
+  let recNatDecls :=
+    [
+      .axiom "P" [] propType,
+      .axiom "p" [] (.const "P" []),
+      .inductive recNatSpec,
+      .definition "RecNat.casesOn" [] recNatCasesOnType recNatCasesOnValue
+    ]
+  let recNatEnv ← expectOkLabel "recursive simple inductive replay"
+    (replay MPC.Configs.Poc emptyEnv recNatDecls)
+  expectEnvContains "recursive simple inductive recursor" recNatEnv "RecNat.rec"
+  expectEnvContains "recursive simple inductive casesOn" recNatEnv "RecNat.casesOn"
+  let recNatMotive := .lam "target" recNatType (.const "P" [])
+  let recNatSuccMinor :=
+    .lam "n" recNatType (.lam "ih" (.const "P" []) (.bvar 0))
+  let recNatRecursor :=
+    appN
+      (.const "RecNat.rec" [.zero])
+      [
+        recNatMotive,
+        .const "p" [],
+        recNatSuccMinor,
+        recNatSucc recNatZero
+      ]
+  let recNatReduced ← expectOkLabel "recursive simple recursor reduction"
+    (normalize MPC.Configs.Poc recNatEnv [] recNatRecursor)
+  expectExprEq "recursive simple recursor iota" recNatReduced (.const "p" [])
 
 def checkPropInductives : IO Unit := do
   expectError "Prop inductive package requires Prop"

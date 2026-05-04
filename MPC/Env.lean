@@ -31,9 +31,19 @@ structure IndexedInductiveSpec where
   constructors : List IndexedConstructorSpec
   deriving BEq, Repr, Inhabited
 
+structure SimpleRecursiveFieldInfo where
+  fieldIndex : Nat
+  deriving BEq, Repr, Inhabited
+
+structure SimpleRecursorConstructorInfo where
+  name : Name
+  fieldCount : Nat
+  recursiveFields : List SimpleRecursiveFieldInfo
+  deriving BEq, Repr, Inhabited
+
 structure SimpleRecursorInfo where
   inductiveName : Name
-  constructors : List (Name × Nat)
+  constructors : List SimpleRecursorConstructorInfo
   deriving BEq, Repr, Inhabited
 
 structure IndexedRecursiveFieldInfo where

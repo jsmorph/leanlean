@@ -55,10 +55,10 @@ def simpleConstructorType (spec : SimpleInductiveSpec) (ctor : SimpleConstructor
 def simpleMotiveType (spec : SimpleInductiveSpec) (motiveLevel : Level) : Expr :=
   .forallE "target" (simpleInductiveTarget spec) (.sort motiveLevel)
 
-def simpleCtorAppFromFields (spec : SimpleInductiveSpec) (previousMinors : Nat)
+def simpleCtorAppFromFields (spec : SimpleInductiveSpec) (previousMinors recursiveCount : Nat)
     (ctor : SimpleConstructorSpec) : Expr :=
-  let paramArgs := simpleParamArgs spec (ctor.fields.length + previousMinors + 1)
-  let fieldArgs := sourceOrderBvars ctor.fields.length 0
+  let paramArgs := simpleParamArgs spec (ctor.fields.length + recursiveCount + previousMinors + 1)
+  let fieldArgs := sourceOrderBvars ctor.fields.length recursiveCount
   Expr.mkApps (.const ctor.name (simpleInductiveLevels spec)) (paramArgs ++ fieldArgs)
 
 def liftFieldBindersForOuter (amount : Nat) : Nat → List Binder → List Binder
@@ -66,12 +66,6 @@ def liftFieldBindersForOuter (amount : Nat) : Nat → List Binder → List Binde
   | boundFields, binder :: rest =>
       { binder with type := binder.type.liftFrom amount boundFields } ::
         liftFieldBindersForOuter amount (boundFields + 1) rest
-
-def simpleMinorType (spec : SimpleInductiveSpec) (previousMinors : Nat)
-    (ctor : SimpleConstructorSpec) : Expr :=
-  let motiveIndex := ctor.fields.length + previousMinors
-  let body := .app (.bvar motiveIndex) (simpleCtorAppFromFields spec previousMinors ctor)
-  bindForall (liftFieldBindersForOuter (previousMinors + 1) 0 ctor.fields) body
 
 def simpleRecursorName (spec : SimpleInductiveSpec) : Name :=
   spec.name ++ ".rec"
@@ -83,13 +77,70 @@ def enumerateFrom : List α → Nat → List (Nat × α)
 def enumerate (values : List α) : List (Nat × α) :=
   enumerateFrom values 0
 
+def fieldTypeUnderAllFields (fieldCount fieldIndex : Nat) (type : Expr) : Expr :=
+  type.liftFrom (fieldCount - fieldIndex) 0
+
+def simpleDirectRecursiveField? (spec : SimpleInductiveSpec) (fieldCount fieldIndex : Nat)
+    (field : Binder) : Option SimpleRecursiveFieldInfo :=
+  let type := fieldTypeUnderAllFields fieldCount fieldIndex field.type
+  let (head, args) := type.getAppFnArgs
+  match head with
+  | .const name levels =>
+      let expectedArgs := simpleParamArgs spec fieldCount
+      if name == spec.name &&
+          levels.length == spec.levelParams.length &&
+          args.length == spec.params.length &&
+          (args.zip expectedArgs).all (fun pair => pair.1.alphaEq pair.2) then
+        some { fieldIndex }
+      else
+        none
+  | _ => none
+
+def simpleRecursiveFields (spec : SimpleInductiveSpec) (ctor : SimpleConstructorSpec) :
+    List SimpleRecursiveFieldInfo :=
+  enumerate ctor.fields |>.filterMap fun pair =>
+    simpleDirectRecursiveField? spec ctor.fields.length pair.1 pair.2
+
+def simpleRecursiveHypothesisType (previousMinors fieldCount recursiveIndex : Nat)
+    (rec : SimpleRecursiveFieldInfo) : Expr :=
+  let motive := .bvar (fieldCount + recursiveIndex + previousMinors)
+  let fieldValue := .bvar (recursiveIndex + fieldCount - 1 - rec.fieldIndex)
+  .app motive fieldValue
+
+def simpleRecursiveHypothesisBinders (previousMinors fieldCount : Nat)
+    (recFields : List SimpleRecursiveFieldInfo) : List Binder :=
+  enumerate recFields |>.map fun pair =>
+    {
+      name := s!"ih{pair.2.fieldIndex}"
+      type := simpleRecursiveHypothesisType previousMinors fieldCount pair.1 pair.2
+    }
+
+def simpleMinorType (spec : SimpleInductiveSpec) (previousMinors : Nat)
+    (ctor : SimpleConstructorSpec) (recFields : List SimpleRecursiveFieldInfo) : Expr :=
+  let fieldCount := ctor.fields.length
+  let recursiveCount := recFields.length
+  let fieldBinders := liftFieldBindersForOuter (previousMinors + 1) 0 ctor.fields
+  let recursiveBinders := simpleRecursiveHypothesisBinders previousMinors fieldCount recFields
+  let motiveIndex := fieldCount + recursiveCount + previousMinors
+  let body := .app (.bvar motiveIndex) (simpleCtorAppFromFields spec previousMinors recursiveCount ctor)
+  bindForall (fieldBinders ++ recursiveBinders) body
+
+def simpleRecursorConstructorInfo (spec : SimpleInductiveSpec)
+    (ctor : SimpleConstructorSpec) : SimpleRecursorConstructorInfo :=
+  {
+    name := ctor.name
+    fieldCount := ctor.fields.length
+    recursiveFields := simpleRecursiveFields spec ctor
+  }
+
 def simpleRecursorType (spec : SimpleInductiveSpec) (motiveLevel : Level) : Expr :=
   let motive := { name := "motive", type := simpleMotiveType spec motiveLevel }
+  let ctorInfos := spec.constructors.map (simpleRecursorConstructorInfo spec)
   let minorBinders :=
-    enumerate spec.constructors |>.map fun pair =>
+    (enumerate spec.constructors).zip ctorInfos |>.map fun pair =>
       {
-        name := pair.2.name ++ ".minor"
-        type := simpleMinorType spec pair.1 pair.2
+        name := pair.1.2.name ++ ".minor"
+        type := simpleMinorType spec pair.1.1 pair.1.2 pair.2.recursiveFields
       }
   let target := { name := "target", type := simpleInductiveTargetAt spec (minorBinders.length + 1) }
   let body := .app (.bvar (minorBinders.length + 1)) (.bvar 0)
@@ -125,9 +176,6 @@ def indexedMotiveType (spec : IndexedInductiveSpec) (motiveLevel : Level) : Expr
 
 def indexedRecursorName (spec : IndexedInductiveSpec) : Name :=
   spec.name ++ ".rec"
-
-def fieldTypeUnderAllFields (fieldCount fieldIndex : Nat) (type : Expr) : Expr :=
-  type.liftFrom (fieldCount - fieldIndex) 0
 
 partial def indexedRecursiveFieldInType? (spec : IndexedInductiveSpec) (fieldIndex : Nat)
     (binders : List Binder) (type : Expr) : Option IndexedRecursiveFieldInfo :=
@@ -297,6 +345,7 @@ def addSimpleInductive (manifest : Manifest) (env : Env) (spec : SimpleInductive
     MPC.Packages.Inductive.Prop.recursorLevelParams motiveLevel spec.levelParams
   let recursorType := simpleRecursorType spec motiveLevel
   let _ ← inferSort manifest env recursorLevelParams [] recursorType
+  let ctorInfos := spec.constructors.map (simpleRecursorConstructorInfo spec)
   Env.add env
     {
       name := simpleRecursorName spec
@@ -306,7 +355,7 @@ def addSimpleInductive (manifest : Manifest) (env : Env) (spec : SimpleInductive
         .recursor
           {
             inductiveName := spec.name
-            constructors := spec.constructors.map (fun ctor => (ctor.name, ctor.fields.length))
+            constructors := ctorInfos
           }
     }
 

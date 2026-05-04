@@ -12,6 +12,12 @@ def findConstructorIndex? (name : Name) : List SimpleConstructorSpec → Nat →
   | ctor :: rest, index =>
       if ctor.name == name then some index else findConstructorIndex? name rest (index + 1)
 
+def findSimpleRecursorConstructor? (name : Name) : List SimpleRecursorConstructorInfo →
+    Option SimpleRecursorConstructorInfo
+  | [] => none
+  | ctor :: rest =>
+      if ctor.name == name then some ctor else findSimpleRecursorConstructor? name rest
+
 def findIndexedConstructor? (name : Name) : List IndexedRecursorConstructorInfo →
     Option IndexedRecursorConstructorInfo
   | [] => none
@@ -221,7 +227,7 @@ partial def reduceProjection? (manifest : Manifest) (env : Env) (levelParams : L
     | _ => pure none
 
 partial def reduceSimpleRecursor? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
-    (_name : Name) (info : SimpleRecursorInfo) (_levels : List Level) (args : List Expr) :
+    (name : Name) (info : SimpleRecursorInfo) (levels : List Level) (args : List Expr) :
     Result (Option Expr) := do
   if !manifest.supportsSimpleInductives then
     pure none
@@ -234,6 +240,9 @@ partial def reduceSimpleRecursor? (manifest : Manifest) (env : Env) (levelParams
             if args.length < required then
               pure none
             else
+              let paramArgs := args.take spec.params.length
+              let some motive := listGet? args spec.params.length
+                | pure none
               let minorArgs := (args.drop (spec.params.length + 1)).take spec.constructors.length
               let some target := listGet? args (required - 1)
                 | pure none
@@ -247,10 +256,24 @@ partial def reduceSimpleRecursor? (manifest : Manifest) (env : Env) (levelParams
                       if ctorLevels.length != spec.levelParams.length then
                         pure none
                       else
+                        let some ctorInfo := findSimpleRecursorConstructor? ctorName info.constructors
+                          | pure none
                         let some minor := listGet? minorArgs ctorIndex
                           | pure none
-                        let value := Expr.mkApps minor (targetArgs.drop spec.params.length)
-                        pure (some (Expr.mkApps value trailing))
+                        let fieldArgs := targetArgs.drop spec.params.length
+                        if fieldArgs.length != ctorInfo.fieldCount then
+                          pure none
+                        else
+                          let recursor := .const name levels
+                          let recursiveResults ←
+                            ctorInfo.recursiveFields.mapM fun rec => do
+                              let some fieldValue := listGet? fieldArgs rec.fieldIndex
+                                | fail s!"missing recursive field {rec.fieldIndex} for {ctorName}"
+                              pure
+                                (Expr.mkApps recursor
+                                  (paramArgs ++ [motive] ++ minorArgs ++ [fieldValue]))
+                          let value := Expr.mkApps minor (fieldArgs ++ recursiveResults)
+                          pure (some (Expr.mkApps value trailing))
                   | none => pure none
               | _ => pure none
         | _ => pure none
