@@ -729,8 +729,10 @@ def decomposeInductiveApp (env : Env) (expr : Expr) :
       | none => none
   | _ => none
 
-def listGet? (values : List α) (index : Nat) : Option α :=
-  List.get?Internal values index
+def listGet? : List α → Nat → Option α
+  | [], _ => none
+  | value :: _, 0 => some value
+  | _ :: rest, index + 1 => listGet? rest index
 
 structure ProjectionTarget where
   ctor : ConstructorSpec
@@ -905,7 +907,7 @@ def directOccurrenceMotiveArgs
     (paramVars : List Expr)
     (localVars : List Expr)
     (schema : TargetSchema) : Result (Nat × FamilyTarget × Expr × List Expr) := do
-  if schema.locals.length > localVars.length then
+  if localVars.length < schema.locals.length then
     .error
       s!"internal error: direct recursive target {schema.headName} expects at \
          least {schema.locals.length} locals, got {localVars.length}"
@@ -999,7 +1001,7 @@ partial def ihTypeExpr
   | .nested targetIndex =>
       let some target := listGet? family.targets targetIndex
         | .error s!"internal error: unknown nested target index {targetIndex}"
-      if target.schema.locals.length > localVars.length then
+      if localVars.length < target.schema.locals.length then
         .error s!"internal error: nested target #{targetIndex} expects at least {target.schema.locals.length} locals, got {localVars.length}"
       else
         let some motive := listGet? motives targetIndex
@@ -1035,7 +1037,7 @@ partial def ihTerm
   | .nested targetIndex =>
       let some target := listGet? family.targets targetIndex
         | .error s!"internal error: unknown nested target index {targetIndex}"
-      if target.schema.locals.length > localVars.length then
+      if localVars.length < target.schema.locals.length then
         .error s!"internal error: nested target #{targetIndex} expects at least {target.schema.locals.length} locals, got {localVars.length}"
       else
         let schemaVars := localVars.take target.schema.locals.length

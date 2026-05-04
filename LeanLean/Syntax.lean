@@ -443,8 +443,10 @@ def instantiateFrom (cutoff : Nat) (value : Expr) : Expr → Expr
 def instantiate1 (value body : Expr) : Expr :=
   instantiateFrom 0 value body
 
-def listGet? (values : List α) (index : Nat) : Option α :=
-  List.get?Internal values index
+def listGet? : List α → Nat → Option α
+  | [], _ => none
+  | value :: _, 0 => some value
+  | _ :: rest, index + 1 => listGet? rest index
 
 def instantiateManyFrom (cutoff : Nat) (values : List Expr) : Expr → Expr
   | .bvar index =>

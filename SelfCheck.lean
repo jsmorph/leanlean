@@ -62,11 +62,32 @@ def generatedSupportName (name : Lean.Name) : Bool :=
     text.contains "_proof_" ||
     text.contains "_unsafe_rec" ||
     text.contains ".match_" ||
+    text.contains ".noConfusion" ||
+    text.endsWith ".ctorElim" ||
+    text.contains "_sparseCasesOn_" ||
+    text.contains "._sparseCasesOn_" ||
     text.contains ".repr" ||
+    text.contains ".instDecidable" ||
+    text.contains ".instRepr" ||
+    text.contains ".instInhabited" ||
+    text.contains ".instBEq" ||
     text.startsWith "LeanLean.inst"
 
-def trustedRoot? : Lean.ConstantInfo → Bool
-  | .defnInfo value => value.safety == .safe && !generatedSupportName value.name
+def leanAuxSupportName (env : Lean.Environment) (name : Lean.Name) : Bool :=
+  let text := toString name
+  Lean.isAuxRecursor env name ||
+    (text.contains ".brecOn" && (text.endsWith ".go" || text.endsWith ".eq"))
+
+def recursiveAuxSupportName (env : Lean.Environment) (name : Lean.Name) : Bool :=
+  let text := toString name
+  (Lean.isAuxRecursor env name && (text.endsWith ".brecOn" || text.endsWith ".below")) ||
+    (text.contains ".brecOn" && (text.endsWith ".go" || text.endsWith ".eq"))
+
+def trustedRoot? (env : Lean.Environment) : Lean.ConstantInfo → Bool
+  | .defnInfo value =>
+      value.safety == .safe &&
+        !generatedSupportName value.name &&
+        !leanAuxSupportName env value.name
   | .ctorInfo value => !value.isUnsafe
   | .recInfo value => !value.isUnsafe
   | .inductInfo value => !value.isUnsafe
@@ -118,7 +139,7 @@ def moduleRoots (env : Lean.Environment) (moduleName : Lean.Name) :
     let roots :=
       names.filter fun name =>
         match env.find? name with
-        | some info => trustedRoot? info
+        | some info => trustedRoot? env info
         | none => false
     pure { roots, skipped := names.length - roots.length }
   else
@@ -146,11 +167,23 @@ partial def appendStructureRootDependencies
         let pending := Import.appendLeanNames rest dependencies
         appendStructureRootDependencies env pending (seen ++ [root])
 
-def selfCheckAssumption? (roots : List Lean.Name) (info : Lean.ConstantInfo) : Bool :=
+def selfCheckAssumption? (env : Lean.Environment) (roots : List Lean.Name) (info : Lean.ConstantInfo) : Bool :=
   if rootContains roots info.name then
+    false
+  else if generatedSupportName info.name then
+    true
+  else if recursiveAuxSupportName env info.name then
+    false
+  else if leanAuxSupportName env info.name then
+    true
+  else if (env.getProjectionFnInfo? info.name).isSome then
     false
   else
     match info with
+    | .defnInfo value =>
+        match value.hints with
+        | .abbrev => false
+        | _ => true
     | .inductInfo _ | .ctorInfo _ | .recInfo _ | .quotInfo _ => false
     | _ => true
 
@@ -193,9 +226,9 @@ def trustedDefinitionValueNeeded (name : Lean.Name) : Bool :=
     name == `Nat.ble ||
     name == `DecidableEq
 
-def selfCheckTrustedInfo (roots : List Lean.Name) (info : Lean.ConstantInfo) :
+def selfCheckTrustedInfo (env : Lean.Environment) (roots : List Lean.Name) (info : Lean.ConstantInfo) :
     Lean.ConstantInfo :=
-  if selfCheckAssumption? roots info then
+  if selfCheckAssumption? env roots info then
     match info with
     | .defnInfo value =>
         if trustedDefinitionValueNeeded value.name then
@@ -272,7 +305,7 @@ def selfCheckDependencyNames
     (env : Lean.Environment)
     (roots : List Lean.Name)
     (info : Lean.ConstantInfo) : List Lean.Name :=
-  if selfCheckAssumption? roots info then
+  if selfCheckAssumption? env roots info then
     match info with
     | .defnInfo _ | .opaqueInfo _ => Import.constantInfoDependencyNames info
     | _ => Import.leanExprConstants info.type
@@ -296,7 +329,7 @@ partial def collectSelfCheckClosure
           let _ ← checkSelfCheckConstantSafety info
           let dependencies := selfCheckDependencyNames env roots info
           let pending := Import.appendLeanNames rest dependencies
-          loop pending (name :: seen) (selfCheckTrustedInfo roots info :: infos)
+          loop pending (name :: seen) (selfCheckTrustedInfo env roots info :: infos)
   loop roots [] []
 
 def translateSelfCheckClosure
@@ -307,7 +340,7 @@ def translateSelfCheckClosure
   let mut trustedBase : Env := []
   let mut replayInfos : List Lean.ConstantInfo := []
   for info in infos do
-    if selfCheckAssumption? roots info then
+    if selfCheckAssumption? env roots info then
       match ← translateTrustedBaseInfo? info with
       | some localInfo => trustedBase := localInfo :: trustedBase
       | none => replayInfos := replayInfos ++ [info]
