@@ -52,9 +52,8 @@ def simpleConstructorType (spec : SimpleInductiveSpec) (ctor : SimpleConstructor
   let target := simpleInductiveTargetAt spec ctor.fields.length
   bindForall (spec.params ++ ctor.fields) target
 
-def simpleMotiveType (spec : SimpleInductiveSpec) : Expr :=
-  .forallE "target" (simpleInductiveTarget spec)
-    (.sort (MPC.Packages.Inductive.Prop.recursorMotiveLevel spec.resultLevel))
+def simpleMotiveType (spec : SimpleInductiveSpec) (motiveLevel : Level) : Expr :=
+  .forallE "target" (simpleInductiveTarget spec) (.sort motiveLevel)
 
 def simpleCtorAppFromFields (spec : SimpleInductiveSpec) (previousMinors : Nat)
     (ctor : SimpleConstructorSpec) : Expr :=
@@ -84,8 +83,8 @@ def enumerateFrom : List α → Nat → List (Nat × α)
 def enumerate (values : List α) : List (Nat × α) :=
   enumerateFrom values 0
 
-def simpleRecursorType (spec : SimpleInductiveSpec) : Expr :=
-  let motive := { name := "motive", type := simpleMotiveType spec }
+def simpleRecursorType (spec : SimpleInductiveSpec) (motiveLevel : Level) : Expr :=
+  let motive := { name := "motive", type := simpleMotiveType spec motiveLevel }
   let minorBinders :=
     enumerate spec.constructors |>.map fun pair =>
       {
@@ -119,12 +118,10 @@ def indexedConstructorType (spec : IndexedInductiveSpec) (ctor : IndexedConstruc
   let target := indexedTargetAt spec ctor.fields.length ctor.targetIndices
   bindForall (spec.params ++ ctor.fields) target
 
-def indexedMotiveType (spec : IndexedInductiveSpec) : Expr :=
+def indexedMotiveType (spec : IndexedInductiveSpec) (motiveLevel : Level) : Expr :=
   let indexArgs := sourceOrderBvars spec.indices.length 0
   let targetType := indexedTargetAt spec spec.indices.length indexArgs
-  bindForall spec.indices
-    (.forallE "target" targetType
-      (.sort (MPC.Packages.Inductive.Prop.recursorMotiveLevel spec.resultLevel)))
+  bindForall spec.indices (.forallE "target" targetType (.sort motiveLevel))
 
 def indexedRecursorName (spec : IndexedInductiveSpec) : Name :=
   spec.name ++ ".rec"
@@ -242,8 +239,8 @@ def indexedRecursorConstructorInfo (spec : IndexedInductiveSpec)
   }
 
 def indexedRecursorType (spec : IndexedInductiveSpec)
-    (ctorInfos : List IndexedRecursorConstructorInfo) : Expr :=
-  let motive := { name := "motive", type := indexedMotiveType spec }
+    (ctorInfos : List IndexedRecursorConstructorInfo) (motiveLevel : Level) : Expr :=
+  let motive := { name := "motive", type := indexedMotiveType spec motiveLevel }
   let minorBinders :=
     (enumerate spec.constructors).zip ctorInfos |>.map fun pair =>
       {
@@ -293,9 +290,12 @@ def addSimpleInductive (manifest : Manifest) (env : Env) (spec : SimpleInductive
         type
         kind := .constructor spec.name pair.1 ctor.fields.length
       }
+  let largeElimEligible ← MPC.Packages.Inductive.Prop.simpleLargeElimEligible manifest env spec
+  let motiveLevel :=
+    MPC.Packages.Inductive.Prop.recursorMotiveLevel spec.resultLevel largeElimEligible
   let recursorLevelParams :=
-    MPC.Packages.Inductive.Prop.recursorLevelParams spec.resultLevel spec.levelParams
-  let recursorType := simpleRecursorType spec
+    MPC.Packages.Inductive.Prop.recursorLevelParams motiveLevel spec.levelParams
+  let recursorType := simpleRecursorType spec motiveLevel
   let _ ← inferSort manifest env recursorLevelParams [] recursorType
   Env.add env
     {
@@ -354,9 +354,12 @@ def addIndexedInductive (manifest : Manifest) (env : Env) (spec : IndexedInducti
         kind := .constructor spec.name pair.1 ctor.fields.length
       }
   let ctorInfos := spec.constructors.map (indexedRecursorConstructorInfo spec)
+  let largeElimEligible ← MPC.Packages.Inductive.Prop.indexedLargeElimEligible manifest env spec
+  let motiveLevel :=
+    MPC.Packages.Inductive.Prop.recursorMotiveLevel spec.resultLevel largeElimEligible
   let recursorLevelParams :=
-    MPC.Packages.Inductive.Prop.recursorLevelParams spec.resultLevel spec.levelParams
-  let recursorType := indexedRecursorType spec ctorInfos
+    MPC.Packages.Inductive.Prop.recursorLevelParams motiveLevel spec.levelParams
+  let recursorType := indexedRecursorType spec ctorInfos motiveLevel
   let _ ← inferSort manifest env recursorLevelParams [] recursorType
   Env.add env
     {

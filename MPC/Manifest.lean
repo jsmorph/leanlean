@@ -26,6 +26,7 @@ inductive InductiveMode where
 inductive InductivePropMode where
   | disabled
   | propOnly
+  | largeElim
   deriving BEq, Repr, Inhabited
 
 inductive QuotientMode where
@@ -79,7 +80,10 @@ def Manifest.supportsIndexedInductives (manifest : Manifest) : Bool :=
   manifest.inductives == .indexed
 
 def Manifest.supportsPropInductives (manifest : Manifest) : Bool :=
-  manifest.inductiveProp == .propOnly
+  manifest.inductiveProp == .propOnly || manifest.inductiveProp == .largeElim
+
+def Manifest.supportsPropLargeElimination (manifest : Manifest) : Bool :=
+  manifest.inductiveProp == .largeElim
 
 def Manifest.supportsQuotients (manifest : Manifest) : Bool :=
   manifest.quotients == .primitive

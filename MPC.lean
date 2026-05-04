@@ -30,6 +30,7 @@ import MPC.Configs.LeanCore429
 import MPC.Configs.IndexedPoc
 import MPC.Configs.InductivePropPoc
 import MPC.Configs.IndexedPropPoc
+import MPC.Configs.IndexedPropLargeElimPoc
 import MPC.Configs.EqualityPoc
 import MPC.Configs.QuotPoc
 import MPC.Configs.ProjectionPoc

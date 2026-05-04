@@ -493,6 +493,33 @@ def reachExpectedIH : Expr :=
 def reachExpectedReduction : Expr :=
   appN (.const "UseReachIH" []) [.const "a" [], reachExpectedIH]
 
+def reachLargeMotive : Expr :=
+  .lam "x" alphaType
+    (.lam "target" (reachType (.bvar 0)) natType)
+
+def reachLargeIHTypeForBoundX : Expr :=
+  pi "y" alphaType
+    (pi "h" (appN (.const "r" []) [.bvar 0, .bvar 2])
+      natType)
+
+def reachLargeMinor : Expr :=
+  .lam "x" alphaType
+    (.lam "step" reachStepTypeForBoundX
+      (.lam "ih" reachLargeIHTypeForBoundX
+        natZero))
+
+def reachLargeRecursorOnTarget : Expr :=
+  appN
+    (.const "Reach.rec" [.succ .zero])
+    [
+      alphaType,
+      .const "r" [],
+      reachLargeMotive,
+      reachLargeMinor,
+      .const "a" [],
+      reachTarget
+    ]
+
 def checkBasePackages : IO Unit := do
   expectOkLabel "manifest validation" (Manifest.validate MPC.Configs.Poc)
   let env ← expectOk (replay MPC.Configs.Poc emptyEnv baseDeclarations)
@@ -652,6 +679,16 @@ def checkIndexedRecursiveProofFields : IO Unit := do
   let reduced ← expectOkLabel "Reach recursor reduction"
     (normalize MPC.Configs.IndexedPropPoc env [] reachRecursorOnTarget)
   expectExprEq "Reach recursive proof-field value" reduced reachExpectedReduction
+
+def checkPropLargeElimination : IO Unit := do
+  let env ← expectOkLabel "Reach large-elimination replay"
+    (replay MPC.Configs.IndexedPropLargeElimPoc emptyEnv
+      (baseDeclarations ++ reachPreDeclarations ++ [.indexedInductive reachSpec] ++ reachPostDeclarations))
+  let _recursorType ← expectOkLabel "Reach large-elimination recursor inference"
+    (infer MPC.Configs.IndexedPropLargeElimPoc env [] [] (.const "Reach.rec" [.succ .zero]))
+  let reduced ← expectOkLabel "Reach large-elimination reduction"
+    (normalize MPC.Configs.IndexedPropLargeElimPoc env [] reachLargeRecursorOnTarget)
+  expectExprEq "Reach large-elimination value" reduced natZero
 
 def checkEquality : IO Unit := do
   expectError "equality primitives disabled"
@@ -868,6 +905,7 @@ def main : IO Unit := do
   checkIndexedInductives
   checkIndexedPropInductives
   checkIndexedRecursiveProofFields
+  checkPropLargeElimination
   checkEquality
   checkProjections
   checkPrimitiveNat
