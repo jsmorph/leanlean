@@ -61,3 +61,9 @@ run_generated \
   "Faithfulness.ExportNestedIndexed" \
   "LeanLeanFaithfulness.ExportNestedIndexed.paramValue" \
   "checked 7 declaration entries; environment size 18"
+
+run_generated \
+  "mpc-nested-indexed-local" \
+  "Faithfulness.ExportNestedIndexed" \
+  "LeanLeanFaithfulness.ExportNestedIndexed.NestedIndexedParamLocal" \
+  "checked 6 declaration entries; environment size 17"

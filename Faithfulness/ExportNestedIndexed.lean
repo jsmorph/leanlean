@@ -10,6 +10,10 @@ inductive NestedIndexedClosed : Type
 inductive NestedIndexedParamClosed (α : Type) : Type
   | mk : IVec (NestedIndexedParamClosed α) 0 → NestedIndexedParamClosed α
 
+inductive NestedIndexedParamLocal (α : Type) : Type
+  | mk : ((fuel : Nat) → IVec (NestedIndexedParamLocal α) fuel) →
+      NestedIndexedParamLocal α
+
 def closedValue : NestedIndexedClosed :=
   NestedIndexedClosed.mk (IVec.nil (α := NestedIndexedClosed))
 
