@@ -26,7 +26,10 @@ def fieldType (env : Env) (structureName : Name) (fieldIndex : Nat)
                   let previousFields :=
                     (List.range fieldIndex).map fun index =>
                       .proj structureName index target
-                  pure (field.type.instantiateSourceArgs (targetArgs ++ previousFields))
+                  let levelSubst := levelParams.zip levels
+                  pure
+                    ((field.type.instantiateLevels levelSubst).instantiateSourceArgs
+                      (targetArgs ++ previousFields))
               | _ => fail s!"projection target {structureName} is not a one-constructor structure"
         | some _ => fail s!"projection target {structureName} is not an inductive type"
         | none => fail s!"unknown projection structure: {structureName}"

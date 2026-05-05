@@ -1269,6 +1269,27 @@ def hAddLikeAccessorValue : Expr :=
         (.lam "self" (hAddLikeApp (.bvar 2) (.bvar 1) (.bvar 0))
           (.proj "HAddLike" 0 (.bvar 0)))))
 
+def universeFieldSpec : SimpleInductiveSpec :=
+  {
+    name := "UniverseField"
+    levelParams := ["u"]
+    params := [{ name := "α", type := .sort (.param "u") }]
+    resultLevel := .succ (.param "u")
+    constructors :=
+      [
+        {
+          name := "UniverseField.mk"
+          fields := [{ name := "field", type := .sort (.param "u") }]
+        }
+      ]
+  }
+
+def universeFieldTarget : Expr :=
+  appN (.const "UniverseField.mk" [.zero]) [.const "P" [], .const "P" []]
+
+def universeFieldProjection : Expr :=
+  .proj "UniverseField" 0 universeFieldTarget
+
 def badIndexedTargetSpec : IndexedInductiveSpec :=
   { vecSpec with
     name := "BadVec"
@@ -1950,6 +1971,11 @@ def checkProjections : IO Unit := do
   let hAddLikeEnv ← expectOkLabel "dependent projection with binders replay"
     (replay MPC.Configs.ProjectionPoc emptyEnv hAddLikeDeclarations)
   expectEnvContains "dependent projection accessor" hAddLikeEnv "HAddLike.hAdd"
+  let universeFieldEnv ← expectOkLabel "projection universe substitution replay"
+    (replay MPC.Configs.ProjectionPoc emptyEnv (baseDeclarations ++ [.inductive universeFieldSpec]))
+  let universeFieldType ← expectOkLabel "projection universe substitution inference"
+    (infer MPC.Configs.ProjectionPoc universeFieldEnv [] [] universeFieldProjection)
+  expectExprEq "projection universe substitution type" universeFieldType propType
 
 def checkPrimitiveNat : IO Unit := do
   let declarations := baseDeclarations ++ primitiveNatDeclarations
