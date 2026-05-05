@@ -334,6 +334,55 @@ def nestedIndexedLocalSpec : SimpleInductiveSpec :=
       ]
   }
 
+def nestedIndexedClosedType : Expr :=
+  .const "NestedIndexedClosed" []
+
+def vecNestedIndexedClosedZero : Expr :=
+  appN
+    (.const "Vec" [])
+    [
+      nestedIndexedClosedType,
+      .const "Nat.zero" []
+    ]
+
+def vecNestedIndexedClosedNil : Expr :=
+  .app (.const "Vec.nil" []) nestedIndexedClosedType
+
+def nestedIndexedClosedTarget : Expr :=
+  .app (.const "NestedIndexedClosed.mk" []) vecNestedIndexedClosedNil
+
+def nestedIndexedClosedRootMotive : Expr :=
+  .lam "target" nestedIndexedClosedType (.const "P" [])
+
+def nestedIndexedClosedVecMotive : Expr :=
+  .lam "n" natType
+    (.lam "target"
+      (appN (.const "Vec" []) [nestedIndexedClosedType, .bvar 0])
+      (.const "P" []))
+
+def nestedIndexedClosedRootMinor : Expr :=
+  .lam "children" vecNestedIndexedClosedZero
+    (.lam "ih" (.const "P" []) (.bvar 0))
+
+def nestedIndexedClosedVecConsMinor : Expr :=
+  .lam "n" natType
+    (.lam "head" nestedIndexedClosedType
+      (.lam "tail" (appN (.const "Vec" []) [nestedIndexedClosedType, .bvar 1])
+        (.lam "headIH" (.const "P" [])
+          (.lam "tailIH" (.const "P" []) (.bvar 0)))))
+
+def nestedIndexedClosedRecursorOnNil : Expr :=
+  appN
+    (.const "NestedIndexedClosed.rec" [.zero])
+    [
+      nestedIndexedClosedRootMotive,
+      nestedIndexedClosedVecMotive,
+      nestedIndexedClosedRootMinor,
+      .const "p" [],
+      nestedIndexedClosedVecConsMinor,
+      nestedIndexedClosedTarget
+    ]
+
 def badNestedArraySpec : SimpleInductiveSpec :=
   {
     name := "BadNestedArray"
@@ -1138,12 +1187,41 @@ def checkSimpleInductives : IO Unit := do
   let nestedFnReduced ← expectOkLabel "nested function-field recursor reduction"
     (normalize MPC.Configs.LeanCore429 nestedFnEnv [] nestedFnRecursorOnTarget)
   expectExprEq "nested function-field iota" nestedFnReduced (.const "p" [])
-  expectError "closed indexed helper target gap"
+  let nestedIndexedClosedEnv ← expectOkLabel "closed indexed helper replay"
     (replay MPC.Configs.LeanCore429 emptyEnv
       (baseDeclarations ++ [.indexedInductive vecSpec, .inductive nestedIndexedClosedSpec]))
-  expectError "local indexed helper schema gap"
+  expectEnvContains
+    "closed indexed helper root recursor"
+    nestedIndexedClosedEnv
+    "NestedIndexedClosed.rec"
+  expectEnvContains
+    "closed indexed helper target recursor"
+    nestedIndexedClosedEnv
+    "NestedIndexedClosed.rec_1"
+  let nestedIndexedClosedReduced ← expectOkLabel "closed indexed helper reduction"
+    (normalize MPC.Configs.LeanCore429 nestedIndexedClosedEnv [] nestedIndexedClosedRecursorOnNil)
+  expectExprEq "closed indexed helper iota" nestedIndexedClosedReduced (.const "p" [])
+  let nestedIndexedLocalEnv ← expectOkLabel "local indexed helper replay"
     (replay MPC.Configs.LeanCore429 emptyEnv
       (baseDeclarations ++ [.indexedInductive vecSpec, .inductive nestedIndexedLocalSpec]))
+  expectEnvContains
+    "local indexed helper root recursor"
+    nestedIndexedLocalEnv
+    "NestedIndexedLocal.rec"
+  expectEnvContains
+    "local indexed helper target recursor"
+    nestedIndexedLocalEnv
+    "NestedIndexedLocal.rec_1"
+  match nestedIndexedLocalEnv.find? "NestedIndexedLocal.rec_1" with
+  | some { kind := .nestedRecursor info, .. } =>
+      expect "local indexed helper target index" (info.targetIndex == 1)
+      expect "local indexed helper family target count" (info.targets.length == 2)
+      match listGet? info.targets 1 with
+      | some target =>
+          expect "local indexed helper target local count" (target.locals.length == 1)
+      | none => throw <| IO.userError "local indexed helper target missing"
+  | some _ => throw <| IO.userError "local indexed helper recursor has wrong kind"
+  | none => throw <| IO.userError "local indexed helper recursor missing"
   expectError "negative occurrence inside nested container"
     (replay MPC.Configs.LeanCore429 emptyEnv
       (baseDeclarations ++ [.inductive listSpec, .inductive arraySpec, .inductive badNestedArraySpec]))

@@ -277,19 +277,25 @@ def getAppHeadName? (expr : Expr) : Option Name :=
   | .const name _ => some name
   | _ => none
 
-def lean429CovariantContainerArity? : Name → Option Nat
-  | "Array" => some 1
-  | "List" => some 1
+structure CovariantContainerInfo where
+  argCount : Nat
+  positiveArgIndex : Nat
+  deriving BEq, Repr, Inhabited
+
+def lean429CovariantContainerInfo? : Name → Option CovariantContainerInfo
+  | "Array" => some { argCount := 1, positiveArgIndex := 0 }
+  | "List" => some { argCount := 1, positiveArgIndex := 0 }
+  | "Vec" => some { argCount := 2, positiveArgIndex := 0 }
   | _ => none
 
 def availableCovariantContainer? (manifest : Manifest) (env : Env) (name : Name) :
-    Option Nat :=
+    Option CovariantContainerInfo :=
   if !manifest.supportsLean429NestedContainers then
     none
   else
-    match lean429CovariantContainerArity? name, env.find? name with
-    | some arity, some { kind := .inductiveType .., .. } => some arity
-    | some arity, some { kind := .indexedInductiveType .., .. } => some arity
+    match lean429CovariantContainerInfo? name, env.find? name with
+    | some info, some { kind := .inductiveType .., .. } => some info
+    | some info, some { kind := .indexedInductiveType .., .. } => some info
     | _, _ => none
 
 partial def simpleStrictlyPositive (manifest : Manifest) (env : Env) (target : Name)
@@ -301,9 +307,17 @@ partial def simpleStrictlyPositive (manifest : Manifest) (env : Env) (target : N
     match head with
     | .const name _ =>
         match availableCovariantContainer? manifest env name with
-        | some arity =>
-            args.length == arity &&
-              args.all (simpleStrictlyPositive manifest env target)
+        | some info =>
+            let rec argsStrictlyPositive : Nat → List Expr → Bool
+              | _, [] => true
+              | index, arg :: rest =>
+                  let ok :=
+                    if index == info.positiveArgIndex then
+                      simpleStrictlyPositive manifest env target arg
+                    else
+                      !containsConst target arg
+                  ok && argsStrictlyPositive (index + 1) rest
+            args.length == info.argCount && argsStrictlyPositive 0 args
         | none =>
             match expr with
             | .forallE _ domain body =>

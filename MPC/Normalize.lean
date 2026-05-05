@@ -47,6 +47,10 @@ def levelListsDefEq (left right : List Level) : Bool :=
   left.length == right.length &&
     (left.zip right).all fun pair => pair.1.defEq pair.2
 
+def exprListsAlphaEq (left right : List Expr) : Bool :=
+  left.length == right.length &&
+    (left.zip right).all fun pair => pair.1.alphaEq pair.2
+
 def recursorSourceOrderBvars (count offset : Nat) : List Expr :=
   (List.range count).map fun index =>
     .bvar (offset + count - 1 - index)
@@ -97,19 +101,23 @@ partial def recursiveFieldResult
 def nestedRecursiveFieldBody
     (targets : List NestedRecursorTargetInfo)
     (levels : List Level)
-    (paramArgs motiveArgs minorArgs _fieldArgs : List Expr)
+    (paramArgs motiveArgs minorArgs fieldArgs : List Expr)
     (fieldValue : Expr)
     (rec : NestedRecursiveFieldInfo)
     (boundLocals : Nat) : Result Expr := do
   let some recTarget := listGet? targets rec.targetIndex
     | fail s!"unknown nested recursor target {rec.targetIndex}"
   let localArgs := recursorSourceOrderBvars boundLocals 0
+  let targetArgs :=
+    rec.targetArgs.map fun arg =>
+      instantiateSourceArgsAfterLocals arg boundLocals (paramArgs ++ fieldArgs)
   let target := Expr.mkApps (fieldValue.lift boundLocals) localArgs
   pure
     (Expr.mkApps (.const recTarget.recursorName levels)
       (liftExprs boundLocals paramArgs ++
         liftExprs boundLocals motiveArgs ++
         liftExprs boundLocals minorArgs ++
+        targetArgs ++
         [target]))
 
 partial def nestedRecursiveFieldResult
@@ -423,7 +431,8 @@ partial def reduceNestedRecursor? (manifest : Manifest) (env : Env) (levelParams
           let motiveCount := info.targets.length
           let minorCount :=
             info.targets.foldl (fun count target => count + target.constructors.length) 0
-          let required := rootSpec.params.length + motiveCount + minorCount + 1
+          let targetLocalCount := targetInfo.locals.length
+          let required := rootSpec.params.length + motiveCount + minorCount + targetLocalCount + 1
           if args.length < required then
             pure none
           else
@@ -432,9 +441,11 @@ partial def reduceNestedRecursor? (manifest : Manifest) (env : Env) (levelParams
             let motiveArgs := rest.take motiveCount
             let rest := rest.drop motiveCount
             let minorArgs := rest.take minorCount
-            let some target := listGet? args (required - 1)
+            let rest := rest.drop minorCount
+            let targetLocalArgs := rest.take targetLocalCount
+            let some target := listGet? rest targetLocalCount
               | pure none
-            let trailing := args.drop required
+            let trailing := rest.drop (targetLocalCount + 1)
             let targetWhnf ← whnf manifest env levelParams target
             let (targetHead, targetArgs) := targetWhnf.getAppFnArgs
             match targetHead with
@@ -452,23 +463,29 @@ partial def reduceNestedRecursor? (manifest : Manifest) (env : Env) (levelParams
                   if fieldArgs.length != ctorInfo.fields.length then
                     pure none
                   else
-                    let recursiveResults ←
-                      ctorInfo.recursiveFields.mapM fun rec => do
-                        let some fieldValue := listGet? fieldArgs rec.fieldIndex
-                          | fail s!"missing recursive field {rec.fieldIndex} for {ctorName}"
-                        nestedRecursiveFieldResult
-                          info.targets
-                          levels
-                          paramArgs
-                          motiveArgs
-                          minorArgs
-                          fieldArgs
-                          fieldValue
-                          rec
-                          0
-                          rec.binders
-                    let value := Expr.mkApps minor (fieldArgs ++ recursiveResults)
-                    pure (some (Expr.mkApps value trailing))
+                    let expectedTargetLocalArgs :=
+                      ctorInfo.targetArgs.map fun arg =>
+                        instantiateSourceArgsAfterLocals arg 0 (paramArgs ++ fieldArgs)
+                    if !exprListsAlphaEq targetLocalArgs expectedTargetLocalArgs then
+                      pure none
+                    else
+                      let recursiveResults ←
+                        ctorInfo.recursiveFields.mapM fun rec => do
+                          let some fieldValue := listGet? fieldArgs rec.fieldIndex
+                            | fail s!"missing recursive field {rec.fieldIndex} for {ctorName}"
+                          nestedRecursiveFieldResult
+                            info.targets
+                            levels
+                            paramArgs
+                            motiveArgs
+                            minorArgs
+                            fieldArgs
+                            fieldValue
+                            rec
+                            0
+                            rec.binders
+                      let value := Expr.mkApps minor (fieldArgs ++ recursiveResults)
+                      pure (some (Expr.mkApps value trailing))
             | _ => pure none
       | _ => pure none
 

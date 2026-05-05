@@ -67,11 +67,13 @@ structure NestedRecursiveFieldInfo where
   fieldIndex : Nat
   binders : List Binder := []
   targetIndex : Nat
+  targetArgs : List Expr := []
   deriving BEq, Repr, Inhabited
 
 structure NestedRecursorConstructorInfo where
   name : Name
   fields : List Binder := []
+  targetArgs : List Expr := []
   recursiveFields : List NestedRecursiveFieldInfo := []
   deriving BEq, Repr, Inhabited
 
