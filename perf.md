@@ -74,3 +74,19 @@ The first profile run used prefix 430, which includes `Nat.gcd_dvd` but stops be
 | 319 | 7,882 | 12,622 | 1,716 | 0 | `Nat.mod_add_div` |
 
 The next instrumentation should be dynamic but still narrow: per-declaration counters for `defEq` calls, `whnf` calls, structural failures, eta attempts and successes, proof-irrelevance attempts and successes, delta unfolds, and recursor reductions.  Those counters should be emitted once per declaration, not as per-call logs.
+
+## Conversion Fast Paths
+
+The useful optimization was a top-level alpha-equivalence check at the start of `defEq`.  If two terms are already equal up to binder names and universe equality, conversion now returns before weak-head reduction, structural recursion, eta, or proof irrelevance.  This preserves the conversion relation and removes repeated normalization of subterms that are already identical in exported proof terms.
+
+Two smaller proof-irrelevance changes stayed in the same patch.  Conversion now tries proof irrelevance before function eta after structural conversion fails, and the proof-irrelevance check verifies that the left inferred type is a proposition before comparing the left and right inferred types.  If those types are definitionally equal, the right type has the same proposition sort, so a separate sort check on the right type is redundant.
+
+| Run | Declarations | Measured ms | Baseline ms |
+|---|---:|---:|---:|
+| Original full GCD profile | 493 | 597,416 | 597,416 |
+| Top-level alpha fast path | 493 | 12,646 | 597,416 |
+| Alpha fast path plus proof-irrelevance cleanup | 493 | 12,573 | 597,416 |
+
+The remaining hotspot is `Nat.gcd_one_left`, which now takes about 10 seconds and accounts for most of the remaining GCD replay time.  Most previously slow late declarations become cheap after the alpha fast path: `Nat.Coprime.gcd_mul_left_cancel` drops from 116,057 ms to a few milliseconds, and the final project theorem drops from 33,412 ms to single-digit milliseconds in the measured run.
+
+Two candidates were tested and not kept.  Removing eager `repr` construction from structural mismatch errors did not show a reliable improvement and weakened rejection diagnostics.  A second alpha-equivalence check after weak-head reduction also failed to improve the profile, because the extra traversal did not pay for itself on this artifact.

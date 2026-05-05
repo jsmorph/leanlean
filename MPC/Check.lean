@@ -207,7 +207,6 @@ partial def proofIrrelevanceDefEq (manifest : Manifest) (env : Env) (levelParams
     let leftType ← infer manifest env levelParams ctx left
     let rightType ← infer manifest env levelParams ctx right
     isPropExpr manifest env levelParams ctx leftType
-    isPropExpr manifest env levelParams ctx rightType
     defEq manifest env levelParams ctx leftType rightType
 
 partial def functionEtaDefEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
@@ -229,19 +228,22 @@ partial def functionEtaDefEq (manifest : Manifest) (env : Env) (levelParams : Le
 
 partial def defEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (left right : Expr) : Result Unit := do
-  match structuralDefEq manifest env levelParams ctx left right with
-  | .ok () => pure ()
-  | .error structuralError =>
-      match functionEtaDefEq manifest env levelParams ctx left right with
-      | .ok () => pure ()
-      | .error _ =>
-          match functionEtaDefEq manifest env levelParams ctx right left with
-          | .ok () => pure ()
-          | .error _ =>
-              match proofIrrelevanceDefEq manifest env levelParams ctx left right with
-              | .ok () => pure ()
-              | .error proofError =>
-                  fail s!"{structuralError.message}; proof irrelevance fallback failed: {proofError.message}"
+  if left.alphaEq right then
+    pure ()
+  else
+    match structuralDefEq manifest env levelParams ctx left right with
+    | .ok () => pure ()
+    | .error structuralError =>
+        match proofIrrelevanceDefEq manifest env levelParams ctx left right with
+        | .ok () => pure ()
+        | .error proofError =>
+            match functionEtaDefEq manifest env levelParams ctx left right with
+            | .ok () => pure ()
+            | .error _ =>
+                match functionEtaDefEq manifest env levelParams ctx right left with
+                | .ok () => pure ()
+                | .error _ =>
+                    fail s!"{structuralError.message}; proof irrelevance fallback failed: {proofError.message}"
 
 end
 
