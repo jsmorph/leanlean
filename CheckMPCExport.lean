@@ -1,4 +1,4 @@
-import MPC.Adapters.Export
+import MPC.Adapters.Layer
 
 namespace MPC.CheckExport
 
@@ -16,6 +16,7 @@ structure ReplayOptions where
 
 structure Config where
   inputPath : System.FilePath
+  checkedLayerPath? : Option System.FilePath := none
   limit? : Option Nat := none
   profileDeclaration? : Option Nat := none
   replayOptions : ReplayOptions := {}
@@ -24,6 +25,7 @@ structure Config where
 def usage : String :=
   "usage: mpc-check-export [<export.ndjson>]\n" ++
   "       mpc-check-export --input <export.ndjson>\n" ++
+  "       mpc-check-export --checked-layer <base.ndjson> <export.ndjson>\n" ++
   "       mpc-check-export [--limit <n>] [--trace] [--stats|--stats-jsonl|--profile-jsonl] [--diagnostic-assume-generated] <export.ndjson>\n" ++
   "       mpc-check-export --profile-declaration <n> <export.ndjson>\n" ++
   "       mpc-check-export [--assume-generated] <export.ndjson>  (alias for diagnostic mode)\n" ++
@@ -36,21 +38,23 @@ def filePath (path : String) : Except String System.FilePath :=
     pure (System.FilePath.mk path)
 
 def configFromPath
+    (checkedLayerPath? : Option System.FilePath)
     (limit? : Option Nat)
     (profileDeclaration? : Option Nat)
     (replayOptions : ReplayOptions)
     (diagnosticAssumeGenerated : Bool)
     (path : String) :
     Except String Config := do
-  pure { inputPath := (← filePath path), limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated }
+  pure { inputPath := (← filePath path), checkedLayerPath?, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated }
 
 def configFromEnv
+    (checkedLayerPath? : Option System.FilePath)
     (limit? : Option Nat)
     (profileDeclaration? : Option Nat)
     (replayOptions : ReplayOptions)
     (diagnosticAssumeGenerated : Bool) : IO (Except String Config) := do
   match ← IO.getEnv "IN" with
-  | some path => pure (configFromPath limit? profileDeclaration? replayOptions diagnosticAssumeGenerated path)
+  | some path => pure (configFromPath checkedLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated path)
   | none => pure (.error "missing input path")
 
 def setInputPath (input? : Option String) (path : String) : Except String (Option String) := do
@@ -77,54 +81,61 @@ def setTelemetryFormat
 
 partial def parseArgsLoop
     (input? : Option String)
+    (checkedLayerPath? : Option System.FilePath)
     (limit? : Option Nat)
     (profileDeclaration? : Option Nat)
     (replayOptions : ReplayOptions)
     (diagnosticAssumeGenerated : Bool) :
-    List String → Except String (Option String × Option Nat × Option Nat × ReplayOptions × Bool)
-  | [] => pure (input?, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated)
+    List String → Except String (Option String × Option System.FilePath × Option Nat × Option Nat × ReplayOptions × Bool)
+  | [] => pure (input?, checkedLayerPath?, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated)
   | "--input" :: path :: rest => do
-      parseArgsLoop (← setInputPath input? path) limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
+      parseArgsLoop (← setInputPath input? path) checkedLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
   | "--input" :: [] => .error "missing value after --input"
+  | "--checked-layer" :: path :: rest => do
+      if checkedLayerPath?.isSome then
+        .error "multiple checked layers"
+      else
+        parseArgsLoop input? (some (← filePath path)) limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
+  | "--checked-layer" :: [] => .error "missing value after --checked-layer"
   | "--limit" :: value :: rest => do
       if limit?.isSome then
         .error "multiple limits"
       else
-        parseArgsLoop input? (some (← parseNatArgument "limit" value)) profileDeclaration? replayOptions diagnosticAssumeGenerated rest
+        parseArgsLoop input? checkedLayerPath? (some (← parseNatArgument "limit" value)) profileDeclaration? replayOptions diagnosticAssumeGenerated rest
   | "--limit" :: [] => .error "missing value after --limit"
   | "--profile-declaration" :: value :: rest => do
       if profileDeclaration?.isSome then
         .error "multiple profile declaration indexes"
       else
-        parseArgsLoop input? limit? (some (← parseNatArgument "profile declaration index" value)) replayOptions diagnosticAssumeGenerated rest
+        parseArgsLoop input? checkedLayerPath? limit? (some (← parseNatArgument "profile declaration index" value)) replayOptions diagnosticAssumeGenerated rest
   | "--profile-declaration" :: [] => .error "missing value after --profile-declaration"
   | "--trace" :: rest =>
-      parseArgsLoop input? limit? profileDeclaration? { replayOptions with trace := true } diagnosticAssumeGenerated rest
+      parseArgsLoop input? checkedLayerPath? limit? profileDeclaration? { replayOptions with trace := true } diagnosticAssumeGenerated rest
   | "--stats" :: rest => do
-      parseArgsLoop input? limit? profileDeclaration? (← setTelemetryFormat replayOptions .text) diagnosticAssumeGenerated rest
+      parseArgsLoop input? checkedLayerPath? limit? profileDeclaration? (← setTelemetryFormat replayOptions .text) diagnosticAssumeGenerated rest
   | "--stats-jsonl" :: rest => do
-      parseArgsLoop input? limit? profileDeclaration? (← setTelemetryFormat replayOptions .jsonl) diagnosticAssumeGenerated rest
+      parseArgsLoop input? checkedLayerPath? limit? profileDeclaration? (← setTelemetryFormat replayOptions .jsonl) diagnosticAssumeGenerated rest
   | "--profile-jsonl" :: rest => do
-      parseArgsLoop input? limit? profileDeclaration? (← setTelemetryFormat replayOptions .profileJsonl) diagnosticAssumeGenerated rest
+      parseArgsLoop input? checkedLayerPath? limit? profileDeclaration? (← setTelemetryFormat replayOptions .profileJsonl) diagnosticAssumeGenerated rest
   | "--diagnostic-assume-generated" :: rest =>
-      parseArgsLoop input? limit? profileDeclaration? replayOptions true rest
+      parseArgsLoop input? checkedLayerPath? limit? profileDeclaration? replayOptions true rest
   | "--assume-generated" :: rest =>
-      parseArgsLoop input? limit? profileDeclaration? replayOptions true rest
+      parseArgsLoop input? checkedLayerPath? limit? profileDeclaration? replayOptions true rest
   | "--help" :: _ => .error usage
   | arg :: rest =>
       if arg.startsWith "-" then
         .error s!"unknown argument: {arg}"
       else do
-        parseArgsLoop (← setInputPath input? arg) limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
+        parseArgsLoop (← setInputPath input? arg) checkedLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
 
 def parseArgs : List String → IO (Except String Config)
   | args => do
-      match parseArgsLoop none none none {} false args with
+      match parseArgsLoop none none none none {} false args with
       | .error err => pure (.error err)
-      | .ok (some path, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated) =>
-          pure (configFromPath limit? profileDeclaration? replayOptions diagnosticAssumeGenerated path)
-      | .ok (none, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated) =>
-          configFromEnv limit? profileDeclaration? replayOptions diagnosticAssumeGenerated
+      | .ok (some path, checkedLayerPath?, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated) =>
+          pure (configFromPath checkedLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated path)
+      | .ok (none, checkedLayerPath?, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated) =>
+          configFromEnv checkedLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated
 
 def printOutcome (status : String) (path : System.FilePath) (message : String) : IO Unit := do
   IO.println status
@@ -564,6 +575,42 @@ def replayConfig (config : Config) (state : MPC.Adapters.Export.ParseState) :
           | .ok () => pure (.ok env)
           | .error err => pure (.error err)
 
+structure LayerReplayResult where
+  env : Env
+  reused : Nat
+  checked : Nat
+
+def buildCheckedLayerFromFile (path : System.FilePath) :
+    IO (Result MPC.Adapters.Layer.CheckedLayer) := do
+  let input ← IO.FS.readFile path
+  match MPC.Adapters.Export.parseString input with
+  | .error err => pure (.error err)
+  | .ok state => pure (MPC.Adapters.Layer.build MPC.Configs.LeanCore429 state)
+
+def replayWithCheckedLayer (config : Config) (state : MPC.Adapters.Export.ParseState)
+    (layerPath : System.FilePath) : IO (Result LayerReplayResult) := do
+  if config.profileDeclaration?.isSome then
+    pure (.error { message := "--checked-layer cannot be combined with --profile-declaration" })
+  else if config.replayOptions.telemetry != .off then
+    pure (.error { message := "--checked-layer cannot be combined with telemetry output" })
+  else if config.replayOptions.trace then
+    pure (.error { message := "--checked-layer cannot be combined with --trace" })
+  else if config.diagnosticAssumeGenerated then
+    pure (.error { message := "--checked-layer cannot be combined with diagnostic generated assumptions" })
+  else
+    match ← buildCheckedLayerFromFile layerPath with
+    | .error err => pure (.error { message := s!"while checking layer {layerPath}: {err.message}" })
+    | .ok layer =>
+        let declarations := prepareDeclarations config state
+        let audit :=
+          match config.limit? with
+          | some _ => {}
+          | none => state.audit
+        match MPC.Adapters.Layer.replay MPC.Configs.LeanCore429 layer audit declarations with
+        | .error err => pure (.error err)
+        | .ok summary =>
+            pure (.ok { env := summary.env, reused := summary.reused, checked := summary.checked })
+
 def profileDeclarationAt (config : Config) (state : MPC.Adapters.Export.ParseState)
     (index : Nat) : IO (Result Unit) := do
   let declarations := prepareDeclarations { config with limit? := none } state
@@ -599,6 +646,25 @@ def run (args : List String) : IO UInt32 := do
           printOutcome "unsupported" config.inputPath err.message
           return 2
       | .ok state =>
+          match config.checkedLayerPath? with
+          | some layerPath =>
+              match ← replayWithCheckedLayer config state layerPath with
+              | .ok result => do
+                  let checkedTotal :=
+                    match config.limit? with
+                    | some limit => Nat.min limit state.declarations.length
+                    | none => state.declarations.length
+                  let prefixText :=
+                    match config.limit? with
+                    | some _ => "prefix "
+                    | none => ""
+                  printOutcome "layer-accepted" config.inputPath
+                    s!"reused {result.reused} declaration entries; checked {prefixText}{result.checked} declaration entries; target declarations {checkedTotal}; environment size {result.env.length}"
+                  return 0
+              | .error err => do
+                  printOutcome "rejected" config.inputPath err.message
+                  return 1
+          | none => pure ()
           match config.profileDeclaration? with
           | some index =>
               match ← profileDeclarationAt config state index with
