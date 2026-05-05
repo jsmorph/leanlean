@@ -29,6 +29,7 @@ lake build \
   MPC.Packages.PrimitiveNat \
   MPC.Packages.Inductive.Basic \
   MPC.Packages.Inductive.Positivity \
+  MPC.Packages.Inductive.Recursor \
   mpc-check-export \
   leanlean-export-roots
 
@@ -107,3 +108,4 @@ run_mpc_export_self_check "mpc-packages-projection" "MPC.Packages.Projection" "l
 run_mpc_export_self_check "mpc-packages-primitive-nat" "MPC.Packages.PrimitiveNat" "layer"
 run_mpc_export_self_check "mpc-packages-inductive-basic" "MPC.Packages.Inductive.Basic" "layer"
 run_mpc_export_self_check "mpc-packages-inductive-positivity" "MPC.Packages.Inductive.Positivity" "layer"
+run_mpc_export_self_check "mpc-packages-inductive-recursor" "MPC.Packages.Inductive.Recursor" "layer"

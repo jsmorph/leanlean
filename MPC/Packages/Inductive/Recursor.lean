@@ -162,6 +162,8 @@ def instantiateIndexBinders (levelSubst : List (Name × Level)) (targetArgs : Li
         (binder.type.instantiateLevels levelSubst).instantiateManyFrom bound targetArgs
       { binder with type } :: instantiateIndexBinders levelSubst targetArgs (bound + 1) rest
 
+-- Avoid exported sparse matchers for nested target classification.
+set_option backward.match.sparseCases false in
 def nestedContainerOccurrence? (manifest : Manifest) (env : Env) (rootName : Name)
     (fieldCount localCount : Nat) (expr : Expr) :
     Result (Option NestedContainerOccurrence) := do
@@ -330,6 +332,8 @@ inductive NestedTargetSpec where
   | simple : SimpleInductiveSpec → NestedTargetSpec
   | indexed : IndexedInductiveSpec → NestedTargetSpec
 
+-- Avoid an exported sparse matcher for nested helper target lookup.
+set_option backward.match.sparseCases false in
 def specForNestedTarget
     (env : Env)
     (root : SimpleInductiveSpec)
