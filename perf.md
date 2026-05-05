@@ -47,3 +47,13 @@ The profile is concentrated near the end of the artifact.  Declarations 400 thro
 | Accumulator spine | 400 | 119,122 | 119,030 | +92 |
 
 The measurement is within run-to-run noise.  Keep the implementation because it is the right asymptotic shape and has no semantic effect, but do not treat it as a solution to the GCD replay cost.
+
+## Nat Right-Zero Reductions
+
+The primitive Nat reducer now includes the cheap right-zero cases from the source equations for `Nat.mul`, `Nat.pow`, and `Nat.sub`.  The added rules are `Nat.mul n 0 = 0`, `Nat.pow n 0 = 1`, and `Nat.sub n 0 = n`, with the zero argument recognized after weak-head normalization.  These rules are part of the admitted Nat primitive table, so `spec.md` and the native primitive Nat tests were updated with the implementation.
+
+| Run | Prefix | Measured ms | Baseline ms | Change |
+|---|---:|---:|---:|---:|
+| Nat right-zero reductions | 475 | 363,973 | 364,037 | -64 |
+
+The measurement is also within run-to-run noise.  The late GCD declarations remain the dominant cost: `Nat.gcd_one_left`, `Nat.gcd_mul_left`, `Nat.gcd_dvd`, `Nat.gcd_assoc`, `Nat.gcd_rec`, and `Nat.mul_mod_mul_left` keep essentially the same times.  The next useful work is instrumentation below declaration level, especially counts for conversion fallback, proof irrelevance, eta, weak-head reduction, delta unfolding, recursor reduction, and primitive Nat reduction.

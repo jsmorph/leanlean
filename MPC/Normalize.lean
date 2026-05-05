@@ -173,6 +173,25 @@ partial def reduceNatBinaryNat? (manifest : Manifest) (env : Env) (levelParams :
     | some left, some right => pure (some (.lit (.nat (op left right))))
     | _, _ => pure none
 
+partial def reduceNatBinaryNatRightZero? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (name : Name) (info : ConstantInfo) (levels : List Level) (args : List Expr)
+    (op : Nat → Nat → Nat) (rightZero : Expr → Expr) : Result (Option Expr) := do
+  if !manifest.supportsNatPrimitiveReductions || !levels.isEmpty || args.length != 2 then
+    pure none
+  else
+    checkNatBinaryNatPrimitiveDeclaration name info
+    let some leftArg := listGet? args 0
+      | pure none
+    let some rightArg := listGet? args 1
+      | pure none
+    match ← natValue? manifest env levelParams rightArg with
+    | some 0 => pure (some (rightZero leftArg))
+    | some right =>
+        match ← natValue? manifest env levelParams leftArg with
+        | some left => pure (some (.lit (.nat (op left right))))
+        | none => pure none
+    | none => pure none
+
 partial def reduceNatBinaryBool? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (name : Name) (info : ConstantInfo) (levels : List Level) (args : List Expr)
     (op : Nat → Nat → Bool) : Result (Option Expr) := do
@@ -195,9 +214,18 @@ partial def reduceNatPrimitive? (manifest : Manifest) (env : Env) (levelParams :
     Result (Option Expr) := do
   match name with
   | "Nat.add" => reduceNatAdd? manifest env levelParams info levels args
-  | "Nat.mul" => reduceNatBinaryNat? manifest env levelParams name info levels args (fun left right => left * right)
-  | "Nat.pow" => reduceNatBinaryNat? manifest env levelParams name info levels args (fun left right => Nat.pow left right)
-  | "Nat.sub" => reduceNatBinaryNat? manifest env levelParams name info levels args (fun left right => left - right)
+  | "Nat.mul" =>
+      reduceNatBinaryNatRightZero? manifest env levelParams name info levels args
+        (fun left right => left * right)
+        (fun _ => .lit (.nat 0))
+  | "Nat.pow" =>
+      reduceNatBinaryNatRightZero? manifest env levelParams name info levels args
+        (fun left right => Nat.pow left right)
+        (fun _ => .lit (.nat 1))
+  | "Nat.sub" =>
+      reduceNatBinaryNatRightZero? manifest env levelParams name info levels args
+        (fun left right => left - right)
+        (fun left => left)
   | "Nat.beq" => reduceNatBinaryBool? manifest env levelParams name info levels args (fun left right => left == right)
   | "Nat.ble" => reduceNatBinaryBool? manifest env levelParams name info levels args (fun left right => left <= right)
   | _ => pure none

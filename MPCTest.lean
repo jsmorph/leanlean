@@ -1137,15 +1137,24 @@ def checkPrimitiveNat : IO Unit := do
   let mulValue ← expectOkLabel "Nat.mul primitive reduction"
     (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.mul" []) [.lit (.nat 65536), .lit (.nat 65536)]))
   expectExprEq "Nat.mul primitive value" mulValue (.lit (.nat 4294967296))
+  let mulRightZero ← expectOkLabel "Nat.mul right zero primitive reduction"
+    (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.mul" []) [.const "m" [], natZero]))
+  expectExprEq "Nat.mul right zero value" mulRightZero (.lit (.nat 0))
   let powValue ← expectOkLabel "Nat.pow primitive reduction"
     (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.pow" []) [.lit (.nat 2), .lit (.nat 32)]))
   expectExprEq "Nat.pow primitive value" powValue (.lit (.nat 4294967296))
+  let powRightZero ← expectOkLabel "Nat.pow right zero primitive reduction"
+    (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.pow" []) [.const "m" [], natZero]))
+  expectExprEq "Nat.pow right zero value" powRightZero (.lit (.nat 1))
   let subPositive ← expectOkLabel "Nat.sub positive primitive reduction"
     (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.sub" []) [.lit (.nat 1114112), .lit (.nat 12)]))
   expectExprEq "Nat.sub positive value" subPositive (.lit (.nat 1114100))
   let subTruncated ← expectOkLabel "Nat.sub truncated primitive reduction"
     (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.sub" []) [.lit (.nat 12), .lit (.nat 1114112)]))
   expectExprEq "Nat.sub truncated value" subTruncated (.lit (.nat 0))
+  let subRightZero ← expectOkLabel "Nat.sub right zero primitive reduction"
+    (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.sub" []) [.const "m" [], natZero]))
+  expectExprEq "Nat.sub right zero value" subRightZero (.const "m" [])
   let beqTrue ← expectOkLabel "Nat.beq true primitive reduction"
     (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.beq" []) [.lit (.nat 9), .lit (.nat 9)]))
   expectExprEq "Nat.beq true value" beqTrue boolTrue
