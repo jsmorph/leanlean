@@ -43,6 +43,8 @@ def lean429CovariantContainerInfo? : Name → Option CovariantContainerInfo
   | "Vec" => some { positiveArgs := [true, false] }
   | _ => none
 
+-- Avoid exported sparse matchers for fixed-container metadata checks.
+set_option backward.match.sparseCases false in
 def availableFixedCovariantContainer? (manifest : Manifest) (env : Env) (name : Name) :
     Option CovariantContainerInfo :=
   if !manifest.supportsLean429NestedContainers then
