@@ -146,6 +146,309 @@ def simpleRecursorType (spec : SimpleInductiveSpec) (motiveLevel : Level) : Expr
   let body := .app (.bvar (minorBinders.length + 1)) (.bvar 0)
   bindForall spec.params (bindForall (motive :: minorBinders ++ [target]) body)
 
+partial def dropBVarsFrom (amount cutoff : Nat) : Expr → Option Expr
+  | .bvar index =>
+      if index < cutoff then
+        some (.bvar index)
+      else if index < cutoff + amount then
+        none
+      else
+        some (.bvar (index - amount))
+  | .sort level => some (.sort level)
+  | .const name levels => some (.const name levels)
+  | .lit literal => some (.lit literal)
+  | .app fn arg => do
+      some (.app (← dropBVarsFrom amount cutoff fn) (← dropBVarsFrom amount cutoff arg))
+  | .lam name type body => do
+      some
+        (.lam name
+          (← dropBVarsFrom amount cutoff type)
+          (← dropBVarsFrom amount (cutoff + 1) body))
+  | .forallE name type body => do
+      some
+        (.forallE name
+          (← dropBVarsFrom amount cutoff type)
+          (← dropBVarsFrom amount (cutoff + 1) body))
+  | .letE name type value body => do
+      some
+        (.letE name
+          (← dropBVarsFrom amount cutoff type)
+          (← dropBVarsFrom amount cutoff value)
+          (← dropBVarsFrom amount (cutoff + 1) body))
+  | .proj structureName fieldIndex target => do
+      some (.proj structureName fieldIndex (← dropBVarsFrom amount cutoff target))
+
+def dropBVars (amount : Nat) (expr : Expr) : Option Expr :=
+  dropBVarsFrom amount 0 expr
+
+def nestedRecursorName (rootName : Name) (targetIndex : Nat) : Name :=
+  if targetIndex == 0 then
+    rootName ++ ".rec"
+  else
+    rootName ++ ".rec_" ++ toString targetIndex
+
+def findNestedSchemaIndex? (target : Expr) : List Expr → Nat → Option Nat
+  | [], _ => none
+  | entry :: rest, index =>
+      if entry.alphaEq target then
+        some index
+      else
+        findNestedSchemaIndex? target rest (index + 1)
+
+def internNestedSchema (schemas : List Expr) (target : Expr) : Nat × List Expr :=
+  match findNestedSchemaIndex? target schemas 0 with
+  | some index => (index, schemas)
+  | none => (schemas.length, schemas ++ [target])
+
+def rootRecursiveTarget? (spec : SimpleInductiveSpec) (expr : Expr) : Bool :=
+  let (head, args) := expr.getAppFnArgs
+  match head with
+  | .const name levels =>
+      name == spec.name &&
+        levels.length == spec.levelParams.length &&
+        args.length == spec.params.length &&
+        (args.zip (simpleParamArgs spec 0)).all fun pair => pair.1.alphaEq pair.2
+  | _ => false
+
+def nestedContainerTarget? (manifest : Manifest) (env : Env) (rootName : Name)
+    (expr : Expr) : Bool :=
+  let (head, args) := expr.getAppFnArgs
+  match head with
+  | .const name _ =>
+      match availableCovariantContainer? manifest env name with
+      | some arity => args.length == arity && args.any (containsConst rootName)
+      | none => false
+  | _ => false
+
+def instantiateTargetFields (levelSubst : List (Name × Level)) (targetArgs : List Expr) :
+    Nat → List Binder → List Binder
+  | _, [] => []
+  | boundFields, field :: rest =>
+      let type :=
+        (field.type.instantiateLevels levelSubst).instantiateManyFrom boundFields targetArgs
+      { field with type } :: instantiateTargetFields levelSubst targetArgs (boundFields + 1) rest
+
+def nestedRecursiveField?
+    (manifest : Manifest)
+    (env : Env)
+    (spec : SimpleInductiveSpec)
+    (fieldCount fieldIndex : Nat)
+    (field : Binder)
+    (schemas : List Expr) : Result (Option NestedRecursiveFieldInfo × List Expr) := do
+  let type := fieldTypeUnderAllFields fieldCount fieldIndex field.type
+  if !containsConst spec.name type then
+    pure (none, schemas)
+  else
+    match dropBVars fieldCount type with
+    | none =>
+        fail s!"nested recursor field depends on constructor fields: {field.name}"
+    | some lowered =>
+        if rootRecursiveTarget? spec lowered then
+          pure (some { fieldIndex, targetIndex := 0 }, schemas)
+        else if nestedContainerTarget? manifest env spec.name lowered then
+          let (targetIndex, schemas) := internNestedSchema schemas lowered
+          pure (some { fieldIndex, targetIndex }, schemas)
+        else
+          fail s!"unsupported nested recursive field shape in {field.name}: {repr lowered}"
+
+partial def nestedRecursiveFields
+    (manifest : Manifest)
+    (env : Env)
+    (spec : SimpleInductiveSpec)
+    (fields : List Binder)
+    (schemas : List Expr) : Result (List NestedRecursiveFieldInfo × List Expr) := do
+  let fieldCount := fields.length
+  let rec loop
+      (schemas : List Expr)
+      (acc : List NestedRecursiveFieldInfo) :
+      List (Nat × Binder) → Result (List NestedRecursiveFieldInfo × List Expr)
+    | [] => pure (acc, schemas)
+    | pair :: rest => do
+        let (info?, schemas) ←
+          nestedRecursiveField? manifest env spec fieldCount pair.1 pair.2 schemas
+        let acc :=
+          match info? with
+          | some info => acc ++ [info]
+          | none => acc
+        loop schemas acc rest
+  loop schemas [] (enumerate fields)
+
+def simpleSpecForTarget
+    (env : Env)
+    (root : SimpleInductiveSpec)
+    (headName : Name) : Result SimpleInductiveSpec := do
+  if headName == root.name then
+    pure root
+  else
+    match env.find? headName with
+    | some { kind := .inductiveType spec, .. } => pure spec
+    | some { kind := .indexedInductiveType .., .. } =>
+        fail s!"nested recursor helper target {headName} is indexed"
+    | some _ => fail s!"nested recursor helper target {headName} is not an inductive"
+    | none => fail s!"unknown nested recursor helper target: {headName}"
+
+partial def buildNestedRecursorTargets
+    (manifest : Manifest)
+    (env : Env)
+    (root : SimpleInductiveSpec)
+    (schemas : List Expr)
+    (built : List NestedRecursorTargetInfo) : Result (List NestedRecursorTargetInfo) := do
+  if built.length == schemas.length then
+    pure built
+  else
+    let some targetExpr := listGet? schemas built.length
+      | fail s!"internal error: missing nested recursor target {built.length}"
+    let (head, targetArgs) := targetExpr.getAppFnArgs
+    let (headName, levels) ←
+      match head with
+      | .const name levels => pure (name, levels)
+      | _ => fail s!"nested recursor target is not a constant application: {repr targetExpr}"
+    let targetSpec ← simpleSpecForTarget env root headName
+    if levels.length != targetSpec.levelParams.length then
+      fail s!"nested recursor target {headName} has wrong universe arity"
+    let targetParams := targetArgs.take targetSpec.params.length
+    let levelSubst := targetSpec.levelParams.zip levels
+    let mut schemas := schemas
+    let mut ctors : List NestedRecursorConstructorInfo := []
+    for ctor in targetSpec.constructors do
+      let fields := instantiateTargetFields levelSubst targetParams 0 ctor.fields
+      let (recursiveFields, nextSchemas) ←
+        nestedRecursiveFields manifest env root fields schemas
+      schemas := nextSchemas
+      ctors := ctors ++ [{ name := ctor.name, fields, recursiveFields }]
+    let info : NestedRecursorTargetInfo :=
+      {
+        recursorName := nestedRecursorName root.name built.length
+        headName
+        levels
+        target := targetExpr
+        paramCount := targetSpec.params.length
+        constructors := ctors
+      }
+    buildNestedRecursorTargets manifest env root schemas (built ++ [info])
+
+def buildNestedRecursorFamily?
+    (manifest : Manifest)
+    (env : Env)
+    (spec : SimpleInductiveSpec) : Result (Option (List NestedRecursorTargetInfo)) := do
+  if !manifest.supportsLean429NestedContainers then
+    pure none
+  else
+    let rootTarget := simpleInductiveTarget spec
+    let targets ← buildNestedRecursorTargets manifest env spec [rootTarget] []
+    if targets.length <= 1 then
+      pure none
+    else
+      pure (some targets)
+
+structure NestedMinorEntry where
+  targetIndex : Nat
+  target : NestedRecursorTargetInfo
+  ctor : NestedRecursorConstructorInfo
+  deriving BEq, Repr, Inhabited
+
+def nestedMinorEntries (targets : List NestedRecursorTargetInfo) : List NestedMinorEntry :=
+  (enumerate targets).foldl
+    (fun entries pair =>
+      entries ++ pair.2.constructors.map fun ctor =>
+        { targetIndex := pair.1, target := pair.2, ctor })
+    []
+
+def nestedMotiveOffset (motiveCount targetIndex : Nat) : Result Nat := do
+  if targetIndex < motiveCount then
+    pure (motiveCount - 1 - targetIndex)
+  else
+    fail s!"nested recursor target index {targetIndex} is out of range"
+
+def nestedRecursiveHypothesisType
+    (motiveCount previousMinors fieldCount recursiveIndex : Nat)
+    (rec : NestedRecursiveFieldInfo) : Result Expr := do
+  let motiveIndex :=
+    fieldCount + recursiveIndex + previousMinors + (← nestedMotiveOffset motiveCount rec.targetIndex)
+  let fieldValue := .bvar (recursiveIndex + fieldCount - 1 - rec.fieldIndex)
+  pure (.app (.bvar motiveIndex) fieldValue)
+
+def nestedRecursiveHypothesisBinders
+    (motiveCount previousMinors fieldCount : Nat)
+    (recFields : List NestedRecursiveFieldInfo) : Result (List Binder) := do
+  (enumerate recFields).mapM fun pair => do
+    pure
+      {
+        name := s!"ih{pair.2.fieldIndex}"
+        type := (← nestedRecursiveHypothesisType motiveCount previousMinors fieldCount pair.1 pair.2)
+      }
+
+def nestedCtorParamArgs
+    (target : NestedRecursorTargetInfo)
+    (offset : Nat) : List Expr :=
+  (target.target.lift offset).getAppFnArgs.2.take target.paramCount
+
+def nestedCtorAppFromFields
+    (motiveCount previousMinors recursiveCount : Nat)
+    (target : NestedRecursorTargetInfo)
+    (ctor : NestedRecursorConstructorInfo) : Expr :=
+  let offset := ctor.fields.length + recursiveCount + previousMinors + motiveCount
+  let paramArgs := nestedCtorParamArgs target offset
+  let fieldArgs := sourceOrderBvars ctor.fields.length recursiveCount
+  Expr.mkApps (.const ctor.name target.levels) (paramArgs ++ fieldArgs)
+
+def nestedMinorType
+    (motiveCount previousMinors targetIndex : Nat)
+    (target : NestedRecursorTargetInfo)
+    (ctor : NestedRecursorConstructorInfo) : Result Expr := do
+  let fieldCount := ctor.fields.length
+  let recursiveCount := ctor.recursiveFields.length
+  let fieldBinders := liftFieldBindersForOuter (previousMinors + motiveCount) 0 ctor.fields
+  let recursiveBinders ←
+    nestedRecursiveHypothesisBinders motiveCount previousMinors fieldCount ctor.recursiveFields
+  let motiveIndex :=
+    fieldCount + recursiveCount + previousMinors + (← nestedMotiveOffset motiveCount targetIndex)
+  let body :=
+    .app (.bvar motiveIndex)
+      (nestedCtorAppFromFields motiveCount previousMinors recursiveCount target ctor)
+  pure (bindForall (fieldBinders ++ recursiveBinders) body)
+
+def nestedMotiveBinders
+    (targets : List NestedRecursorTargetInfo)
+    (motiveLevel : Level) : List Binder :=
+  (enumerate targets).map fun pair =>
+    {
+      name := s!"motive_{pair.1 + 1}"
+      type := .forallE "target" (pair.2.target.lift pair.1) (.sort motiveLevel)
+    }
+
+def nestedTargetBinderType
+    (motiveCount minorCount : Nat)
+    (target : NestedRecursorTargetInfo) : Expr :=
+  target.target.lift (motiveCount + minorCount)
+
+def nestedRecursorType
+    (spec : SimpleInductiveSpec)
+    (targets : List NestedRecursorTargetInfo)
+    (targetIndex : Nat)
+    (motiveLevel : Level) : Result Expr := do
+  let motiveCount := targets.length
+  let minorEntries := nestedMinorEntries targets
+  let motiveBinders := nestedMotiveBinders targets motiveLevel
+  let minorBinders ←
+    (enumerate minorEntries).mapM fun pair => do
+      pure
+        {
+          name := pair.2.ctor.name ++ ".minor"
+          type :=
+            (← nestedMinorType motiveCount pair.1 pair.2.targetIndex pair.2.target pair.2.ctor)
+        }
+  let some target := listGet? targets targetIndex
+    | fail s!"nested recursor target {targetIndex} is out of range"
+  let targetBinder :=
+    {
+      name := "target"
+      type := nestedTargetBinderType motiveCount minorBinders.length target
+    }
+  let motiveIndex := 1 + minorBinders.length + (← nestedMotiveOffset motiveCount targetIndex)
+  let body := .app (.bvar motiveIndex) (.bvar 0)
+  pure (bindForall spec.params (bindForall (motiveBinders ++ minorBinders ++ [targetBinder]) body))
+
 def extendBinders : Context → List Binder → Context
   | ctx, [] => ctx
   | ctx, binder :: rest => extendBinders (ctx.extend binder.name binder.type) rest
@@ -344,21 +647,42 @@ def addSimpleInductive (manifest : Manifest) (env : Env) (spec : SimpleInductive
       largeElimEligible
   let recursorLevelParams :=
     MPC.Packages.Inductive.Prop.recursorLevelParams motiveLevel spec.levelParams
-  let recursorType := simpleRecursorType spec motiveLevel
-  let _ ← inferSort manifest env recursorLevelParams [] recursorType
-  let ctorInfos := spec.constructors.map (simpleRecursorConstructorInfo spec)
-  Env.add env
-    {
-      name := simpleRecursorName spec
-      levelParams := recursorLevelParams
-      type := recursorType
-      kind :=
-        .recursor
+  match ← buildNestedRecursorFamily? manifest env spec with
+  | some targets => do
+      let mut nextEnv := env
+      for pair in enumerate targets do
+        let recursorType ← nestedRecursorType spec targets pair.1 motiveLevel
+        let _ ← inferSort manifest nextEnv recursorLevelParams [] recursorType
+        nextEnv ← Env.add nextEnv
           {
-            inductiveName := spec.name
-            constructors := ctorInfos
+            name := pair.2.recursorName
+            levelParams := recursorLevelParams
+            type := recursorType
+            kind :=
+              .nestedRecursor
+                {
+                  rootName := spec.name
+                  targetIndex := pair.1
+                  targets
+                }
           }
-    }
+      pure nextEnv
+  | none => do
+      let recursorType := simpleRecursorType spec motiveLevel
+      let _ ← inferSort manifest env recursorLevelParams [] recursorType
+      let ctorInfos := spec.constructors.map (simpleRecursorConstructorInfo spec)
+      Env.add env
+        {
+          name := simpleRecursorName spec
+          levelParams := recursorLevelParams
+          type := recursorType
+          kind :=
+            .recursor
+              {
+                inductiveName := spec.name
+                constructors := ctorInfos
+              }
+        }
 
 def checkIndexedConstructor
     (manifest : Manifest)

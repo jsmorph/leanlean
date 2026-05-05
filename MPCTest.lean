@@ -96,6 +96,28 @@ def natInductiveSpec : SimpleInductiveSpec :=
       ]
   }
 
+def listSpec : SimpleInductiveSpec :=
+  {
+    name := "List"
+    params := [{ name := "α", type := type0 }]
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        { name := "List.nil" },
+        {
+          name := "List.cons"
+          fields :=
+            [
+              { name := "head", type := .bvar 0 },
+              {
+                name := "tail"
+                type := .app (.const "List" []) (.bvar 1)
+              }
+            ]
+        }
+      ]
+  }
+
 def arraySpec : SimpleInductiveSpec :=
   {
     name := "Array"
@@ -103,7 +125,16 @@ def arraySpec : SimpleInductiveSpec :=
     resultLevel := .succ .zero
     constructors :=
       [
-        { name := "Array.mk" }
+        {
+          name := "Array.mk"
+          fields :=
+            [
+              {
+                name := "toList"
+                type := .app (.const "List" []) (.bvar 0)
+              }
+            ]
+        }
       ]
   }
 
@@ -903,16 +934,25 @@ def checkSimpleInductives : IO Unit := do
   expectError "negative recursive occurrence"
     (replay MPC.Configs.Poc emptyEnv (baseDeclarations ++ [.inductive badRecursiveSpec]))
   expectError "nested container disabled"
-    (replay MPC.Configs.Poc emptyEnv (baseDeclarations ++ [.inductive arraySpec, .inductive nestedArraySpec]))
+    (replay MPC.Configs.Poc emptyEnv
+      (baseDeclarations ++ [.inductive listSpec, .inductive arraySpec, .inductive nestedArraySpec]))
   expectError "nested container unavailable"
     (replay MPC.Configs.LeanCore429 emptyEnv (baseDeclarations ++ [.inductive nestedArraySpec]))
   let nestedEnv ← expectOkLabel "nested Array recursive field"
     (replay MPC.Configs.LeanCore429 emptyEnv
-      (baseDeclarations ++ [.inductive arraySpec, .inductive nestedArraySpec]))
+      (baseDeclarations ++ [.inductive listSpec, .inductive arraySpec, .inductive nestedArraySpec]))
   expectEnvContains "nested Array recursor" nestedEnv "NestedArray.rec"
+  expectEnvContains "nested Array helper recursor" nestedEnv "NestedArray.rec_1"
+  expectEnvContains "nested List helper recursor" nestedEnv "NestedArray.rec_2"
+  match nestedEnv.find? "NestedArray.rec_2" with
+  | some { kind := .nestedRecursor info, .. } =>
+      expect "nested List helper target index" (info.targetIndex == 2)
+      expect "nested recursor family target count" (info.targets.length == 3)
+  | some _ => throw <| IO.userError "nested List helper recursor has wrong kind"
+  | none => throw <| IO.userError "nested List helper recursor missing"
   expectError "negative occurrence inside nested container"
     (replay MPC.Configs.LeanCore429 emptyEnv
-      (baseDeclarations ++ [.inductive arraySpec, .inductive badNestedArraySpec]))
+      (baseDeclarations ++ [.inductive listSpec, .inductive arraySpec, .inductive badNestedArraySpec]))
   expectError "proposition-valued simple inductive"
     (replay MPC.Configs.Poc emptyEnv (baseDeclarations ++ [.inductive propInductiveSpec]))
   let boxEnv ← expectOkLabel "box replay" (replay MPC.Configs.Poc emptyEnv (baseDeclarations ++ [.inductive boxSpec]))

@@ -140,6 +140,7 @@ structure ExprProfile where
   definitionHeadApps : Nat := 0
   simpleRecursorHeadApps : Nat := 0
   indexedRecursorHeadApps : Nat := 0
+  nestedRecursorHeadApps : Nat := 0
   equalityRecHeadApps : Nat := 0
   equalityNdRecHeadApps : Nat := 0
   quotientLiftHeadApps : Nat := 0
@@ -155,6 +156,7 @@ structure ExprProfile where
   axiomConsts : Nat := 0
   simpleRecursorConsts : Nat := 0
   indexedRecursorConsts : Nat := 0
+  nestedRecursorConsts : Nat := 0
   equalityRecConsts : Nat := 0
   equalityNdRecConsts : Nat := 0
   quotientLiftConsts : Nat := 0
@@ -170,6 +172,7 @@ def ExprProfile.add (left right : ExprProfile) : ExprProfile :=
     definitionHeadApps := left.definitionHeadApps + right.definitionHeadApps
     simpleRecursorHeadApps := left.simpleRecursorHeadApps + right.simpleRecursorHeadApps
     indexedRecursorHeadApps := left.indexedRecursorHeadApps + right.indexedRecursorHeadApps
+    nestedRecursorHeadApps := left.nestedRecursorHeadApps + right.nestedRecursorHeadApps
     equalityRecHeadApps := left.equalityRecHeadApps + right.equalityRecHeadApps
     equalityNdRecHeadApps := left.equalityNdRecHeadApps + right.equalityNdRecHeadApps
     quotientLiftHeadApps := left.quotientLiftHeadApps + right.quotientLiftHeadApps
@@ -185,6 +188,7 @@ def ExprProfile.add (left right : ExprProfile) : ExprProfile :=
     axiomConsts := left.axiomConsts + right.axiomConsts
     simpleRecursorConsts := left.simpleRecursorConsts + right.simpleRecursorConsts
     indexedRecursorConsts := left.indexedRecursorConsts + right.indexedRecursorConsts
+    nestedRecursorConsts := left.nestedRecursorConsts + right.nestedRecursorConsts
     equalityRecConsts := left.equalityRecConsts + right.equalityRecConsts
     equalityNdRecConsts := left.equalityNdRecConsts + right.equalityNdRecConsts
     quotientLiftConsts := left.quotientLiftConsts + right.quotientLiftConsts
@@ -215,6 +219,7 @@ def profileConst (env : Env) (name : Name) : ExprProfile :=
       | .axiom => { base with axiomConsts := base.axiomConsts + 1 }
       | .recursor .. => { base with simpleRecursorConsts := base.simpleRecursorConsts + 1 }
       | .indexedRecursor .. => { base with indexedRecursorConsts := base.indexedRecursorConsts + 1 }
+      | .nestedRecursor .. => { base with nestedRecursorConsts := base.nestedRecursorConsts + 1 }
       | .equalityRec => { base with equalityRecConsts := base.equalityRecConsts + 1 }
       | .equalityNdRec => { base with equalityNdRecConsts := base.equalityNdRecConsts + 1 }
       | .quotientLift => { base with quotientLiftConsts := base.quotientLiftConsts + 1 }
@@ -238,6 +243,7 @@ def profileHeadApp (env : Env) (expr : Expr) : ExprProfile :=
           | .definition => { base with definitionHeadApps := base.definitionHeadApps + 1 }
           | .recursor .. => { base with simpleRecursorHeadApps := base.simpleRecursorHeadApps + 1 }
           | .indexedRecursor .. => { base with indexedRecursorHeadApps := base.indexedRecursorHeadApps + 1 }
+          | .nestedRecursor .. => { base with nestedRecursorHeadApps := base.nestedRecursorHeadApps + 1 }
           | .equalityRec => { base with equalityRecHeadApps := base.equalityRecHeadApps + 1 }
           | .equalityNdRec => { base with equalityNdRecHeadApps := base.equalityNdRecHeadApps + 1 }
           | .quotientLift => { base with quotientLiftHeadApps := base.quotientLiftHeadApps + 1 }
@@ -343,6 +349,7 @@ def DeclarationProfile.toJsonFields (profile : DeclarationProfile) : List (Strin
     ("profile_definition_head_apps", jsonNat exprs.definitionHeadApps),
     ("profile_simple_recursor_head_apps", jsonNat exprs.simpleRecursorHeadApps),
     ("profile_indexed_recursor_head_apps", jsonNat exprs.indexedRecursorHeadApps),
+    ("profile_nested_recursor_head_apps", jsonNat exprs.nestedRecursorHeadApps),
     ("profile_eq_rec_head_apps", jsonNat exprs.equalityRecHeadApps),
     ("profile_eq_ndrec_head_apps", jsonNat exprs.equalityNdRecHeadApps),
     ("profile_quot_lift_head_apps", jsonNat exprs.quotientLiftHeadApps),
@@ -358,6 +365,7 @@ def DeclarationProfile.toJsonFields (profile : DeclarationProfile) : List (Strin
     ("profile_axiom_consts", jsonNat exprs.axiomConsts),
     ("profile_simple_recursor_consts", jsonNat exprs.simpleRecursorConsts),
     ("profile_indexed_recursor_consts", jsonNat exprs.indexedRecursorConsts),
+    ("profile_nested_recursor_consts", jsonNat exprs.nestedRecursorConsts),
     ("profile_eq_rec_consts", jsonNat exprs.equalityRecConsts),
     ("profile_eq_ndrec_consts", jsonNat exprs.equalityNdRecConsts),
     ("profile_quot_lift_consts", jsonNat exprs.quotientLiftConsts),

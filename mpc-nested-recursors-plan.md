@@ -31,3 +31,7 @@ The current MPC structures record only direct recursive fields and binder-telesc
 Native tests should first build a small `Array`-nested inductive and assert that admission produces the root recursor and at least one helper recursor.  The test should check the helper recursor's type enough to prove that it has motives for both the root and helper target.  A second test should reduce a helper-recursive constructor case if the implementation adds iota in the same slice; otherwise the iota test should mark the next step.
 
 The artifact test is the Omega stress fixture.  The expected movement is from generated-recorder rejection at `Lean.Syntax.rec_2` to either acceptance of the artifact or a later ordinary checker boundary.  If the artifact accepts, the result should still remain a stress script rather than a required fast regression until resource policy improves.
+
+## Status
+
+The first implementation slice generates the nested recursor family for one-root simple inductives through the specified unary `Array` and `List` containers.  MPC now records helper recursors with a distinct `.nestedRecursor` kind, validates their generated types during inductive admission, and lets adapter audits accept only generated names that exist in the environment.  The native fixture builds the root, `Array root`, and `List root` family shape, and the Omega stress artifact accepts after checking 1245 declaration entries.  Nested recursor iota reduction remains the next rule-package step because this slice leaves `.nestedRecursor` constants neutral during normalization.

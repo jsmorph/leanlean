@@ -63,6 +63,32 @@ structure IndexedRecursorInfo where
   constructors : List IndexedRecursorConstructorInfo
   deriving BEq, Repr, Inhabited
 
+structure NestedRecursiveFieldInfo where
+  fieldIndex : Nat
+  targetIndex : Nat
+  deriving BEq, Repr, Inhabited
+
+structure NestedRecursorConstructorInfo where
+  name : Name
+  fields : List Binder := []
+  recursiveFields : List NestedRecursiveFieldInfo := []
+  deriving BEq, Repr, Inhabited
+
+structure NestedRecursorTargetInfo where
+  recursorName : Name
+  headName : Name
+  levels : List Level
+  target : Expr
+  paramCount : Nat
+  constructors : List NestedRecursorConstructorInfo := []
+  deriving BEq, Repr, Inhabited
+
+structure NestedRecursorInfo where
+  rootName : Name
+  targetIndex : Nat
+  targets : List NestedRecursorTargetInfo
+  deriving BEq, Repr, Inhabited
+
 inductive ConstantKind where
   | axiom
   | definition
@@ -73,6 +99,7 @@ inductive ConstantKind where
   | constructor : Name → Nat → Nat → ConstantKind
   | recursor : SimpleRecursorInfo → ConstantKind
   | indexedRecursor : IndexedRecursorInfo → ConstantKind
+  | nestedRecursor : NestedRecursorInfo → ConstantKind
   | equalityType
   | equalityRefl
   | equalityRec
