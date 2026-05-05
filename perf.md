@@ -90,3 +90,9 @@ Two smaller proof-irrelevance changes stayed in the same patch.  Conversion now 
 The remaining hotspot is `Nat.gcd_one_left`, which now takes about 10 seconds and accounts for most of the remaining GCD replay time.  Most previously slow late declarations become cheap after the alpha fast path: `Nat.Coprime.gcd_mul_left_cancel` drops from 116,057 ms to a few milliseconds, and the final project theorem drops from 33,412 ms to single-digit milliseconds in the measured run.
 
 Two candidates were tested and not kept.  Removing eager `repr` construction from structural mismatch errors did not show a reliable improvement and weakened rejection diagnostics.  A second alpha-equivalence check after weak-head reduction also failed to improve the profile, because the extra traversal did not pay for itself on this artifact.
+
+## Omega Stress Fixture
+
+`Faithfulness.ExportOmega` adds small `omega`-produced proofs, and `tools/mpc-omega-stress.sh` exports `LeanLeanFaithfulness.ExportOmega.nat_linear_bounds` before running `mpc-check-export --profile-jsonl`.  The script writes the artifact to `.lake/build/export-tests/mpc-omega-nat-linear-bounds.ndjson` and the profile to `.tmp/mpc-omega-nat-linear-bounds.profile.jsonl`.  It treats accepted, rejected, unsupported, and timed-out checker runs as reportable stress outcomes, because the fixture is for locating the next boundary rather than defining an acceptance test.
+
+The first run did not reach `Lean.Omega` certificate declarations.  It checked through declaration index 1141, took 113,359 ms of measured replay time, and then rejected definition `String.instInhabited` at index 1142 with `string literals are outside the MPC PoC`.  The result makes string-literal support the next concrete rule-package boundary for broad tactic-generated exports; adding Omega-specific rules would not address the first observed failure.

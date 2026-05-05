@@ -27,6 +27,9 @@ name = "Faithfulness.ExportSmoke"
 name = "Faithfulness.ExportArithmetic"
 
 [[lean_lib]]
+name = "Faithfulness.ExportOmega"
+
+[[lean_lib]]
 name = "Faithfulness.UnsupportedModule"
 
 [[lean_lib]]
