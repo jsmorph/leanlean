@@ -283,6 +283,57 @@ def nestedFnRecursorOnTarget : Expr :=
       nestedFnTarget
     ]
 
+def nestedIndexedClosedSpec : SimpleInductiveSpec :=
+  {
+    name := "NestedIndexedClosed"
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "NestedIndexedClosed.mk"
+          fields :=
+            [
+              {
+                name := "children"
+                type :=
+                  appN
+                    (.const "Vec" [])
+                    [
+                      .const "NestedIndexedClosed" [],
+                      .const "Nat.zero" []
+                    ]
+              }
+            ]
+        }
+      ]
+  }
+
+def nestedIndexedLocalSpec : SimpleInductiveSpec :=
+  {
+    name := "NestedIndexedLocal"
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "NestedIndexedLocal.mk"
+          fields :=
+            [
+              {
+                name := "children"
+                type :=
+                  pi "fuel" natType
+                    (appN
+                      (.const "Vec" [])
+                      [
+                        .const "NestedIndexedLocal" [],
+                        .bvar 0
+                      ])
+              }
+            ]
+        }
+      ]
+  }
+
 def badNestedArraySpec : SimpleInductiveSpec :=
   {
     name := "BadNestedArray"
@@ -1087,6 +1138,12 @@ def checkSimpleInductives : IO Unit := do
   let nestedFnReduced ← expectOkLabel "nested function-field recursor reduction"
     (normalize MPC.Configs.LeanCore429 nestedFnEnv [] nestedFnRecursorOnTarget)
   expectExprEq "nested function-field iota" nestedFnReduced (.const "p" [])
+  expectError "closed indexed helper target gap"
+    (replay MPC.Configs.LeanCore429 emptyEnv
+      (baseDeclarations ++ [.indexedInductive vecSpec, .inductive nestedIndexedClosedSpec]))
+  expectError "local indexed helper schema gap"
+    (replay MPC.Configs.LeanCore429 emptyEnv
+      (baseDeclarations ++ [.indexedInductive vecSpec, .inductive nestedIndexedLocalSpec]))
   expectError "negative occurrence inside nested container"
     (replay MPC.Configs.LeanCore429 emptyEnv
       (baseDeclarations ++ [.inductive listSpec, .inductive arraySpec, .inductive badNestedArraySpec]))
