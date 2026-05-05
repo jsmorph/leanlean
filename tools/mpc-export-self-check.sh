@@ -27,6 +27,7 @@ lake build \
   MPC.Packages.Quotient \
   MPC.Packages.Projection \
   MPC.Packages.PrimitiveNat \
+  MPC.Packages.Inductive.Basic \
   mpc-check-export \
   leanlean-export-roots
 
@@ -103,3 +104,4 @@ run_mpc_export_self_check "mpc-packages-equality" "MPC.Packages.Equality" "layer
 run_mpc_export_self_check "mpc-packages-quotient" "MPC.Packages.Quotient" "layer"
 run_mpc_export_self_check "mpc-packages-projection" "MPC.Packages.Projection" "layer"
 run_mpc_export_self_check "mpc-packages-primitive-nat" "MPC.Packages.PrimitiveNat" "layer"
+run_mpc_export_self_check "mpc-packages-inductive-basic" "MPC.Packages.Inductive.Basic" "layer"
