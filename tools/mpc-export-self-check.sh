@@ -18,6 +18,7 @@ lake build \
   MPC.Expr \
   MPC.Context \
   MPC.Manifest \
+  MPC.Env \
   mpc-check-export \
   leanlean-export-roots
 
@@ -71,3 +72,4 @@ run_mpc_export_self_check "mpc-level" "MPC.Level"
 run_mpc_export_self_check "mpc-expr" "MPC.Expr"
 run_mpc_export_self_check "mpc-context" "MPC.Context"
 run_mpc_export_self_check "mpc-manifest" "MPC.Manifest"
+run_mpc_export_self_check "mpc-env" "MPC.Env"
