@@ -218,6 +218,71 @@ def nestedArrayRecursorOnCons : Expr :=
       listNestedArrayCons nestedArrayEmpty listNestedArrayNil
     ]
 
+def nestedFnSpec : SimpleInductiveSpec :=
+  {
+    name := "NestedFn"
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "NestedFn.mk"
+          fields :=
+            [
+              {
+                name := "children"
+                type :=
+                  pi "n" natType
+                    (.app (.const "List" []) (.const "NestedFn" []))
+              }
+            ]
+        }
+      ]
+  }
+
+def nestedFnType : Expr :=
+  .const "NestedFn" []
+
+def listNestedFnType : Expr :=
+  .app (.const "List" []) nestedFnType
+
+def listNestedFnNil : Expr :=
+  .app (.const "List.nil" []) nestedFnType
+
+def nestedFnChildrenValue : Expr :=
+  .lam "n" natType listNestedFnNil
+
+def nestedFnTarget : Expr :=
+  .app (.const "NestedFn.mk" []) nestedFnChildrenValue
+
+def nestedFnRootMotive : Expr :=
+  .lam "target" nestedFnType (.const "P" [])
+
+def nestedFnListMotive : Expr :=
+  .lam "target" listNestedFnType (.const "P" [])
+
+def nestedFnRootMinor : Expr :=
+  .lam "children" (pi "n" natType listNestedFnType)
+    (.lam "ih" (pi "n" natType (.const "P" []))
+      (.app (.bvar 0) (.const "Nat.zero" [])))
+
+def nestedFnListConsMinor : Expr :=
+  .lam "head" nestedFnType
+    (.lam "tail" listNestedFnType
+      (.lam "headIH" (.const "P" [])
+        (.lam "tailIH" (.const "P" []) (.bvar 0))))
+
+def nestedFnRecursorOnTarget : Expr :=
+  appN
+    (.const "NestedFn.rec" [.zero])
+    [
+      nestedFnRootMotive,
+      nestedFnListMotive,
+      nestedFnRootMinor,
+      .const "p" [],
+      nestedFnListConsMinor,
+      nestedFnTarget
+    ]
+
 def badNestedArraySpec : SimpleInductiveSpec :=
   {
     name := "BadNestedArray"
@@ -1014,6 +1079,14 @@ def checkSimpleInductives : IO Unit := do
   let nestedReduced ← expectOkLabel "nested helper recursor reduction"
     (normalize MPC.Configs.LeanCore429 nestedEnv [] nestedArrayRecursorOnCons)
   expectExprEq "nested helper recursor iota" nestedReduced (.const "p" [])
+  let nestedFnEnv ← expectOkLabel "nested function-field replay"
+    (replay MPC.Configs.LeanCore429 emptyEnv
+      (baseDeclarations ++ [.inductive listSpec, .inductive nestedFnSpec]))
+  expectEnvContains "nested function-field root recursor" nestedFnEnv "NestedFn.rec"
+  expectEnvContains "nested function-field helper recursor" nestedFnEnv "NestedFn.rec_1"
+  let nestedFnReduced ← expectOkLabel "nested function-field recursor reduction"
+    (normalize MPC.Configs.LeanCore429 nestedFnEnv [] nestedFnRecursorOnTarget)
+  expectExprEq "nested function-field iota" nestedFnReduced (.const "p" [])
   expectError "negative occurrence inside nested container"
     (replay MPC.Configs.LeanCore429 emptyEnv
       (baseDeclarations ++ [.inductive listSpec, .inductive arraySpec, .inductive badNestedArraySpec]))

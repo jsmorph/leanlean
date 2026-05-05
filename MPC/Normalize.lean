@@ -94,6 +94,58 @@ partial def recursiveFieldResult
         (recursiveFieldResult recursor motive paramArgs minorArgs fieldArgs fieldValue rec
           (boundLocals + 1) rest)
 
+def nestedRecursiveFieldBody
+    (targets : List NestedRecursorTargetInfo)
+    (levels : List Level)
+    (paramArgs motiveArgs minorArgs _fieldArgs : List Expr)
+    (fieldValue : Expr)
+    (rec : NestedRecursiveFieldInfo)
+    (boundLocals : Nat) : Result Expr := do
+  let some recTarget := listGet? targets rec.targetIndex
+    | fail s!"unknown nested recursor target {rec.targetIndex}"
+  let localArgs := recursorSourceOrderBvars boundLocals 0
+  let target := Expr.mkApps (fieldValue.lift boundLocals) localArgs
+  pure
+    (Expr.mkApps (.const recTarget.recursorName levels)
+      (liftExprs boundLocals paramArgs ++
+        liftExprs boundLocals motiveArgs ++
+        liftExprs boundLocals minorArgs ++
+        [target]))
+
+partial def nestedRecursiveFieldResult
+    (targets : List NestedRecursorTargetInfo)
+    (levels : List Level)
+    (paramArgs motiveArgs minorArgs fieldArgs : List Expr)
+    (fieldValue : Expr)
+    (rec : NestedRecursiveFieldInfo) :
+    Nat → List Binder → Result Expr
+  | boundLocals, [] =>
+      nestedRecursiveFieldBody
+        targets
+        levels
+        paramArgs
+        motiveArgs
+        minorArgs
+        fieldArgs
+        fieldValue
+        rec
+        boundLocals
+  | boundLocals, binder :: rest => do
+      pure
+        (.lam binder.name
+          (instantiateRecursiveFieldBinderType paramArgs fieldArgs boundLocals binder)
+          (← nestedRecursiveFieldResult
+            targets
+            levels
+            paramArgs
+            motiveArgs
+            minorArgs
+            fieldArgs
+            fieldValue
+            rec
+            (boundLocals + 1)
+            rest))
+
 def natTypeExpr : Expr :=
   .const "Nat" []
 
@@ -402,13 +454,19 @@ partial def reduceNestedRecursor? (manifest : Manifest) (env : Env) (levelParams
                   else
                     let recursiveResults ←
                       ctorInfo.recursiveFields.mapM fun rec => do
-                        let some recTarget := listGet? info.targets rec.targetIndex
-                          | fail s!"unknown nested recursor target {rec.targetIndex}"
                         let some fieldValue := listGet? fieldArgs rec.fieldIndex
                           | fail s!"missing recursive field {rec.fieldIndex} for {ctorName}"
-                        pure
-                          (Expr.mkApps (.const recTarget.recursorName levels)
-                            (paramArgs ++ motiveArgs ++ minorArgs ++ [fieldValue]))
+                        nestedRecursiveFieldResult
+                          info.targets
+                          levels
+                          paramArgs
+                          motiveArgs
+                          minorArgs
+                          fieldArgs
+                          fieldValue
+                          rec
+                          0
+                          rec.binders
                     let value := Expr.mkApps minor (fieldArgs ++ recursiveResults)
                     pure (some (Expr.mkApps value trailing))
             | _ => pure none

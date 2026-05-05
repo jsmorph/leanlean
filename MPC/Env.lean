@@ -65,6 +65,7 @@ structure IndexedRecursorInfo where
 
 structure NestedRecursiveFieldInfo where
   fieldIndex : Nat
+  binders : List Binder := []
   targetIndex : Nat
   deriving BEq, Repr, Inhabited
 

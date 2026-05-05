@@ -200,14 +200,14 @@ def internNestedSchema (schemas : List Expr) (target : Expr) : Nat × List Expr 
   | some index => (index, schemas)
   | none => (schemas.length, schemas ++ [target])
 
-def rootRecursiveTarget? (spec : SimpleInductiveSpec) (expr : Expr) : Bool :=
+def rootRecursiveTarget? (spec : SimpleInductiveSpec) (localCount : Nat) (expr : Expr) : Bool :=
   let (head, args) := expr.getAppFnArgs
   match head with
   | .const name levels =>
       name == spec.name &&
         levels.length == spec.levelParams.length &&
         args.length == spec.params.length &&
-        (args.zip (simpleParamArgs spec 0)).all fun pair => pair.1.alphaEq pair.2
+        (args.zip (simpleParamArgs spec localCount)).all fun pair => pair.1.alphaEq pair.2
   | _ => false
 
 def nestedContainerTarget? (manifest : Manifest) (env : Env) (rootName : Name)
@@ -228,6 +228,38 @@ def instantiateTargetFields (levelSubst : List (Name × Level)) (targetArgs : Li
         (field.type.instantiateLevels levelSubst).instantiateManyFrom boundFields targetArgs
       { field with type } :: instantiateTargetFields levelSubst targetArgs (boundFields + 1) rest
 
+partial def nestedRecursiveFieldInType?
+    (manifest : Manifest)
+    (env : Env)
+    (spec : SimpleInductiveSpec)
+    (fieldCount fieldIndex : Nat)
+    (binders : List Binder)
+    (localCount : Nat)
+    (type : Expr)
+    (schemas : List Expr) : Result (Option NestedRecursiveFieldInfo × List Expr) := do
+  if !containsConst spec.name type then
+    pure (none, schemas)
+  else
+    match type with
+    | .forallE name domain body =>
+        if containsConst spec.name domain then
+          fail s!"non-positive recursive occurrence in nested recursive field domain: {repr domain}"
+        else
+          nestedRecursiveFieldInType? manifest env spec fieldCount fieldIndex
+            (binders ++ [{ name, type := domain }]) (localCount + 1) body schemas
+    | _ =>
+        match dropBVarsFrom fieldCount localCount type with
+        | none =>
+            fail s!"nested recursor field depends on constructor fields at target: {repr type}"
+        | some lowered =>
+            if rootRecursiveTarget? spec localCount lowered then
+              pure (some { fieldIndex, binders, targetIndex := 0 }, schemas)
+            else if nestedContainerTarget? manifest env spec.name lowered then
+              let (targetIndex, schemas) := internNestedSchema schemas lowered
+              pure (some { fieldIndex, binders, targetIndex }, schemas)
+            else
+              fail s!"unsupported nested recursive field shape: {repr lowered}"
+
 def nestedRecursiveField?
     (manifest : Manifest)
     (env : Env)
@@ -235,21 +267,9 @@ def nestedRecursiveField?
     (fieldCount fieldIndex : Nat)
     (field : Binder)
     (schemas : List Expr) : Result (Option NestedRecursiveFieldInfo × List Expr) := do
-  let type := fieldTypeUnderAllFields fieldCount fieldIndex field.type
-  if !containsConst spec.name type then
-    pure (none, schemas)
-  else
-    match dropBVars fieldCount type with
-    | none =>
-        fail s!"nested recursor field depends on constructor fields: {field.name}"
-    | some lowered =>
-        if rootRecursiveTarget? spec lowered then
-          pure (some { fieldIndex, targetIndex := 0 }, schemas)
-        else if nestedContainerTarget? manifest env spec.name lowered then
-          let (targetIndex, schemas) := internNestedSchema schemas lowered
-          pure (some { fieldIndex, targetIndex }, schemas)
-        else
-          fail s!"unsupported nested recursive field shape in {field.name}: {repr lowered}"
+  nestedRecursiveFieldInType? manifest env spec fieldCount fieldIndex [] 0
+    (fieldTypeUnderAllFields fieldCount fieldIndex field.type)
+    schemas
 
 partial def nestedRecursiveFields
     (manifest : Manifest)
@@ -360,13 +380,65 @@ def nestedMotiveOffset (motiveCount targetIndex : Nat) : Result Nat := do
   else
     fail s!"nested recursor target index {targetIndex} is out of range"
 
-def nestedRecursiveHypothesisType
+def liftNestedRecursiveFieldExprForMinor
+    (fieldCount motiveCount previousMinors recursiveIndex localCount : Nat)
+    (expr : Expr) : Expr :=
+  (expr.liftFrom (previousMinors + motiveCount) (localCount + fieldCount)).liftFrom
+    recursiveIndex
+    localCount
+
+partial def liftNestedRecursiveFieldBindersForMinor
+    (fieldCount motiveCount previousMinors recursiveIndex : Nat) :
+    Nat → List Binder → List Binder
+  | _, [] => []
+  | localCount, binder :: rest =>
+      {
+        binder with
+        type :=
+          liftNestedRecursiveFieldExprForMinor
+            fieldCount
+            motiveCount
+            previousMinors
+            recursiveIndex
+            localCount
+            binder.type
+      } ::
+        liftNestedRecursiveFieldBindersForMinor
+          fieldCount
+          motiveCount
+          previousMinors
+          recursiveIndex
+          (localCount + 1)
+          rest
+
+def nestedRecursiveFieldValue (fieldCount recursiveIndex localCount fieldIndex : Nat) : Expr :=
+  .bvar (localCount + recursiveIndex + fieldCount - 1 - fieldIndex)
+
+def nestedRecursiveFieldTarget (fieldCount recursiveIndex : Nat)
+    (rec : NestedRecursiveFieldInfo) : Expr :=
+  let localCount := rec.binders.length
+  Expr.mkApps
+    (nestedRecursiveFieldValue fieldCount recursiveIndex localCount rec.fieldIndex)
+    (sourceOrderBvars localCount 0)
+
+partial def nestedRecursiveHypothesisType
     (motiveCount previousMinors fieldCount recursiveIndex : Nat)
     (rec : NestedRecursiveFieldInfo) : Result Expr := do
+  let localCount := rec.binders.length
   let motiveIndex :=
-    fieldCount + recursiveIndex + previousMinors + (← nestedMotiveOffset motiveCount rec.targetIndex)
-  let fieldValue := .bvar (recursiveIndex + fieldCount - 1 - rec.fieldIndex)
-  pure (.app (.bvar motiveIndex) fieldValue)
+    localCount + fieldCount + recursiveIndex + previousMinors +
+      (← nestedMotiveOffset motiveCount rec.targetIndex)
+  let body := .app (.bvar motiveIndex) (nestedRecursiveFieldTarget fieldCount recursiveIndex rec)
+  pure
+    (bindForall
+      (liftNestedRecursiveFieldBindersForMinor
+        fieldCount
+        motiveCount
+        previousMinors
+        recursiveIndex
+        0
+        rec.binders)
+      body)
 
 def nestedRecursiveHypothesisBinders
     (motiveCount previousMinors fieldCount : Nat)
