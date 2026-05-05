@@ -1,3 +1,4 @@
+import MPC.Packages.Inductive.Basic
 import MPC.Check
 
 namespace MPC.Packages.Inductive.Prop
@@ -17,10 +18,6 @@ def checkPropInductiveEnabled (manifest : Manifest) : Result Unit := do
     pure ()
   else
     fail "proposition-valued inductives are disabled by the manifest"
-
-def extendBinders : Context → List Binder → Context
-  | ctx, [] => ctx
-  | ctx, binder :: rest => extendBinders (ctx.extend binder.name binder.type) rest
 
 def fieldValueExpr (fieldCount fieldIndex : Nat) : Expr :=
   .bvar (fieldCount - 1 - fieldIndex)

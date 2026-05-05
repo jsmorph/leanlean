@@ -153,6 +153,11 @@ abbrev Env := List ConstantInfo
 def emptyEnv : Env :=
   []
 
+def listGet? : List α → Nat → Option α
+  | [], _ => none
+  | value :: _, 0 => some value
+  | _ :: rest, index + 1 => listGet? rest index
+
 def Env.find? (env : Env) (name : Name) : Option ConstantInfo :=
   List.find? (fun info => info.name == name) env
 
