@@ -86,9 +86,18 @@ def primitiveInfos : List ConstantInfo :=
     { name := "Eq.ndrec", levelParams := ["v", "u"], type := eqNdRecType, kind := .equalityNdRec }
   ]
 
+-- Keep the equality-kind check out of Lean's sparse matcher representation.
+set_option backward.match.sparseCases false in
+def sameEqualityPrimitiveKind : ConstantKind → ConstantKind → Bool
+  | .equalityType, .equalityType => true
+  | .equalityRefl, .equalityRefl => true
+  | .equalityRec, .equalityRec => true
+  | .equalityNdRec, .equalityNdRec => true
+  | _, _ => false
+
 def hasPrimitiveInfo (env : Env) (info : ConstantInfo) : Bool :=
   match env.find? info.name with
-  | some found => found.kind == info.kind
+  | some found => sameEqualityPrimitiveKind found.kind info.kind
   | none => false
 
 def hasPrimitives (env : Env) : Bool :=
