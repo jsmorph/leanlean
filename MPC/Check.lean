@@ -26,6 +26,12 @@ def requireNatLiteralSupport (env : Env) : Result Unit := do
   else
     fail "natural literals require Nat, Nat.zero, and Nat.succ in the environment"
 
+def requireStringLiteralSupport (env : Env) : Result Unit := do
+  if env.contains "String" then
+    pure ()
+  else
+    fail "string literals require String in the environment"
+
 def natLiteralConstructorSpine (env : Env) : Nat → Result Expr
   | 0 => do
       requireNatLiteralSupport env
@@ -83,13 +89,17 @@ partial def infer (manifest : Manifest) (env : Env) (levelParams : LevelContext)
         | fail s!"constant {name} expects {info.levelParams.length} universe levels, got {levels.length}"
       pure type
   | .lit (.nat _) => do
-      if manifest.literals != .nat then
+      if !manifest.supportsNatLiterals then
         fail "natural literals are disabled by the manifest"
       else
         requireNatLiteralSupport env
         pure (.const "Nat" [])
-  | .lit (.str _) =>
-      fail "string literals are outside the MPC PoC"
+  | .lit (.str _) => do
+      if !manifest.supportsStringLiterals then
+        fail "string literals are disabled by the manifest"
+      else
+        requireStringLiteralSupport env
+        pure (.const "String" [])
   | .app fn arg => do
       let fnType ← whnf manifest env levelParams (← infer manifest env levelParams ctx fn)
       match fnType with
@@ -162,12 +172,12 @@ partial def structuralDefEq (manifest : Manifest) (env : Env) (levelParams : Lev
   | .lit left, .lit right =>
       if left == right then pure () else fail "literals differ"
   | .lit (.nat value), _ =>
-      if manifest.literals != .nat then
+      if !manifest.supportsNatLiterals then
         fail "natural literals are disabled by the manifest"
       else
         structuralDefEq manifest env levelParams ctx (← natLiteralConstructorSpine env value) right
   | _, .lit (.nat value) =>
-      if manifest.literals != .nat then
+      if !manifest.supportsNatLiterals then
         fail "natural literals are disabled by the manifest"
       else
         structuralDefEq manifest env levelParams ctx left (← natLiteralConstructorSpine env value)

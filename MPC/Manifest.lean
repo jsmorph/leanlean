@@ -15,6 +15,7 @@ inductive PropMode where
 inductive LiteralMode where
   | none
   | nat
+  | natAndString
   deriving BEq, Repr, Inhabited
 
 inductive InductiveMode where
@@ -99,5 +100,11 @@ def Manifest.supportsNatPrimitiveReductions (manifest : Manifest) : Bool :=
 
 def Manifest.supportsFunctionEta (manifest : Manifest) : Bool :=
   manifest.functionEta == .enabled
+
+def Manifest.supportsNatLiterals (manifest : Manifest) : Bool :=
+  manifest.literals == .nat || manifest.literals == .natAndString
+
+def Manifest.supportsStringLiterals (manifest : Manifest) : Bool :=
+  manifest.literals == .natAndString
 
 end MPC

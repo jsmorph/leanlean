@@ -41,6 +41,9 @@ def propType : Expr :=
 def natType : Expr :=
   .const "Nat" []
 
+def stringType : Expr :=
+  .const "String" []
+
 def pi (name : Name) (domain body : Expr) : Expr :=
   .forallE name domain body
 
@@ -803,6 +806,13 @@ def checkBasePackages : IO Unit := do
       (.app (.const "UseProof" []) (.const "q" [])))
   let literalType ← expectOk (infer MPC.Configs.Poc env [] [] (.lit (.nat 3)))
   expectExprEq "natural literal type" literalType natType
+  expectError "string literal disabled in PoC"
+    (infer MPC.Configs.Poc env [] [] (.lit (.str "")))
+  let stringEnv ← expectOk
+    (replay MPC.Configs.LeanCore429 emptyEnv (baseDeclarations ++ [.axiom "String" [] type0]))
+  let stringLiteralType ← expectOk
+    (infer MPC.Configs.LeanCore429 stringEnv [] [] (.lit (.str "")))
+  expectExprEq "string literal type" stringLiteralType stringType
   let zetaExpr :=
     .letE "F" (pi "n" natType propType)
       (.lam "n" natType (.const "P" []))

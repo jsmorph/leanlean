@@ -5,6 +5,7 @@ namespace MPC.Configs
 def LeanCore429 : Manifest :=
   {
     Poc with
+    literals := .natAndString
     inductives := .indexed
     inductiveProp := .largeElim
     equality := .primitive
