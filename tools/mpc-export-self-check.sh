@@ -14,6 +14,7 @@ mkdir -p "$artifact_dir"
 lake build \
   MPC.Name \
   MPC.Basic \
+  MPC.Level \
   mpc-check-export \
   leanlean-export-roots
 
@@ -63,3 +64,4 @@ run_mpc_export_self_check() {
 
 run_mpc_export_self_check "mpc-name" "MPC.Name"
 run_mpc_export_self_check "mpc-basic" "MPC.Basic"
+run_mpc_export_self_check "mpc-level" "MPC.Level"
