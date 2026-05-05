@@ -6,6 +6,7 @@ inductive TelemetryFormat where
   | off
   | text
   | jsonl
+  | profileJsonl
   deriving BEq, Inhabited
 
 structure ReplayOptions where
@@ -22,7 +23,7 @@ structure Config where
 def usage : String :=
   "usage: mpc-check-export [<export.ndjson>]\n" ++
   "       mpc-check-export --input <export.ndjson>\n" ++
-  "       mpc-check-export [--limit <n>] [--trace] [--stats|--stats-jsonl] [--assume-generated] <export.ndjson>\n" ++
+  "       mpc-check-export [--limit <n>] [--trace] [--stats|--stats-jsonl|--profile-jsonl] [--assume-generated] <export.ndjson>\n" ++
   "       IN=<export.ndjson> mpc-check-export"
 
 def filePath (path : String) : Except String System.FilePath :=
@@ -91,6 +92,8 @@ partial def parseArgsLoop
       parseArgsLoop input? limit? (← setTelemetryFormat replayOptions .text) assumeGenerated rest
   | "--stats-jsonl" :: rest => do
       parseArgsLoop input? limit? (← setTelemetryFormat replayOptions .jsonl) assumeGenerated rest
+  | "--profile-jsonl" :: rest => do
+      parseArgsLoop input? limit? (← setTelemetryFormat replayOptions .profileJsonl) assumeGenerated rest
   | "--assume-generated" :: rest =>
       parseArgsLoop input? limit? replayOptions true rest
   | "--help" :: _ => .error usage
@@ -123,6 +126,241 @@ def ReplayStatus.label : ReplayStatus → String
   | .checked => "checked"
   | .rejected => "rejected"
 
+def jsonNat (value : Nat) : Lean.Json :=
+  Lean.Json.num (Lean.JsonNumber.fromNat value)
+
+structure ExprProfile where
+  nodes : Nat := 0
+  appNodes : Nat := 0
+  headApps : Nat := 0
+  maxAppArgs : Nat := 0
+  definitionHeadApps : Nat := 0
+  simpleRecursorHeadApps : Nat := 0
+  indexedRecursorHeadApps : Nat := 0
+  equalityRecHeadApps : Nat := 0
+  equalityNdRecHeadApps : Nat := 0
+  quotientLiftHeadApps : Nat := 0
+  primitiveNatHeadApps : Nat := 0
+  lamNodes : Nat := 0
+  forallNodes : Nat := 0
+  letNodes : Nat := 0
+  projectionNodes : Nat := 0
+  constNodes : Nat := 0
+  definitionConsts : Nat := 0
+  theoremConsts : Nat := 0
+  opaqueConsts : Nat := 0
+  axiomConsts : Nat := 0
+  simpleRecursorConsts : Nat := 0
+  indexedRecursorConsts : Nat := 0
+  equalityRecConsts : Nat := 0
+  equalityNdRecConsts : Nat := 0
+  quotientLiftConsts : Nat := 0
+  primitiveNatConsts : Nat := 0
+  deriving Inhabited
+
+def ExprProfile.add (left right : ExprProfile) : ExprProfile :=
+  {
+    nodes := left.nodes + right.nodes
+    appNodes := left.appNodes + right.appNodes
+    headApps := left.headApps + right.headApps
+    maxAppArgs := Nat.max left.maxAppArgs right.maxAppArgs
+    definitionHeadApps := left.definitionHeadApps + right.definitionHeadApps
+    simpleRecursorHeadApps := left.simpleRecursorHeadApps + right.simpleRecursorHeadApps
+    indexedRecursorHeadApps := left.indexedRecursorHeadApps + right.indexedRecursorHeadApps
+    equalityRecHeadApps := left.equalityRecHeadApps + right.equalityRecHeadApps
+    equalityNdRecHeadApps := left.equalityNdRecHeadApps + right.equalityNdRecHeadApps
+    quotientLiftHeadApps := left.quotientLiftHeadApps + right.quotientLiftHeadApps
+    primitiveNatHeadApps := left.primitiveNatHeadApps + right.primitiveNatHeadApps
+    lamNodes := left.lamNodes + right.lamNodes
+    forallNodes := left.forallNodes + right.forallNodes
+    letNodes := left.letNodes + right.letNodes
+    projectionNodes := left.projectionNodes + right.projectionNodes
+    constNodes := left.constNodes + right.constNodes
+    definitionConsts := left.definitionConsts + right.definitionConsts
+    theoremConsts := left.theoremConsts + right.theoremConsts
+    opaqueConsts := left.opaqueConsts + right.opaqueConsts
+    axiomConsts := left.axiomConsts + right.axiomConsts
+    simpleRecursorConsts := left.simpleRecursorConsts + right.simpleRecursorConsts
+    indexedRecursorConsts := left.indexedRecursorConsts + right.indexedRecursorConsts
+    equalityRecConsts := left.equalityRecConsts + right.equalityRecConsts
+    equalityNdRecConsts := left.equalityNdRecConsts + right.equalityNdRecConsts
+    quotientLiftConsts := left.quotientLiftConsts + right.quotientLiftConsts
+    primitiveNatConsts := left.primitiveNatConsts + right.primitiveNatConsts
+  }
+
+def primitiveNatName (name : Name) : Bool :=
+  name == "Nat.add" ||
+    name == "Nat.mul" ||
+    name == "Nat.pow" ||
+    name == "Nat.sub" ||
+    name == "Nat.beq" ||
+    name == "Nat.ble"
+
+def profileConst (env : Env) (name : Name) : ExprProfile :=
+  let base : ExprProfile :=
+    {
+      nodes := 1
+      constNodes := 1
+      primitiveNatConsts := if primitiveNatName name then 1 else 0
+    }
+  match env.find? name with
+  | some info =>
+      match info.kind with
+      | .definition => { base with definitionConsts := base.definitionConsts + 1 }
+      | .theorem => { base with theoremConsts := base.theoremConsts + 1 }
+      | .opaque => { base with opaqueConsts := base.opaqueConsts + 1 }
+      | .axiom => { base with axiomConsts := base.axiomConsts + 1 }
+      | .recursor .. => { base with simpleRecursorConsts := base.simpleRecursorConsts + 1 }
+      | .indexedRecursor .. => { base with indexedRecursorConsts := base.indexedRecursorConsts + 1 }
+      | .equalityRec => { base with equalityRecConsts := base.equalityRecConsts + 1 }
+      | .equalityNdRec => { base with equalityNdRecConsts := base.equalityNdRecConsts + 1 }
+      | .quotientLift => { base with quotientLiftConsts := base.quotientLiftConsts + 1 }
+      | _ => base
+  | none => base
+
+def profileHeadApp (env : Env) (expr : Expr) : ExprProfile :=
+  let (head, args) := expr.getAppFnArgs
+  let base : ExprProfile :=
+    {
+      headApps := 1
+      maxAppArgs := args.length
+    }
+  match head with
+  | .const name _ =>
+      let base :=
+        { base with primitiveNatHeadApps := if primitiveNatName name then 1 else 0 }
+      match env.find? name with
+      | some info =>
+          match info.kind with
+          | .definition => { base with definitionHeadApps := base.definitionHeadApps + 1 }
+          | .recursor .. => { base with simpleRecursorHeadApps := base.simpleRecursorHeadApps + 1 }
+          | .indexedRecursor .. => { base with indexedRecursorHeadApps := base.indexedRecursorHeadApps + 1 }
+          | .equalityRec => { base with equalityRecHeadApps := base.equalityRecHeadApps + 1 }
+          | .equalityNdRec => { base with equalityNdRecHeadApps := base.equalityNdRecHeadApps + 1 }
+          | .quotientLift => { base with quotientLiftHeadApps := base.quotientLiftHeadApps + 1 }
+          | _ => base
+      | none => base
+  | _ => base
+
+partial def profileExpr (env : Env) (parentIsApp : Bool) : Expr → ExprProfile
+  | .bvar _ => { nodes := 1 }
+  | .sort _ => { nodes := 1 }
+  | .const name _ => profileConst env name
+  | .lit _ => { nodes := 1 }
+  | expr@(.app fn arg) =>
+      let headProfile :=
+        if parentIsApp then
+          {}
+        else
+          profileHeadApp env expr
+      ({ nodes := 1, appNodes := 1 } : ExprProfile)
+        |>.add headProfile
+        |>.add (profileExpr env true fn)
+        |>.add (profileExpr env false arg)
+  | .lam _ type body =>
+      ({ nodes := 1, lamNodes := 1 } : ExprProfile)
+        |>.add (profileExpr env false type)
+        |>.add (profileExpr env false body)
+  | .forallE _ type body =>
+      ({ nodes := 1, forallNodes := 1 } : ExprProfile)
+        |>.add (profileExpr env false type)
+        |>.add (profileExpr env false body)
+  | .letE _ type value body =>
+      ({ nodes := 1, letNodes := 1 } : ExprProfile)
+        |>.add (profileExpr env false type)
+        |>.add (profileExpr env false value)
+        |>.add (profileExpr env false body)
+  | .proj _ _ target =>
+      ({ nodes := 1, projectionNodes := 1 } : ExprProfile)
+        |>.add (profileExpr env false target)
+
+def profileExprRoot (env : Env) (expr : Expr) : ExprProfile :=
+  profileExpr env false expr
+
+def profileBinder (env : Env) (binder : Binder) : ExprProfile :=
+  profileExprRoot env binder.type
+
+def profileBinders (env : Env) (binders : List Binder) : ExprProfile :=
+  binders.foldl (fun profile binder => profile.add (profileBinder env binder)) {}
+
+def profileSimpleConstructor (env : Env) (ctor : SimpleConstructorSpec) : ExprProfile :=
+  profileBinders env ctor.fields
+
+def profileIndexedConstructor (env : Env) (ctor : IndexedConstructorSpec) : ExprProfile :=
+  (profileBinders env ctor.fields).add
+    (ctor.targetIndices.foldl (fun profile index => profile.add (profileExprRoot env index)) {})
+
+structure DeclarationProfile where
+  typeNodes : Nat := 0
+  valueNodes : Nat := 0
+  exprs : ExprProfile := {}
+  deriving Inhabited
+
+def profileDeclaration (env : Env) : Declaration → DeclarationProfile
+  | .axiom _ _ type =>
+      let typeProfile := profileExprRoot env type
+      { typeNodes := typeProfile.nodes, exprs := typeProfile }
+  | .definition _ _ type value
+  | .opaque _ _ type value
+  | .theorem _ _ type value =>
+      let typeProfile := profileExprRoot env type
+      let valueProfile := profileExprRoot env value
+      {
+        typeNodes := typeProfile.nodes
+        valueNodes := valueProfile.nodes
+        exprs := typeProfile.add valueProfile
+      }
+  | .inductive spec =>
+      let profile :=
+        (profileBinders env spec.params).add
+          (spec.constructors.foldl
+            (fun profile ctor => profile.add (profileSimpleConstructor env ctor))
+            {})
+      { typeNodes := profile.nodes, exprs := profile }
+  | .indexedInductive spec =>
+      let profile :=
+        (profileBinders env spec.params).add
+          ((profileBinders env spec.indices).add
+            (spec.constructors.foldl
+              (fun profile ctor => profile.add (profileIndexedConstructor env ctor))
+              {}))
+      { typeNodes := profile.nodes, exprs := profile }
+  | .equalityPrimitives
+  | .quotientPrimitives => {}
+
+def DeclarationProfile.toJsonFields (profile : DeclarationProfile) : List (String × Lean.Json) :=
+  let exprs := profile.exprs
+  [
+    ("profile_type_nodes", jsonNat profile.typeNodes),
+    ("profile_value_nodes", jsonNat profile.valueNodes),
+    ("profile_nodes", jsonNat exprs.nodes),
+    ("profile_app_nodes", jsonNat exprs.appNodes),
+    ("profile_head_apps", jsonNat exprs.headApps),
+    ("profile_max_app_args", jsonNat exprs.maxAppArgs),
+    ("profile_definition_head_apps", jsonNat exprs.definitionHeadApps),
+    ("profile_simple_recursor_head_apps", jsonNat exprs.simpleRecursorHeadApps),
+    ("profile_indexed_recursor_head_apps", jsonNat exprs.indexedRecursorHeadApps),
+    ("profile_eq_rec_head_apps", jsonNat exprs.equalityRecHeadApps),
+    ("profile_eq_ndrec_head_apps", jsonNat exprs.equalityNdRecHeadApps),
+    ("profile_quot_lift_head_apps", jsonNat exprs.quotientLiftHeadApps),
+    ("profile_primitive_nat_head_apps", jsonNat exprs.primitiveNatHeadApps),
+    ("profile_lam_nodes", jsonNat exprs.lamNodes),
+    ("profile_forall_nodes", jsonNat exprs.forallNodes),
+    ("profile_let_nodes", jsonNat exprs.letNodes),
+    ("profile_projection_nodes", jsonNat exprs.projectionNodes),
+    ("profile_const_nodes", jsonNat exprs.constNodes),
+    ("profile_definition_consts", jsonNat exprs.definitionConsts),
+    ("profile_theorem_consts", jsonNat exprs.theoremConsts),
+    ("profile_opaque_consts", jsonNat exprs.opaqueConsts),
+    ("profile_axiom_consts", jsonNat exprs.axiomConsts),
+    ("profile_simple_recursor_consts", jsonNat exprs.simpleRecursorConsts),
+    ("profile_indexed_recursor_consts", jsonNat exprs.indexedRecursorConsts),
+    ("profile_eq_rec_consts", jsonNat exprs.equalityRecConsts),
+    ("profile_eq_ndrec_consts", jsonNat exprs.equalityNdRecConsts),
+    ("profile_quot_lift_consts", jsonNat exprs.quotientLiftConsts),
+    ("profile_primitive_nat_consts", jsonNat exprs.primitiveNatConsts)
+  ]
+
 structure DeclarationTelemetry where
   index : Nat
   kind : String
@@ -130,12 +368,10 @@ structure DeclarationTelemetry where
   elapsedMs : Nat
   cumulativeMs : Nat
   status : ReplayStatus
-
-def jsonNat (value : Nat) : Lean.Json :=
-  Lean.Json.num (Lean.JsonNumber.fromNat value)
+  profile? : Option DeclarationProfile := none
 
 def DeclarationTelemetry.toJson (entry : DeclarationTelemetry) : Lean.Json :=
-  Lean.Json.mkObj [
+  let fields := [
     ("event", Lean.Json.str "declaration"),
     ("index", jsonNat entry.index),
     ("kind", Lean.Json.str entry.kind),
@@ -144,6 +380,11 @@ def DeclarationTelemetry.toJson (entry : DeclarationTelemetry) : Lean.Json :=
     ("elapsed_ms", jsonNat entry.elapsedMs),
     ("cumulative_ms", jsonNat entry.cumulativeMs)
   ]
+  let fields :=
+    match entry.profile? with
+    | some profile => fields ++ profile.toJsonFields
+    | none => fields
+  Lean.Json.mkObj fields
 
 def DeclarationTelemetry.text (entry : DeclarationTelemetry) : String :=
   s!"stats: index={entry.index} status={entry.status.label} elapsed_ms={entry.elapsedMs} cumulative_ms={entry.cumulativeMs} kind={entry.kind} name={entry.name}"
@@ -155,7 +396,8 @@ def emitDeclarationTelemetry
   match format with
   | .off => pure ()
   | .text => IO.println entry.text
-  | .jsonl => IO.println entry.toJson.compress
+  | .jsonl
+  | .profileJsonl => IO.println entry.toJson.compress
   if format != .off then
     (← IO.getStdout).flush
 
@@ -180,6 +422,11 @@ partial def replayLoop
       else
         let kind := MPC.Adapters.Export.declarationKindLabel declaration
         let name := MPC.Adapters.Export.declarationNameLabel declaration
+        let profile? :=
+          if options.telemetry == .profileJsonl then
+            some (profileDeclaration env declaration)
+          else
+            none
         if options.trace then
           IO.println s!"replay: {index} {kind} {name}"
           (← IO.getStdout).flush
@@ -195,7 +442,8 @@ partial def replayLoop
               name,
               elapsedMs,
               cumulativeMs,
-              status := .checked
+              status := .checked,
+              profile? := profile?
             }
             replayLoop manifest options (index + 1) cumulativeMs env rest
         | .error err =>
@@ -208,7 +456,8 @@ partial def replayLoop
               name,
               elapsedMs,
               cumulativeMs,
-              status := .rejected
+              status := .rejected,
+              profile? := profile?
             }
             pure (.error { message := s!"while replaying {kind} {name}: {err.message}" })
 

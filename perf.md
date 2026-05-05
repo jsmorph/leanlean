@@ -57,3 +57,20 @@ The primitive Nat reducer now includes the cheap right-zero cases from the sourc
 | Nat right-zero reductions | 475 | 363,973 | 364,037 | -64 |
 
 The measurement is also within run-to-run noise.  The late GCD declarations remain the dominant cost: `Nat.gcd_one_left`, `Nat.gcd_mul_left`, `Nat.gcd_dvd`, `Nat.gcd_assoc`, `Nat.gcd_rec`, and `Nat.mul_mod_mul_left` keep essentially the same times.  The next useful work is instrumentation below declaration level, especially counts for conversion fallback, proof irrelevance, eta, weak-head reduction, delta unfolding, recursor reduction, and primitive Nat reduction.
+
+## Profile JSONL
+
+`mpc-check-export --profile-jsonl` extends the timing row with structural counters computed before declaration replay.  The counters are static and cheap: expression nodes, app nodes, full application spines, maximum spine arity, binder nodes, let nodes, projection nodes, constant references by environment kind, and head applications whose head is a transparent definition, recursor, equality recursor, quotient lift, or admitted primitive Nat constant.  This keeps the kernel pure and avoids threading a profiling monad through `defEq` and `whnf`.
+
+The first profile run used prefix 430, which includes `Nat.gcd_dvd` but stops before the heaviest late declarations.  It measured 159,084 ms, close to the previous 159,998 ms baseline for the same prefix.  The static counters do not explain all timing variation, but they point away from the blind Nat-primitive hypothesis: the slow rows in this prefix have zero primitive Nat head applications.  They do have many transparent-definition head applications, which is consistent with expensive repeated conversion through ordinary proof terms and unfolding.
+
+| Index | Elapsed ms | Nodes | Def-head apps | Rec-head apps | Declaration |
+|---:|---:|---:|---:|---:|---|
+| 427 | 30,059 | 1,396 | 178 | 0 | `Nat.gcd_dvd` |
+| 397 | 23,277 | 2,087 | 335 | 0 | `Nat.gcd_rec` |
+| 388 | 17,420 | 5,440 | 406 | 8 | `_private.Init.Data.Nat.Gcd.0.Nat.gcd._unary.eq_def` |
+| 395 | 14,428 | 512 | 60 | 0 | `Nat.gcd_succ` |
+| 334 | 12,191 | 5,950 | 873 | 0 | `LeanLeanFaithfulness.ExportArithmetic.odd_of_opposite_parity` |
+| 319 | 7,882 | 12,622 | 1,716 | 0 | `Nat.mod_add_div` |
+
+The next instrumentation should be dynamic but still narrow: per-declaration counters for `defEq` calls, `whnf` calls, structural failures, eta attempts and successes, proof-irrelevance attempts and successes, delta unfolds, and recursor reductions.  Those counters should be emitted once per declaration, not as per-call logs.
