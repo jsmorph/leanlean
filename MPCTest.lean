@@ -1226,6 +1226,55 @@ def dPairFst : Expr :=
 def dPairSnd : Expr :=
   .proj "DPair" 1 dPairTarget
 
+def dPairType : Expr :=
+  appN (.const "DPair" []) [alphaType, .const "Pred" []]
+
+def dPairStuckTarget : Expr :=
+  .const "dPairStuck" []
+
+def dPairStuckFst : Expr :=
+  .proj "DPair" 0 dPairStuckTarget
+
+def dPairStuckSnd : Expr :=
+  .proj "DPair" 1 dPairStuckTarget
+
+def dPairEtaFstMotive : Expr :=
+  .lam "target" dPairType alphaType
+
+def dPairEtaFstMinor : Expr :=
+  .lam "fst" alphaType
+    (.lam "snd" (.app (.const "Pred" []) (.bvar 0)) (.bvar 1))
+
+def dPairRecFstEta : Expr :=
+  appN
+    (.const "DPair.rec" [.succ .zero])
+    [
+      alphaType,
+      .const "Pred" [],
+      dPairEtaFstMotive,
+      dPairEtaFstMinor,
+      dPairStuckTarget
+    ]
+
+def dPairEtaSndMotive : Expr :=
+  .lam "target" dPairType
+    (.app (.const "Pred" []) (.proj "DPair" 0 (.bvar 0)))
+
+def dPairEtaSndMinor : Expr :=
+  .lam "fst" alphaType
+    (.lam "snd" (.app (.const "Pred" []) (.bvar 0)) (.bvar 0))
+
+def dPairRecSndEta : Expr :=
+  appN
+    (.const "DPair.rec" [.succ .zero])
+    [
+      alphaType,
+      .const "Pred" [],
+      dPairEtaSndMotive,
+      dPairEtaSndMinor,
+      dPairStuckTarget
+    ]
+
 def hAddLikeSpec : SimpleInductiveSpec :=
   {
     name := "HAddLike"
@@ -1938,11 +1987,16 @@ def checkEquality : IO Unit := do
     (replay MPC.Configs.EqualityPoc env [.theorem "Alpha.eqSymm" [] eqSymmType eqSymmValue])
 
 def checkProjections : IO Unit := do
-  let declarations := baseDeclarations ++ equalityDeclarations ++ [.inductive dPairSpec]
+  let declarations :=
+    baseDeclarations ++ equalityDeclarations ++
+      [.inductive dPairSpec, .axiom "dPairStuck" [] dPairType]
   let baseEnv ← expectOkLabel "projection baseline replay"
     (replay MPC.Configs.Poc emptyEnv declarations)
   expectError "projection disabled"
     (infer MPC.Configs.Poc baseEnv [] [] dPairFst)
+  let etaDisabled ← expectOkLabel "structure recursor eta disabled"
+    (normalize MPC.Configs.Poc baseEnv [] dPairRecFstEta)
+  expectExprEq "structure recursor eta disabled value" etaDisabled dPairRecFstEta
   let env ← expectOkLabel "projection replay"
     (replay MPC.Configs.ProjectionPoc emptyEnv declarations)
   expectEnvContains "projection structure" env "DPair"
@@ -1963,6 +2017,20 @@ def checkProjections : IO Unit := do
   let sndReduced ← expectOkLabel "second projection reduction"
     (normalize MPC.Configs.ProjectionPoc env [] dPairSnd)
   expectExprEq "second projection value" sndReduced (.const "predProof" [])
+  let fstEtaType ← expectOkLabel "first structure recursor eta inference"
+    (infer MPC.Configs.ProjectionPoc env [] [] dPairRecFstEta)
+  expectExprEq "first structure recursor eta type" fstEtaType alphaType
+  let fstEtaReduced ← expectOkLabel "first structure recursor eta reduction"
+    (normalize MPC.Configs.ProjectionPoc env [] dPairRecFstEta)
+  expectExprEq "first structure recursor eta value" fstEtaReduced dPairStuckFst
+  let sndEtaType ← expectOkLabel "second structure recursor eta inference"
+    (infer MPC.Configs.ProjectionPoc env [] [] dPairRecSndEta)
+  expectExprEq "second structure recursor eta type" sndEtaType (.app (.const "Pred" []) dPairStuckFst)
+  let sndEtaReduced ← expectOkLabel "second structure recursor eta reduction"
+    (normalize MPC.Configs.ProjectionPoc env [] dPairRecSndEta)
+  expectExprEq "second structure recursor eta value" sndEtaReduced dPairStuckSnd
+  expectOkLabel "structure recursor eta conversion"
+    (defEq MPC.Configs.ProjectionPoc env [] [] dPairRecSndEta dPairStuckSnd)
   expectError "projection field out of range"
     (infer MPC.Configs.ProjectionPoc env [] [] (.proj "DPair" 2 dPairTarget))
   let hAddLikeDeclarations :=
