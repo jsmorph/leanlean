@@ -77,6 +77,7 @@ structure NestedRecursorConstructorInfo where
 
 structure NestedRecursorTargetInfo where
   recursorName : Name
+  locals : List Binder := []
   headName : Name
   levels : List Level
   target : Expr

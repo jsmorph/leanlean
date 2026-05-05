@@ -220,6 +220,9 @@ def nestedContainerTarget? (manifest : Manifest) (env : Env) (rootName : Name)
       | none => false
   | _ => false
 
+def instantiateNestedTarget (target : NestedRecursorTargetInfo) (locals : List Expr) : Expr :=
+  target.target.instantiateMany locals
+
 def instantiateTargetFields (levelSubst : List (Name × Level)) (targetArgs : List Expr) :
     Nat → List Binder → List Binder
   | _, [] => []
@@ -339,6 +342,7 @@ partial def buildNestedRecursorTargets
     let info : NestedRecursorTargetInfo :=
       {
         recursorName := nestedRecursorName root.name built.length
+        locals := []
         headName
         levels
         target := targetExpr
@@ -486,13 +490,23 @@ def nestedMotiveBinders
   (enumerate targets).map fun pair =>
     {
       name := s!"motive_{pair.1 + 1}"
-      type := .forallE "target" (pair.2.target.lift pair.1) (.sort motiveLevel)
+      type :=
+        let target := pair.2
+        bindForall target.locals
+          (.forallE "target"
+            ((instantiateNestedTarget target (sourceOrderBvars target.locals.length 0)).lift pair.1)
+            (.sort motiveLevel))
     }
 
 def nestedTargetBinderType
     (motiveCount minorCount : Nat)
-    (target : NestedRecursorTargetInfo) : Expr :=
-  target.target.lift (motiveCount + minorCount)
+    (target : NestedRecursorTargetInfo)
+    (body : Expr) : Expr :=
+  let outerCount := motiveCount + minorCount
+  bindForall (liftFieldBindersForOuter outerCount 0 target.locals)
+    (.forallE "target"
+      ((instantiateNestedTarget target (sourceOrderBvars target.locals.length 0)).liftFrom outerCount target.locals.length)
+      body)
 
 def nestedRecursorType
     (spec : SimpleInductiveSpec)
@@ -512,14 +526,14 @@ def nestedRecursorType
         }
   let some target := listGet? targets targetIndex
     | fail s!"nested recursor target {targetIndex} is out of range"
-  let targetBinder :=
-    {
-      name := "target"
-      type := nestedTargetBinderType motiveCount minorBinders.length target
-    }
-  let motiveIndex := 1 + minorBinders.length + (← nestedMotiveOffset motiveCount targetIndex)
-  let body := .app (.bvar motiveIndex) (.bvar 0)
-  pure (bindForall spec.params (bindForall (motiveBinders ++ minorBinders ++ [targetBinder]) body))
+  let localCount := target.locals.length
+  let targetVar := .bvar 0
+  let localArgs := (sourceOrderBvars localCount 1)
+  let motiveIndex :=
+    localCount + 1 + minorBinders.length + (← nestedMotiveOffset motiveCount targetIndex)
+  let body := Expr.mkApps (.bvar motiveIndex) (localArgs ++ [targetVar])
+  let targetType := nestedTargetBinderType motiveCount minorBinders.length target body
+  pure (bindForall spec.params (bindForall (motiveBinders ++ minorBinders) targetType))
 
 def extendBinders : Context → List Binder → Context
   | ctx, [] => ctx
