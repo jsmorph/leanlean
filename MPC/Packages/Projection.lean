@@ -4,6 +4,8 @@ namespace MPC.Packages.Projection
 
 open MPC
 
+-- Avoid exported sparse matchers for structure and constructor-shape checks.
+set_option backward.match.sparseCases false in
 def fieldType (env : Env) (structureName : Name) (fieldIndex : Nat)
     (target targetType : Expr) : Result Expr := do
   let (head, targetArgs) := targetType.getAppFnArgs
@@ -35,6 +37,8 @@ def fieldType (env : Env) (structureName : Name) (fieldIndex : Nat)
         | none => fail s!"unknown projection structure: {structureName}"
   | _ => fail s!"projection target type is not a structure application: {repr targetType}"
 
+-- Avoid an exported sparse matcher for the constructor-kind test.
+set_option backward.match.sparseCases false in
 partial def reduce? (whnfFn : Manifest → Env → LevelContext → Expr → Result Expr)
     (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (structureName : Name) (fieldIndex : Nat) (target : Expr) : Result (Option Expr) := do
