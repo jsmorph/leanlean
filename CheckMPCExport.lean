@@ -167,10 +167,12 @@ def printOutcome (status : String) (path : System.FilePath) (message : String) :
 
 inductive ReplayStatus where
   | checked
+  | reused
   | rejected
 
 def ReplayStatus.label : ReplayStatus → String
   | .checked => "checked"
+  | .reused => "reused"
   | .rejected => "rejected"
 
 def jsonNat (value : Nat) : Lean.Json :=
@@ -645,8 +647,10 @@ def replayWithSavedLayer (config : Config) (state : MPC.Adapters.Export.ParseSta
     pure (.error { message := "--load-layer cannot be combined with --profile-declaration" })
   else if config.checkedLayerPath?.isSome || config.saveLayerPath?.isSome then
     pure (.error { message := "--load-layer cannot be combined with --checked-layer or --save-layer" })
-  else if config.replayOptions.telemetry != .off then
-    pure (.error { message := "--load-layer cannot be combined with telemetry output" })
+  else if config.replayOptions.telemetry == .profileJsonl then
+    pure (.error { message := "--load-layer cannot be combined with --profile-jsonl" })
+  else if config.replayOptions.telemetry != .off && !MPC.Adapters.Layer.sqlitePath layerPath then
+    pure (.error { message := "--load-layer telemetry requires a SQLite layer" })
   else if config.replayOptions.trace then
     pure (.error { message := "--load-layer cannot be combined with --trace" })
   else if config.diagnosticAssumeGenerated then
@@ -658,7 +662,27 @@ def replayWithSavedLayer (config : Config) (state : MPC.Adapters.Export.ParseSta
       | some _ => {}
       | none => state.audit
     if MPC.Adapters.Layer.sqlitePath layerPath then
-      match ← MPC.Adapters.Layer.replaySqlite MPC.Configs.LeanCore429 layerPath audit declarations with
+      let observer? : Option MPC.Adapters.Layer.ReplayObserver :=
+        match config.replayOptions.telemetry with
+        | .off => none
+        | .text | .jsonl =>
+            some fun step => do
+              let status :=
+                match step.status with
+                | .reused => ReplayStatus.reused
+                | .checked => ReplayStatus.checked
+                | .rejected => ReplayStatus.rejected
+              emitDeclarationTelemetry config.replayOptions.telemetry {
+                index := step.index,
+                kind := MPC.Adapters.Export.declarationKindLabel step.declaration,
+                name := MPC.Adapters.Export.declarationNameLabel step.declaration,
+                elapsedMs := step.elapsedMs,
+                cumulativeMs := step.cumulativeMs,
+                status,
+                profile? := none
+              }
+        | .profileJsonl => none
+      match ← MPC.Adapters.Layer.replaySqliteWithObserver MPC.Configs.LeanCore429 layerPath audit declarations observer? with
       | .error err => pure (.error { message := s!"while loading layer {layerPath}: {err.message}" })
       | .ok summary =>
           pure (.ok { env := summary.env, reused := summary.reused, checked := summary.checked })

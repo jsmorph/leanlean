@@ -39,6 +39,22 @@ structure ReplaySummary where
   reused : Nat := 0
   checked : Nat := 0
 
+inductive ReplayStepStatus where
+  | reused
+  | checked
+  | rejected
+  deriving BEq
+
+structure ReplayStep where
+  index : Nat
+  declaration : Declaration
+  status : ReplayStepStatus
+  elapsedMs : Nat
+  cumulativeMs : Nat
+
+abbrev ReplayObserver :=
+  ReplayStep → IO Unit
+
 structure SaveSummary where
   declarations : Nat
   envLength : Nat
@@ -640,8 +656,20 @@ def sqliteRequestedContent (path : System.FilePath) (declarations : List Declara
       | .ok (index, names) => pure (.ok (acc.insert index names))
   sqlite3FoldRows #["-readonly", path.toString] write init step
 
-def replaySqlite (manifest : Manifest) (layerPath : System.FilePath)
-    (audit : MPC.Adapters.Export.Audit) (declarations : List Declaration) :
+def emitReplayStep (observer? : Option ReplayObserver) (index : Nat) (declaration : Declaration)
+    (status : ReplayStepStatus) (startMs? : Option Nat) (cumulativeMs : Nat) : IO Nat := do
+  match observer?, startMs? with
+  | some observer, some startMs =>
+      let stopMs ← IO.monoMsNow
+      let elapsedMs := stopMs - startMs
+      let cumulativeMs := cumulativeMs + elapsedMs
+      observer { index, declaration, status, elapsedMs, cumulativeMs }
+      pure cumulativeMs
+  | _, _ => pure cumulativeMs
+
+def replaySqliteWithObserver (manifest : Manifest) (layerPath : System.FilePath)
+    (audit : MPC.Adapters.Export.Audit) (declarations : List Declaration)
+    (observer? : Option ReplayObserver) :
     IO (Result ReplaySummary) := do
   match ← loadSqliteLayer layerPath with
   | .error err => pure (.error err)
@@ -653,37 +681,57 @@ def replaySqlite (manifest : Manifest) (layerPath : System.FilePath)
           let mut env := layer.env
           let mut reused := 0
           let mut checked := 0
+          let mut cumulativeMs := 0
           let mut index := 0
           for declaration in declarations do
+            let startMs? ←
+              match observer? with
+              | some _ => some <$> IO.monoMsNow
+              | none => pure none
             let key := declarationContentKey declaration
             match newContentToNames.get? key with
             | some names =>
                 match checkCachedNames env names with
-                | .error err => return .error err
-                | .ok () => reused := reused + 1
+                | .error err =>
+                    cumulativeMs ← emitReplayStep observer? index declaration .rejected startMs? cumulativeMs
+                    return .error err
+                | .ok () =>
+                    reused := reused + 1
+                    cumulativeMs ← emitReplayStep observer? index declaration .reused startMs? cumulativeMs
             | none =>
                 match cachedContent.get? index with
                 | some names =>
                     match checkCachedNames env names with
-                    | .error err => return .error err
-                    | .ok () => reused := reused + 1
+                    | .error err =>
+                        cumulativeMs ← emitReplayStep observer? index declaration .rejected startMs? cumulativeMs
+                        return .error err
+                    | .ok () =>
+                        reused := reused + 1
+                        cumulativeMs ← emitReplayStep observer? index declaration .reused startMs? cumulativeMs
                 | none =>
                     match checkExistingDeclarationReuse env declaration with
-                    | .error err => return .error err
+                    | .error err =>
+                        cumulativeMs ← emitReplayStep observer? index declaration .rejected startMs? cumulativeMs
+                        return .error err
                     | .ok true =>
                         newContentToNames := newContentToNames.insert key (declarationAnchorNames declaration)
                         reused := reused + 1
+                        cumulativeMs ← emitReplayStep observer? index declaration .reused startMs? cumulativeMs
                     | .ok false =>
                         let before := env
                         match addDecl manifest env declaration with
                         | .ok nextEnv =>
                             match addedNames before nextEnv with
-                            | .error err => return .error err
+                            | .error err =>
+                                cumulativeMs ← emitReplayStep observer? index declaration .rejected startMs? cumulativeMs
+                                return .error err
                             | .ok names =>
                                 env := nextEnv
                                 newContentToNames := newContentToNames.insert key names
                                 checked := checked + 1
+                                cumulativeMs ← emitReplayStep observer? index declaration .checked startMs? cumulativeMs
                         | .error err =>
+                            cumulativeMs ← emitReplayStep observer? index declaration .rejected startMs? cumulativeMs
                             return .error {
                               message := s!"while replaying {MPC.Adapters.Export.declarationKindLabel declaration} {MPC.Adapters.Export.declarationNameLabel declaration}: {err.message}"
                             }
@@ -691,6 +739,11 @@ def replaySqlite (manifest : Manifest) (layerPath : System.FilePath)
           match MPC.Adapters.Export.auditGenerated env audit with
           | .error err => pure (.error err)
           | .ok () => pure (.ok { env, reused, checked })
+
+def replaySqlite (manifest : Manifest) (layerPath : System.FilePath)
+    (audit : MPC.Adapters.Export.Audit) (declarations : List Declaration) :
+    IO (Result ReplaySummary) := do
+  replaySqliteWithObserver manifest layerPath audit declarations none
 
 def build (manifest : Manifest) (state : MPC.Adapters.Export.ParseState) :
     Result CheckedLayer := do
