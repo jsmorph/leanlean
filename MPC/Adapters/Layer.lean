@@ -39,6 +39,10 @@ structure ReplaySummary where
   reused : Nat := 0
   checked : Nat := 0
 
+structure SaveSummary where
+  declarations : Nat
+  envLength : Nat
+
 structure ContentEntry where
   key : String
   names : List Name
@@ -55,6 +59,9 @@ structure LayerFile where
 def formatVersion : Nat :=
   1
 
+def sqliteFormatVersion : Nat :=
+  2
+
 def manifestName : String :=
   "LeanCore429"
 
@@ -64,6 +71,12 @@ def declarationContentKey (declaration : Declaration) : String :=
 def addedNames (before after : Env) : Result (List Name) := do
   if before.length <= after.length then
     pure ((after.entries.take (after.length - before.length)).map fun info => info.name)
+  else
+    fail "environment length decreased while replaying a declaration"
+
+def addedEntries (before after : Env) : Result (List ConstantInfo) := do
+  if before.length <= after.length then
+    pure (after.entries.take (after.length - before.length))
   else
     fail "environment length decreased while replaying a declaration"
 
@@ -150,8 +163,8 @@ def sqlite3Output (args : Array String) (script : String) : IO (Result String) :
   catch err =>
     pure (.error { message := s!"could not run sqlite3: {err}" })
 
-def sqlite3Stream (args : Array String) (writeScript : IO.FS.Handle → IO Unit) :
-    IO (Result String) := do
+def sqlite3RunWriter (args : Array String)
+    (writeScript : IO.FS.Handle → IO (Result α)) : IO (Result α) := do
   try
     let child0 ←
       IO.Process.spawn {
@@ -164,6 +177,70 @@ def sqlite3Stream (args : Array String) (writeScript : IO.FS.Handle → IO Unit)
     let (stdin, child) ← child0.takeStdin
     let stdoutTask ← IO.asTask child.stdout.readToEnd Task.Priority.dedicated
     let stderrTask ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
+    let callbackResult : Result α ← try
+      writeScript stdin
+    catch err =>
+      child.kill
+      pure (.error { message := s!"could not write sqlite3 script: {err}" })
+    match callbackResult with
+    | .error err =>
+        try
+          stdin.putStr "ROLLBACK;\n.quit\n"
+          stdin.flush
+        catch _ =>
+          child.kill
+        let _ ← child.wait
+        let _ := stdoutTask.get
+        let _ := stderrTask.get
+        pure (.error err)
+    | .ok value =>
+        stdin.putStr ".quit\n"
+        stdin.flush
+        let exitCode ← child.wait
+        let _ ← IO.ofExcept stdoutTask.get
+        let stderr ← IO.ofExcept stderrTask.get
+        if exitCode == 0 then
+          pure (.ok value)
+        else
+          pure (.error { message := s!"sqlite3 failed with exit code {exitCode}: {stderr.trimAscii}" })
+  catch err =>
+    pure (.error { message := s!"could not run sqlite3: {err}" })
+
+def chompLine (line : String) : String :=
+  let line :=
+    if line.endsWith "\n" then
+      (line.dropEnd 1).toString
+    else
+      line
+  if line.endsWith "\r" then
+    (line.dropEnd 1).toString
+  else
+    line
+
+partial def sqliteFoldStdoutRows (stdout : IO.FS.Handle) (acc : α)
+    (step : α → String → IO (Result α)) : IO (Result α) := do
+  let line ← stdout.getLine
+  if line == "" then
+    pure (.ok acc)
+  else
+    match ← step acc (chompLine line) with
+    | .error err => pure (.error err)
+    | .ok acc => sqliteFoldStdoutRows stdout acc step
+
+def sqlite3FoldRows (args : Array String)
+    (writeScript : IO.FS.Handle → IO Unit) (init : α)
+    (step : α → String → IO (Result α)) : IO (Result α) := do
+  try
+    let child0 ←
+      IO.Process.spawn {
+        cmd := "sqlite3",
+        args,
+        stdin := .piped,
+        stdout := .piped,
+        stderr := .piped
+      }
+    let (stdin, child) ← child0.takeStdin
+    let stderrTask ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
     let writeResult : Result Unit ← try
       writeScript stdin
       stdin.putStr ".quit\n"
@@ -171,17 +248,27 @@ def sqlite3Stream (args : Array String) (writeScript : IO.FS.Handle → IO Unit)
       pure (Except.ok ())
     catch err =>
       child.kill
-      pure (Except.error { message := s!"could not write sqlite3 script: {err}" })
+      pure (Except.error { message := s!"could not write sqlite3 query: {err}" })
     match writeResult with
-    | Except.error err => pure (.error err)
+    | Except.error err =>
+        let _ ← child.wait
+        let _ := stderrTask.get
+        pure (.error err)
     | Except.ok () =>
-        let exitCode ← child.wait
-        let stdout ← IO.ofExcept stdoutTask.get
-        let stderr ← IO.ofExcept stderrTask.get
-        if exitCode == 0 then
-          pure (.ok stdout)
-        else
-          pure (.error { message := s!"sqlite3 failed with exit code {exitCode}: {stderr.trimAscii}" })
+        let rowsResult ← sqliteFoldStdoutRows child.stdout init step
+        match rowsResult with
+        | .error err =>
+            child.kill
+            let _ ← child.wait
+            let _ := stderrTask.get
+            pure (.error err)
+        | .ok acc =>
+            let exitCode ← child.wait
+            let stderr ← IO.ofExcept stderrTask.get
+            if exitCode == 0 then
+              pure (.ok acc)
+            else
+              pure (.error { message := s!"sqlite3 failed with exit code {exitCode}: {stderr.trimAscii}" })
   catch err =>
     pure (.error { message := s!"could not run sqlite3: {err}" })
 
@@ -213,37 +300,96 @@ def checkSavePath (path : System.FilePath) : IO (Result Unit) := do
   else
     pure (.ok ())
 
-def saveSqlite (path : System.FilePath) (layer : CheckedLayer) : IO (Result Unit) := do
+def sqliteCreateScript : String :=
+  sqliteScriptHeader ++
+  "BEGIN;\n" ++
+  "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);\n" ++
+  "CREATE TABLE env(pos INTEGER PRIMARY KEY, json TEXT NOT NULL);\n" ++
+  "CREATE TABLE content(key TEXT PRIMARY KEY, names TEXT NOT NULL) WITHOUT ROWID;\n"
+
+def sqliteInsertEnv (pos : Nat) (info : ConstantInfo) : String :=
+  sqliteInsertText "env" pos (Lean.toJson info).compress
+
+def sqliteInsertContent (key : String) (names : List Name) : String :=
+  s!"INSERT INTO content(key,names) VALUES({sqlQuote key},{sqlQuote (Lean.toJson names).compress});\n"
+
+def sqliteInsertMeta (key value : String) : String :=
+  s!"INSERT INTO meta(key,value) VALUES({sqlQuote key},{sqlQuote value});\n"
+
+def sqliteFinishScript (declarations : Nat) : String :=
+  sqliteInsertMeta "formatVersion" (toString sqliteFormatVersion) ++
+  sqliteInsertMeta "manifest" manifestName ++
+  sqliteInsertMeta "declarations" (toString declarations) ++
+  "COMMIT;\n"
+
+def saveSqliteFromLayer (path : System.FilePath) (layer : CheckedLayer) : IO (Result Unit) := do
   match ← checkSavePath path with
   | .error err => pure (.error err)
   | .ok () =>
-    let tempPath := sqliteTempPath path
-    let result ← sqlite3Stream #[tempPath.toString] fun input => do
-      input.putStr sqliteScriptHeader
-      input.putStr "BEGIN;\n"
-      input.putStr "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);\n"
-      input.putStr "CREATE TABLE env(pos INTEGER PRIMARY KEY, json TEXT NOT NULL);\n"
-      input.putStr "CREATE TABLE content(pos INTEGER PRIMARY KEY, json TEXT NOT NULL);\n"
-      input.putStr s!"INSERT INTO meta(key,value) VALUES({sqlQuote "formatVersion"},{sqlQuote (toString formatVersion)});\n"
-      input.putStr s!"INSERT INTO meta(key,value) VALUES({sqlQuote "manifest"},{sqlQuote manifestName});\n"
-      input.putStr s!"INSERT INTO meta(key,value) VALUES({sqlQuote "declarations"},{sqlQuote (toString layer.declarations)});\n"
-      let mut pos := 0
-      for info in layer.env.entries do
-        input.putStr (sqliteInsertText "env" pos (Lean.toJson info).compress)
-        pos := pos + 1
-      pos := 0
-      for entry in contentEntries layer do
-        input.putStr (sqliteInsertText "content" pos (Lean.toJson entry).compress)
-        pos := pos + 1
-      input.putStr "COMMIT;\n"
-    match result with
-    | .ok _ =>
-        try
-          IO.FS.rename tempPath path
-          pure (.ok ())
-        catch err =>
-          pure (.error { message := s!"could not move SQLite layer {tempPath} to {path}: {err}" })
-    | .error err => pure (.error err)
+      let tempPath := sqliteTempPath path
+      let result ← sqlite3RunWriter #[tempPath.toString] fun input => do
+        input.putStr sqliteCreateScript
+        let mut pos := 0
+        for info in layer.env.entries.reverse do
+          input.putStr (sqliteInsertEnv pos info)
+          pos := pos + 1
+        for entry in contentEntries layer do
+          input.putStr (sqliteInsertContent entry.key entry.names)
+        input.putStr (sqliteFinishScript layer.declarations)
+        pure (.ok ())
+      match result with
+      | .error err => pure (.error err)
+      | .ok () =>
+          try
+            IO.FS.rename tempPath path
+            pure (.ok ())
+          catch err =>
+            pure (.error { message := s!"could not move SQLite layer {tempPath} to {path}: {err}" })
+
+def saveSqliteFromState (manifest : Manifest) (path : System.FilePath)
+    (state : MPC.Adapters.Export.ParseState) : IO (Result SaveSummary) := do
+  match ← checkSavePath path with
+  | .error err => pure (.error err)
+  | .ok () =>
+      let tempPath := sqliteTempPath path
+      let result ← sqlite3RunWriter #[tempPath.toString] fun input => do
+        input.putStr sqliteCreateScript
+        let mut env := emptyEnv
+        let mut envPos := 0
+        let mut declarations := 0
+        for declaration in state.declarations do
+          let before := env
+          match addDecl manifest env declaration with
+          | .error err =>
+              return .error {
+                message := s!"while replaying {MPC.Adapters.Export.declarationKindLabel declaration} {MPC.Adapters.Export.declarationNameLabel declaration}: {err.message}"
+              }
+          | .ok nextEnv =>
+              match addedEntries before nextEnv with
+              | .error err => return .error err
+              | .ok entries =>
+                  for info in entries.reverse do
+                    input.putStr (sqliteInsertEnv envPos info)
+                    envPos := envPos + 1
+                  input.putStr (sqliteInsertContent (declarationContentKey declaration) (entries.map fun info => info.name))
+                  env := nextEnv
+                  declarations := declarations + 1
+        match MPC.Adapters.Export.auditGenerated env state.audit with
+        | .error err => return .error err
+        | .ok () =>
+            input.putStr (sqliteFinishScript declarations)
+            pure (.ok { declarations, envLength := env.length })
+      match result with
+      | .error err => pure (.error err)
+      | .ok summary =>
+          try
+            IO.FS.rename tempPath path
+            pure (.ok summary)
+          catch err =>
+            pure (.error { message := s!"could not move SQLite layer {tempPath} to {path}: {err}" })
+
+def saveSqlite (path : System.FilePath) (layer : CheckedLayer) : IO (Result Unit) := do
+  saveSqliteFromLayer path layer
 
 def sqliteRows (stdout : String) : List String :=
   (stdout.splitOn "\n").filter fun line => line != ""
@@ -277,10 +423,12 @@ def parseJsonRow (label : String) (row : String) {α : Type} [Lean.FromJson α] 
       | .error err => fail s!"invalid SQLite layer {label}: {err}"
       | .ok value => pure value
 
-def sqliteJsonRows (path : System.FilePath) (table : String) : IO (Result (List String)) := do
-  sqliteQuery path s!"SELECT json FROM {table} ORDER BY pos;"
+structure SqliteLayer where
+  path : System.FilePath
+  env : Env
+  declarations : Nat
 
-def loadSqlite (path : System.FilePath) : IO (Result CheckedLayer) := do
+def checkSqliteMeta (path : System.FilePath) : IO (Result Nat) := do
   match ← sqliteMeta path "formatVersion" with
   | .error err => pure (.error err)
   | .ok versionText =>
@@ -290,29 +438,68 @@ def loadSqlite (path : System.FilePath) : IO (Result CheckedLayer) := do
           match ← sqliteMeta path "declarations" with
           | .error err => pure (.error err)
           | .ok declarationsText =>
-              match ← sqliteJsonRows path "env" with
-              | .error err => pure (.error err)
-              | .ok entryRows =>
-                  match ← sqliteJsonRows path "content" with
-                  | .error err => pure (.error err)
-                  | .ok contentRows =>
-                      let fileResult : Result LayerFile := do
-                        let entries ←
-                          entryRows.mapM fun row =>
-                            (parseJsonRow "environment entry" row : Result ConstantInfo)
-                        let content ←
-                          contentRows.mapM fun row =>
-                            (parseJsonRow "content entry" row : Result ContentEntry)
-                        pure {
-                          formatVersion := (← parseSqliteNat "format version" versionText)
-                          manifest
-                          declarations := (← parseSqliteNat "declaration count" declarationsText)
-                          entries
-                          content
-                        }
-                      match fileResult with
-                      | .error err => pure (.error err)
-                      | .ok file => pure (fromLayerFile file)
+              let metaResult : Result Nat := do
+                let version ← parseSqliteNat "format version" versionText
+                if version != sqliteFormatVersion then
+                  fail s!"unsupported SQLite layer format version: {version}"
+                if manifest != manifestName then
+                  fail s!"unsupported layer manifest: {manifest}"
+                parseSqliteNat "declaration count" declarationsText
+              pure metaResult
+
+def loadSqliteLayer (path : System.FilePath) : IO (Result SqliteLayer) := do
+  match ← checkSqliteMeta path with
+  | .error err => pure (.error err)
+  | .ok declarations =>
+      match ← sqlite3FoldRows #["-readonly", path.toString]
+          (fun input => do
+            input.putStr sqliteSelectHeader
+            input.putStr "SELECT json FROM env ORDER BY pos;\n")
+          emptyEnv
+          (fun env row => do
+            match (parseJsonRow "environment entry" row : Result ConstantInfo) with
+            | .error err => pure (.error err)
+            | .ok info => pure (Env.add env info)) with
+      | .error err => pure (.error err)
+      | .ok env => pure (.ok { path, env, declarations })
+
+def splitSqlitePair (row : String) : Result (String × String) :=
+  match row.splitOn "|" with
+  | first :: rest => pure (first, String.intercalate "|" rest)
+  | [] => fail "empty SQLite result row"
+
+def parseNamesJson (label row : String) : Result (List Name) :=
+  parseJsonRow label row
+
+def loadSqlite (path : System.FilePath) : IO (Result CheckedLayer) := do
+  match ← loadSqliteLayer path with
+  | .error err => pure (.error err)
+  | .ok layer =>
+      match ← sqlite3FoldRows #["-readonly", path.toString]
+          (fun input => do
+            input.putStr sqliteSelectHeader
+            input.putStr "SELECT key, names FROM content ORDER BY key;\n")
+          ({} : Std.HashMap String (List Name))
+          (fun contentToNames row => do
+            match splitSqlitePair row with
+            | .error err => pure (.error err)
+            | .ok (key, namesJson) =>
+                match parseNamesJson "content names" namesJson with
+                | .error err => pure (.error err)
+                | .ok names => pure (.ok (contentToNames.insert key names))) with
+      | .error err => pure (.error err)
+      | .ok contentToNames =>
+          let nameToContent :=
+            contentToNames.toList.foldl
+              (fun index pair =>
+                pair.2.foldl (fun index name => index.insert name pair.1) index)
+              ({} : Std.HashMap Name String)
+          pure (.ok {
+            env := layer.env,
+            contentToNames,
+            nameToContent,
+            declarations := layer.declarations
+          })
 
 def save (path : System.FilePath) (layer : CheckedLayer) : IO (Result Unit) := do
   if sqlitePath path then
@@ -347,24 +534,103 @@ def declarationAnchorNames : Declaration → List Name
   | .equalityPrimitives => equalityPrimitiveNames
   | .quotientPrimitives => quotientPrimitiveNames
 
+def checkCachedNames (env : Env) (names : List Name) : Result Unit := do
+  for name in names do
+    if env.contains name then
+      pure ()
+    else
+      fail s!"checked layer is missing cached constant {name}"
+
+def checkNoAnchorConflict (env : Env) (declaration : Declaration) : Result Unit := do
+  for name in declarationAnchorNames declaration do
+    if env.contains name then
+      fail s!"checked layer has a different declaration for {name}"
+    else
+      pure ()
+
 def CheckedLayer.reusable? (layer : CheckedLayer) (env : Env)
     (declaration : Declaration) : Result Bool := do
   let key := declarationContentKey declaration
   match layer.contentToNames.get? key with
   | some names =>
-      for name in names do
-        if env.contains name then
-          pure ()
-        else
-          fail s!"checked layer is missing cached constant {name}"
+      checkCachedNames env names
       pure true
   | none =>
-      for name in declarationAnchorNames declaration do
-        if env.contains name then
-          fail s!"checked layer has a different declaration for {name}"
-        else
-          pure ()
+      checkNoAnchorConflict env declaration
       pure false
+
+def parseContentMatchRow (row : String) : Result (Nat × List Name) := do
+  let (indexText, namesJson) ← splitSqlitePair row
+  let index ← parseSqliteNat "requested content index" indexText
+  let names ← parseNamesJson "requested content names" namesJson
+  pure (index, names)
+
+def sqliteRequestedContent (path : System.FilePath) (declarations : List Declaration) :
+    IO (Result (Std.HashMap Nat (List Name))) := do
+  let init : Std.HashMap Nat (List Name) := {}
+  let write : IO.FS.Handle → IO Unit := fun input => do
+    input.putStr sqliteSelectHeader
+    input.putStr "CREATE TEMP TABLE requested(pos INTEGER PRIMARY KEY, key TEXT NOT NULL);\n"
+    let mut pos := 0
+    for declaration in declarations do
+      input.putStr s!"INSERT INTO requested(pos,key) VALUES({pos},{sqlQuote (declarationContentKey declaration)});\n"
+      pos := pos + 1
+    input.putStr "SELECT requested.pos, content.names FROM requested JOIN content ON content.key = requested.key ORDER BY requested.pos;\n"
+  let step : Std.HashMap Nat (List Name) → String → IO (Result (Std.HashMap Nat (List Name))) :=
+    fun acc row => do
+      match parseContentMatchRow row with
+      | .error err => pure (.error err)
+      | .ok (index, names) => pure (.ok (acc.insert index names))
+  sqlite3FoldRows #["-readonly", path.toString] write init step
+
+def replaySqlite (manifest : Manifest) (layerPath : System.FilePath)
+    (audit : MPC.Adapters.Export.Audit) (declarations : List Declaration) :
+    IO (Result ReplaySummary) := do
+  match ← loadSqliteLayer layerPath with
+  | .error err => pure (.error err)
+  | .ok layer =>
+      match ← sqliteRequestedContent layerPath declarations with
+      | .error err => pure (.error err)
+      | .ok cachedContent =>
+          let mut newContentToNames : Std.HashMap String (List Name) := {}
+          let mut env := layer.env
+          let mut reused := 0
+          let mut checked := 0
+          let mut index := 0
+          for declaration in declarations do
+            let key := declarationContentKey declaration
+            match newContentToNames.get? key with
+            | some names =>
+                match checkCachedNames env names with
+                | .error err => return .error err
+                | .ok () => reused := reused + 1
+            | none =>
+                match cachedContent.get? index with
+                | some names =>
+                    match checkCachedNames env names with
+                    | .error err => return .error err
+                    | .ok () => reused := reused + 1
+                | none =>
+                    match checkNoAnchorConflict env declaration with
+                    | .error err => return .error err
+                    | .ok () =>
+                        let before := env
+                        match addDecl manifest env declaration with
+                        | .ok nextEnv =>
+                            match addedNames before nextEnv with
+                            | .error err => return .error err
+                            | .ok names =>
+                                env := nextEnv
+                                newContentToNames := newContentToNames.insert key names
+                                checked := checked + 1
+                        | .error err =>
+                            return .error {
+                              message := s!"while replaying {MPC.Adapters.Export.declarationKindLabel declaration} {MPC.Adapters.Export.declarationNameLabel declaration}: {err.message}"
+                            }
+            index := index + 1
+          match MPC.Adapters.Export.auditGenerated env audit with
+          | .error err => pure (.error err)
+          | .ok () => pure (.ok { env, reused, checked })
 
 def build (manifest : Manifest) (state : MPC.Adapters.Export.ParseState) :
     Result CheckedLayer := do
@@ -381,6 +647,18 @@ def build (manifest : Manifest) (state : MPC.Adapters.Export.ParseState) :
         fail s!"while replaying {MPC.Adapters.Export.declarationKindLabel declaration} {MPC.Adapters.Export.declarationNameLabel declaration}: {err.message}"
   MPC.Adapters.Export.auditGenerated env state.audit
   pure layer
+
+def saveFromState (manifest : Manifest) (path : System.FilePath)
+    (state : MPC.Adapters.Export.ParseState) : IO (Result SaveSummary) := do
+  if sqlitePath path then
+    saveSqliteFromState manifest path state
+  else
+    match build manifest state with
+    | .error err => pure (.error err)
+    | .ok layer => do
+        match ← save path layer with
+        | .error err => pure (.error err)
+        | .ok () => pure (.ok { declarations := layer.declarations, envLength := layer.env.length })
 
 def replay (manifest : Manifest) (layer : CheckedLayer) (audit : MPC.Adapters.Export.Audit)
     (declarations : List Declaration) : Result ReplaySummary := do

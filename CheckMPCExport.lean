@@ -652,12 +652,23 @@ def replayWithSavedLayer (config : Config) (state : MPC.Adapters.Export.ParseSta
   else if config.diagnosticAssumeGenerated then
     pure (.error { message := "--load-layer cannot be combined with diagnostic generated assumptions" })
   else
-    match ← MPC.Adapters.Layer.load layerPath with
-    | .error err => pure (.error { message := s!"while loading layer {layerPath}: {err.message}" })
-    | .ok layer => pure (replayWithLayer config state layer)
+    let declarations := prepareDeclarations config state
+    let audit :=
+      match config.limit? with
+      | some _ => {}
+      | none => state.audit
+    if MPC.Adapters.Layer.sqlitePath layerPath then
+      match ← MPC.Adapters.Layer.replaySqlite MPC.Configs.LeanCore429 layerPath audit declarations with
+      | .error err => pure (.error { message := s!"while loading layer {layerPath}: {err.message}" })
+      | .ok summary =>
+          pure (.ok { env := summary.env, reused := summary.reused, checked := summary.checked })
+    else
+      match ← MPC.Adapters.Layer.load layerPath with
+      | .error err => pure (.error { message := s!"while loading layer {layerPath}: {err.message}" })
+      | .ok layer => pure (replayWithLayer config state layer)
 
 def saveLayerConfig (config : Config) (state : MPC.Adapters.Export.ParseState)
-    (layerPath : System.FilePath) : IO (Result MPC.Adapters.Layer.CheckedLayer) := do
+    (layerPath : System.FilePath) : IO (Result MPC.Adapters.Layer.SaveSummary) := do
   if config.checkedLayerPath?.isSome || config.loadLayerPath?.isSome then
     pure (.error { message := "--save-layer cannot be combined with --checked-layer or --load-layer" })
   else if config.limit?.isSome then
@@ -674,12 +685,7 @@ def saveLayerConfig (config : Config) (state : MPC.Adapters.Export.ParseState)
     match ← MPC.Adapters.Layer.checkSavePath layerPath with
     | .error err => pure (.error err)
     | .ok () =>
-        match MPC.Adapters.Layer.build MPC.Configs.LeanCore429 state with
-        | .error err => pure (.error err)
-        | .ok layer => do
-            match ← MPC.Adapters.Layer.save layerPath layer with
-            | .error err => pure (.error err)
-            | .ok () => pure (.ok layer)
+        MPC.Adapters.Layer.saveFromState MPC.Configs.LeanCore429 layerPath state
 
 def profileDeclarationAt (config : Config) (state : MPC.Adapters.Export.ParseState)
     (index : Nat) : IO (Result Unit) := do
@@ -719,9 +725,9 @@ def run (args : List String) : IO UInt32 := do
           match config.saveLayerPath? with
           | some layerPath =>
               match ← saveLayerConfig config state layerPath with
-              | .ok layer => do
+              | .ok summary => do
                   printOutcome "layer-saved" config.inputPath
-                    s!"layer: {layerPath}; checked {layer.declarations} declaration entries; environment size {layer.env.length}"
+                    s!"layer: {layerPath}; checked {summary.declarations} declaration entries; environment size {summary.envLength}"
                   return 0
               | .error err => do
                   printOutcome "rejected" config.inputPath err.message
