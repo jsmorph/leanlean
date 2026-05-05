@@ -3,6 +3,31 @@ import Std.Data.HashMap
 
 namespace MPC.Adapters.Layer
 
+deriving instance Lean.ToJson, Lean.FromJson for Level
+deriving instance Lean.ToJson, Lean.FromJson for Literal
+deriving instance Lean.ToJson, Lean.FromJson for Expr
+deriving instance Lean.ToJson, Lean.FromJson for Binder
+deriving instance Lean.ToJson, Lean.FromJson for SimpleConstructorSpec
+deriving instance Lean.ToJson, Lean.FromJson for SimpleInductiveSpec
+deriving instance Lean.ToJson, Lean.FromJson for InductiveBlockSpec
+deriving instance Lean.ToJson, Lean.FromJson for IndexedConstructorSpec
+deriving instance Lean.ToJson, Lean.FromJson for IndexedInductiveSpec
+deriving instance Lean.ToJson, Lean.FromJson for SimpleRecursiveFieldInfo
+deriving instance Lean.ToJson, Lean.FromJson for SimpleRecursorConstructorInfo
+deriving instance Lean.ToJson, Lean.FromJson for SimpleRecursorInfo
+deriving instance Lean.ToJson, Lean.FromJson for MutualRecursiveFieldInfo
+deriving instance Lean.ToJson, Lean.FromJson for MutualRecursorConstructorInfo
+deriving instance Lean.ToJson, Lean.FromJson for MutualRecursorInfo
+deriving instance Lean.ToJson, Lean.FromJson for IndexedRecursiveFieldInfo
+deriving instance Lean.ToJson, Lean.FromJson for IndexedRecursorConstructorInfo
+deriving instance Lean.ToJson, Lean.FromJson for IndexedRecursorInfo
+deriving instance Lean.ToJson, Lean.FromJson for NestedRecursiveFieldInfo
+deriving instance Lean.ToJson, Lean.FromJson for NestedRecursorConstructorInfo
+deriving instance Lean.ToJson, Lean.FromJson for NestedRecursorTargetInfo
+deriving instance Lean.ToJson, Lean.FromJson for NestedRecursorInfo
+deriving instance Lean.ToJson, Lean.FromJson for ConstantKind
+deriving instance Lean.ToJson, Lean.FromJson for ConstantInfo
+
 structure CheckedLayer where
   env : Env := emptyEnv
   contentToNames : Std.HashMap String (List Name) := {}
@@ -13,6 +38,25 @@ structure ReplaySummary where
   env : Env
   reused : Nat := 0
   checked : Nat := 0
+
+structure ContentEntry where
+  key : String
+  names : List Name
+  deriving Lean.ToJson, Lean.FromJson
+
+structure LayerFile where
+  formatVersion : Nat
+  manifest : String
+  declarations : Nat
+  entries : List ConstantInfo
+  content : List ContentEntry
+  deriving Lean.ToJson, Lean.FromJson
+
+def formatVersion : Nat :=
+  1
+
+def manifestName : String :=
+  "LeanCore429"
 
 def declarationContentKey (declaration : Declaration) : String :=
   toString (repr declaration)
@@ -32,6 +76,54 @@ def CheckedLayer.record (layer : CheckedLayer) (declaration : Declaration)
     nameToContent := names.foldl (fun index name => index.insert name key) layer.nameToContent
     declarations := layer.declarations + 1
   }
+
+def contentEntries (layer : CheckedLayer) : List ContentEntry :=
+  layer.contentToNames.toList.map fun pair => { key := pair.1, names := pair.2 }
+
+def toLayerFile (layer : CheckedLayer) : LayerFile :=
+  {
+    formatVersion
+    manifest := manifestName
+    declarations := layer.declarations
+    entries := layer.env.entries
+    content := contentEntries layer
+  }
+
+def envFromEntries (entries : List ConstantInfo) : Result Env := do
+  let mut env := emptyEnv
+  for info in entries.reverse do
+    env ← Env.add env info
+  pure env
+
+def fromLayerFile (file : LayerFile) : Result CheckedLayer := do
+  if file.formatVersion != formatVersion then
+    fail s!"unsupported layer format version: {file.formatVersion}"
+  else if file.manifest != manifestName then
+    fail s!"unsupported layer manifest: {file.manifest}"
+  else
+    let env ← envFromEntries file.entries
+    let contentToNames :=
+      file.content.foldl
+        (fun index entry => index.insert entry.key entry.names)
+        ({} : Std.HashMap String (List Name))
+    let nameToContent :=
+      file.content.foldl
+        (fun index entry =>
+          entry.names.foldl (fun index name => index.insert name entry.key) index)
+        ({} : Std.HashMap Name String)
+    pure { env, contentToNames, nameToContent, declarations := file.declarations }
+
+def save (path : System.FilePath) (layer : CheckedLayer) : IO Unit := do
+  IO.FS.writeFile path (Lean.toJson (toLayerFile layer)).compress
+
+def load (path : System.FilePath) : IO (Result CheckedLayer) := do
+  let input ← IO.FS.readFile path
+  match Lean.Json.parse input with
+  | .error err => pure (.error { message := s!"invalid layer JSON: {err}" })
+  | .ok json =>
+      match (Lean.fromJson? json : Except String LayerFile) with
+      | .error err => pure (.error { message := s!"invalid layer file: {err}" })
+      | .ok file => pure (fromLayerFile file)
 
 def equalityPrimitiveNames : List Name :=
   ["Eq", "Eq.refl", "Eq.rec", "Eq.ndrec"]

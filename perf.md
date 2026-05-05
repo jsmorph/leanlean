@@ -147,3 +147,12 @@ Empty level-substitution fast paths now return the original level or expression 
 | Constructor eta baseline | 633,067 | 0 |
 | Empty level-substitution fast path | 620,929 | -12,138 |
 | Empty plus identity substitution experiment | 628,556 | -4,511 |
+
+## Checked Layers
+
+The first persistent checked layer stores the checked environment and lowered declaration-content table outside the checker.  Saving the `MPC.Env` layer still pays the cold replay cost, but loading the saved layer avoids rechecking the shared dependency closure for a target artifact.  The file is large because it stores full checked environment entries as JSON: `.tmp/mpc-env.layer.json` measured 417,651,533 bytes.
+
+| Run | Reused declarations | Checked declarations | Measured time |
+|---|---:|---:|---:|
+| Save `MPC.Env` layer | 0 | 2,213 | cold replay cost |
+| Load `MPC.Env` layer for `MPC.Packages.Literal` | 2,062 | 4 | 7,914 ms |
