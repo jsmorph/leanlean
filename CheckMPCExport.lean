@@ -28,8 +28,8 @@ def usage : String :=
   "usage: mpc-check-export [<export.ndjson>]\n" ++
   "       mpc-check-export --input <export.ndjson>\n" ++
   "       mpc-check-export --checked-layer <base.ndjson> <export.ndjson>\n" ++
-  "       mpc-check-export --save-layer <layer.json> <export.ndjson>\n" ++
-  "       mpc-check-export --load-layer <layer.json> <export.ndjson>\n" ++
+  "       mpc-check-export --save-layer <layer.json|layer.sqlite> <export.ndjson>\n" ++
+  "       mpc-check-export --load-layer <layer.json|layer.sqlite> <export.ndjson>\n" ++
   "       mpc-check-export [--limit <n>] [--trace] [--stats|--stats-jsonl|--profile-jsonl] [--diagnostic-assume-generated] <export.ndjson>\n" ++
   "       mpc-check-export --profile-declaration <n> <export.ndjson>\n" ++
   "       mpc-check-export [--assume-generated] <export.ndjson>  (alias for diagnostic mode)\n" ++
@@ -671,11 +671,15 @@ def saveLayerConfig (config : Config) (state : MPC.Adapters.Export.ParseState)
   else if config.diagnosticAssumeGenerated then
     pure (.error { message := "--save-layer cannot be combined with diagnostic generated assumptions" })
   else
-    match MPC.Adapters.Layer.build MPC.Configs.LeanCore429 state with
+    match ← MPC.Adapters.Layer.checkSavePath layerPath with
     | .error err => pure (.error err)
-    | .ok layer => do
-        MPC.Adapters.Layer.save layerPath layer
-        pure (.ok layer)
+    | .ok () =>
+        match MPC.Adapters.Layer.build MPC.Configs.LeanCore429 state with
+        | .error err => pure (.error err)
+        | .ok layer => do
+            match ← MPC.Adapters.Layer.save layerPath layer with
+            | .error err => pure (.error err)
+            | .ok () => pure (.ok layer)
 
 def profileDeclarationAt (config : Config) (state : MPC.Adapters.Export.ParseState)
     (index : Nat) : IO (Result Unit) := do
