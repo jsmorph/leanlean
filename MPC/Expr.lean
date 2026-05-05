@@ -27,11 +27,12 @@ def Expr.constLevels? : Expr → Option (Name × List Level)
   | .const name levels => some (name, levels)
   | _ => none
 
-partial def Expr.getAppFnArgs : Expr → Expr × List Expr
-  | .app fn arg =>
-      let (head, args) := fn.getAppFnArgs
-      (head, args ++ [arg])
-  | expr => (expr, [])
+partial def Expr.getAppFnArgsAux : Expr → List Expr → Expr × List Expr
+  | .app fn arg, args => Expr.getAppFnArgsAux fn (arg :: args)
+  | expr, args => (expr, args)
+
+def Expr.getAppFnArgs (expr : Expr) : Expr × List Expr :=
+  Expr.getAppFnArgsAux expr []
 
 partial def Expr.liftFrom (amount cutoff : Nat) : Expr → Expr
   | .bvar index =>
