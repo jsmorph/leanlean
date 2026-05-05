@@ -192,6 +192,60 @@ partial def functionEtaDefEq (manifest : Manifest) (env : Env) (levelParams : Le
         | _ => fail "function eta target is not a function"
     | _ => fail "function eta expansion is not a lambda"
 
+partial def structureEtaDefEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (ctx : Context) (other ctorExpr : Expr) : Result Unit := do
+  if !manifest.supportsProjections then
+    fail "structure eta is disabled by the manifest"
+  else
+    let other ← whnf manifest env levelParams other
+    let ctorExpr ← whnf manifest env levelParams ctorExpr
+    let (otherHead, _) := other.getAppFnArgs
+    match otherHead with
+    | .const otherName _ =>
+        match env.find? otherName with
+        | some { kind := .constructor .., .. } => fail "structure eta target is constructor-headed"
+        | _ => pure ()
+    | _ => pure ()
+    let (ctorHead, ctorArgs) := ctorExpr.getAppFnArgs
+    match ctorHead with
+    | .const ctorName ctorLevels =>
+        match env.find? ctorName with
+        | some { kind := .constructor inductiveName ctorIndex fieldCount, .. } =>
+            match env.find? inductiveName with
+            | some { kind := .inductiveType spec, .. } =>
+                match spec.constructors with
+                | [ctor] =>
+                    if ctorIndex != 0 ||
+                        ctor.name != ctorName ||
+                        fieldCount != ctor.fields.length ||
+                        ctorArgs.length != spec.params.length + fieldCount ||
+                        ctorLevels.length != spec.levelParams.length then
+                      fail "structure eta constructor shape mismatch"
+                    else if !simpleRecursorEtaDataResult spec ctorLevels then
+                      fail "structure eta target is proposition-valued"
+                    else
+                      match env.find? (inductiveName ++ ".rec") with
+                      | some { kind := .recursor recursorInfo, .. } =>
+                          let some ctorInfo :=
+                              findSimpleRecursorConstructor? ctorName recursorInfo.constructors
+                            | fail "structure eta recursor metadata missing constructor"
+                          if !ctorInfo.recursiveFields.isEmpty then
+                            fail "structure eta target has recursive fields"
+                          else
+                            defEq manifest env levelParams ctx
+                              (← infer manifest env levelParams ctx other)
+                              (← infer manifest env levelParams ctx ctorExpr)
+                            let fieldArgs := ctorArgs.drop spec.params.length
+                            for pair in (List.range fieldCount).zip fieldArgs do
+                              defEq manifest env levelParams ctx
+                                (.proj inductiveName pair.1 other)
+                                pair.2
+                      | _ => fail "structure eta recursor metadata missing"
+                | _ => fail "structure eta target is not a one-constructor structure"
+            | _ => fail "structure eta target is not a simple inductive"
+        | _ => fail "structure eta expression is not constructor-headed"
+    | _ => fail "structure eta expression is not constructor-headed"
+
 partial def defEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (left right : Expr) : Result Unit := do
   if left.alphaEq right then
@@ -200,16 +254,22 @@ partial def defEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     match structuralDefEq manifest env levelParams ctx left right with
     | .ok () => pure ()
     | .error structuralError =>
-        match proofIrrelevanceDefEq manifest env levelParams ctx left right with
+        match structureEtaDefEq manifest env levelParams ctx left right with
         | .ok () => pure ()
-        | .error proofError =>
-            match functionEtaDefEq manifest env levelParams ctx left right with
+        | .error _ =>
+            match structureEtaDefEq manifest env levelParams ctx right left with
             | .ok () => pure ()
             | .error _ =>
-                match functionEtaDefEq manifest env levelParams ctx right left with
+                match proofIrrelevanceDefEq manifest env levelParams ctx left right with
                 | .ok () => pure ()
-                | .error _ =>
-                    fail s!"{structuralError.message}; proof irrelevance fallback failed: {proofError.message}"
+                | .error proofError =>
+                    match functionEtaDefEq manifest env levelParams ctx left right with
+                    | .ok () => pure ()
+                    | .error _ =>
+                        match functionEtaDefEq manifest env levelParams ctx right left with
+                        | .ok () => pure ()
+                        | .error _ =>
+                            fail s!"{structuralError.message}; proof irrelevance fallback failed: {proofError.message}"
 
 end
 

@@ -1238,6 +1238,16 @@ def dPairStuckFst : Expr :=
 def dPairStuckSnd : Expr :=
   .proj "DPair" 1 dPairStuckTarget
 
+def dPairEtaConstructor : Expr :=
+  appN
+    (.const "DPair.mk" [])
+    [
+      alphaType,
+      .const "Pred" [],
+      dPairStuckFst,
+      dPairStuckSnd
+    ]
+
 def dPairEtaFstMotive : Expr :=
   .lam "target" dPairType alphaType
 
@@ -1997,6 +2007,8 @@ def checkProjections : IO Unit := do
   let etaDisabled ← expectOkLabel "structure recursor eta disabled"
     (normalize MPC.Configs.Poc baseEnv [] dPairRecFstEta)
   expectExprEq "structure recursor eta disabled value" etaDisabled dPairRecFstEta
+  expectError "structure eta disabled"
+    (defEq MPC.Configs.Poc baseEnv [] [] dPairEtaConstructor dPairStuckTarget)
   let env ← expectOkLabel "projection replay"
     (replay MPC.Configs.ProjectionPoc emptyEnv declarations)
   expectEnvContains "projection structure" env "DPair"
@@ -2031,6 +2043,10 @@ def checkProjections : IO Unit := do
   expectExprEq "second structure recursor eta value" sndEtaReduced dPairStuckSnd
   expectOkLabel "structure recursor eta conversion"
     (defEq MPC.Configs.ProjectionPoc env [] [] dPairRecSndEta dPairStuckSnd)
+  expectOkLabel "structure eta constructor left"
+    (defEq MPC.Configs.ProjectionPoc env [] [] dPairEtaConstructor dPairStuckTarget)
+  expectOkLabel "structure eta constructor right"
+    (defEq MPC.Configs.ProjectionPoc env [] [] dPairStuckTarget dPairEtaConstructor)
   expectError "projection field out of range"
     (infer MPC.Configs.ProjectionPoc env [] [] (.proj "DPair" 2 dPairTarget))
   let hAddLikeDeclarations :=
