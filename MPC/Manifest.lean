@@ -24,6 +24,11 @@ inductive InductiveMode where
   | indexed
   deriving BEq, Repr, Inhabited
 
+inductive NestedContainerMode where
+  | disabled
+  | lean429
+  deriving BEq, Repr, Inhabited
+
 inductive InductivePropMode where
   | disabled
   | propOnly
@@ -60,6 +65,7 @@ structure Manifest where
   prop : PropMode := .disabled
   literals : LiteralMode := .none
   inductives : InductiveMode := .none
+  nestedContainers : NestedContainerMode := .disabled
   inductiveProp : InductivePropMode := .disabled
   equality : EqualityMode := .disabled
   quotients : QuotientMode := .disabled
@@ -106,5 +112,8 @@ def Manifest.supportsNatLiterals (manifest : Manifest) : Bool :=
 
 def Manifest.supportsStringLiterals (manifest : Manifest) : Bool :=
   manifest.literals == .natAndString
+
+def Manifest.supportsLean429NestedContainers (manifest : Manifest) : Bool :=
+  manifest.nestedContainers == .lean429
 
 end MPC

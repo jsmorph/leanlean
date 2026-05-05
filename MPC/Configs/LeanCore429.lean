@@ -7,6 +7,7 @@ def LeanCore429 : Manifest :=
     Poc with
     literals := .natAndString
     inductives := .indexed
+    nestedContainers := .lean429
     inductiveProp := .largeElim
     equality := .primitive
     quotients := .primitive

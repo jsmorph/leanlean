@@ -13,7 +13,7 @@ def checkSimpleInductiveField
     (ctx : Context)
     (field : Binder) : Result Context := do
   let _ ← inferSort manifest env levelParams ctx field.type
-  if simpleStrictlyPositive inductiveName field.type then
+  if simpleStrictlyPositive manifest env inductiveName field.type then
     pure (ctx.extend field.name field.type)
   else
     fail s!"field {field.name} is not strictly positive in {inductiveName}"

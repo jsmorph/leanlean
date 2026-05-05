@@ -277,13 +277,42 @@ def getAppHeadName? (expr : Expr) : Option Name :=
   | .const name _ => some name
   | _ => none
 
-partial def simpleStrictlyPositive (target : Name) (expr : Expr) : Bool :=
+def lean429CovariantContainerArity? : Name → Option Nat
+  | "Array" => some 1
+  | "List" => some 1
+  | _ => none
+
+def availableCovariantContainer? (manifest : Manifest) (env : Env) (name : Name) :
+    Option Nat :=
+  if !manifest.supportsLean429NestedContainers then
+    none
+  else
+    match lean429CovariantContainerArity? name, env.find? name with
+    | some arity, some { kind := .inductiveType .., .. } => some arity
+    | some arity, some { kind := .indexedInductiveType .., .. } => some arity
+    | _, _ => none
+
+partial def simpleStrictlyPositive (manifest : Manifest) (env : Env) (target : Name)
+    (expr : Expr) : Bool :=
   if getAppHeadName? expr == some target then
     true
   else
-    match expr with
-    | .forallE _ domain body =>
-        !containsConst target domain && simpleStrictlyPositive target body
-    | _ => !containsConst target expr
+    let (head, args) := expr.getAppFnArgs
+    match head with
+    | .const name _ =>
+        match availableCovariantContainer? manifest env name with
+        | some arity =>
+            args.length == arity &&
+              args.all (simpleStrictlyPositive manifest env target)
+        | none =>
+            match expr with
+            | .forallE _ domain body =>
+                !containsConst target domain && simpleStrictlyPositive manifest env target body
+            | _ => !containsConst target expr
+    | _ =>
+        match expr with
+        | .forallE _ domain body =>
+            !containsConst target domain && simpleStrictlyPositive manifest env target body
+        | _ => !containsConst target expr
 
 end MPC
