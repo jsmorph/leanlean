@@ -23,6 +23,7 @@ lake build \
   MPC.Env \
   MPC.Declaration \
   MPC.Packages.Literal \
+  MPC.Packages.PrimitiveNat \
   mpc-check-export \
   leanlean-export-roots
 
@@ -95,3 +96,4 @@ run_mpc_export_self_check "mpc-manifest" "MPC.Manifest"
 run_mpc_export_self_check "mpc-env" "MPC.Env" "layer"
 run_mpc_export_self_check "mpc-declaration" "MPC.Declaration" "layer"
 run_mpc_export_self_check "mpc-packages-literal" "MPC.Packages.Literal" "layer"
+run_mpc_export_self_check "mpc-packages-primitive-nat" "MPC.Packages.PrimitiveNat" "layer"

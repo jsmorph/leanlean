@@ -38,6 +38,8 @@ def checkNatBinaryBoolPrimitiveDeclaration (name : Name) (info : ConstantInfo) :
     | .definition, some _ => pure ()
     | _, _ => fail s!"{name} primitive reduction requires a transparent definition"
 
+-- Avoid an exported sparse matcher with a large `Nat.hasNotBit` catch-all proof.
+set_option backward.match.sparseCases false in
 def boolCtorExpr (env : Env) (value : Bool) : Result Expr := do
   let name := if value then "Bool.true" else "Bool.false"
   match env.find? name with
