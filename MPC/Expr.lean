@@ -128,22 +128,27 @@ def Expr.instantiateSourceArgs (expr : Expr) (args : List Expr) : Expr :=
   expr.instantiateMany args
 
 partial def Expr.instantiateLevels (subst : List (Name × Level)) : Expr → Expr
-  | .bvar index => .bvar index
-  | .sort level => .sort (level.instantiate subst)
-  | .const name levels => .const name (levels.map (·.instantiate subst))
-  | .lit literal => .lit literal
-  | .app fn arg => .app (fn.instantiateLevels subst) (arg.instantiateLevels subst)
-  | .lam name type body =>
-      .lam name (type.instantiateLevels subst) (body.instantiateLevels subst)
-  | .forallE name type body =>
-      .forallE name (type.instantiateLevels subst) (body.instantiateLevels subst)
-  | .letE name type value body =>
-      .letE name
-        (type.instantiateLevels subst)
-        (value.instantiateLevels subst)
-        (body.instantiateLevels subst)
-  | .proj structureName fieldIndex target =>
-      .proj structureName fieldIndex (target.instantiateLevels subst)
+  | expr =>
+      if subst.isEmpty then
+        expr
+      else
+        match expr with
+        | .bvar index => .bvar index
+        | .sort level => .sort (level.instantiate subst)
+        | .const name levels => .const name (levels.map (·.instantiate subst))
+        | .lit literal => .lit literal
+        | .app fn arg => .app (fn.instantiateLevels subst) (arg.instantiateLevels subst)
+        | .lam name type body =>
+            .lam name (type.instantiateLevels subst) (body.instantiateLevels subst)
+        | .forallE name type body =>
+            .forallE name (type.instantiateLevels subst) (body.instantiateLevels subst)
+        | .letE name type value body =>
+            .letE name
+              (type.instantiateLevels subst)
+              (value.instantiateLevels subst)
+              (body.instantiateLevels subst)
+        | .proj structureName fieldIndex target =>
+            .proj structureName fieldIndex (target.instantiateLevels subst)
 
 partial def Expr.alphaEq : Expr → Expr → Bool
   | .bvar left, .bvar right => left == right

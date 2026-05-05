@@ -127,3 +127,23 @@ The indexed-environment run checks the full `MPC.Level` artifact in 34,288 ms: 1
 | 1274 | 2,559 | `MPC.Level.reduceIMax._proof_5` |
 | 1272 | 2,364 | `MPC.Level.reduceIMax._proof_3` |
 | 1302 | 2,361 | `MPC.Level.normalizeSummands?._proof_3` |
+
+## MPC.Env Self-Check
+
+After constructor-form structure eta, `MPC.Env` accepts as a whole-artifact export replay.  The first `--profile-jsonl` run checked 2,213 declaration entries in 633,067 ms, with 99.3 percent of measured time in theorem declarations.  Five private library proof declarations account for 576,472 ms, or 91.1 percent of the run, so the remaining performance problem is still proof conversion through imported dependencies rather than checking the MPC environment declarations themselves.
+
+| Index | Elapsed ms | Nodes | Def-head apps | Declaration |
+|---:|---:|---:|---:|---|
+| 1733 | 211,801 | 45,804 | 6,389 | `_private.Init.Data.Nat.Bitwise.Lemmas.0.Nat.le_of_testBit._proof_1_2` |
+| 1661 | 115,653 | 133,482 | 19,284 | `_private.Init.Data.BitVec.Lemmas.0.BitVec.toNat_sub_of_le._proof_1_2` |
+| 1845 | 106,489 | 127,996 | 14,583 | `_private.Std.Data.DHashMap.Internal.Defs.0.Std.DHashMap.Internal.Raw₀.expand.go._unary._proof_1` |
+| 1732 | 75,515 | 37,282 | 5,213 | `_private.Init.Data.Nat.Bitwise.Lemmas.0.Nat.le_of_testBit._proof_1_1` |
+| 1665 | 67,014 | 84,482 | 12,200 | `_private.Init.Data.BitVec.Lemmas.0.BitVec.toNat_sub_of_le._proof_1_3` |
+
+Empty level-substitution fast paths now return the original level or expression without traversing it.  This is a local semantic-preserving optimization: substituting no universe parameters cannot change the term.  On the same `MPC.Env` profile, it reduced measured replay time from 633,067 ms to 620,929 ms, a 12,138 ms improvement; a broader syntactic-identity substitution check measured worse than the empty-only version and was not kept.
+
+| Run | Measured ms | Change |
+|---|---:|---:|
+| Constructor eta baseline | 633,067 | 0 |
+| Empty level-substitution fast path | 620,929 | -12,138 |
+| Empty plus identity substitution experiment | 628,556 | -4,511 |

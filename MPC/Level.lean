@@ -73,14 +73,19 @@ partial def Level.closedIn (ctx : LevelContext) : Level → Bool
   | .imax left right => left.closedIn ctx && right.closedIn ctx
 
 partial def Level.instantiate (subst : List (Name × Level)) : Level → Level
-  | .zero => .zero
-  | .param name =>
-      match LevelContext.lookup? subst name with
-      | some value => value
-      | none => .param name
-  | .succ level => .succ (level.instantiate subst)
-  | .max left right => .max (left.instantiate subst) (right.instantiate subst)
-  | .imax left right => .imax (left.instantiate subst) (right.instantiate subst)
+  | level =>
+      if subst.isEmpty then
+        level
+      else
+        match level with
+        | .zero => .zero
+        | .param name =>
+            match LevelContext.lookup? subst name with
+            | some value => value
+            | none => .param name
+        | .succ level => .succ (level.instantiate subst)
+        | .max left right => .max (left.instantiate subst) (right.instantiate subst)
+        | .imax left right => .imax (left.instantiate subst) (right.instantiate subst)
 
 def Level.normalizeSummands? : Level → Option (List Level.Summand)
   | .zero => some [{ name? := none, offset := 0 }]
