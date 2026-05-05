@@ -1,4 +1,5 @@
 import MPC
+import MPC.Adapters.Layer
 
 open MPC
 
@@ -2239,6 +2240,29 @@ def checkAdapters : IO Unit := do
   expectError "NDJSON missing generated declaration"
     (MPC.Adapters.NDJSON.checkString MPC.Configs.Poc badNdjsonAuditInput)
 
+def alphaLayerTheoremType (name : Name) : Expr :=
+  pi name natType (.const "P" [])
+
+def alphaLayerTheoremValue (name : Name) : Expr :=
+  .lam name natType (.const "p" [])
+
+def checkLayerAlphaReuse : IO Unit := do
+  let first :=
+    .theorem "alphaLayerTheorem" []
+      (alphaLayerTheoremType "x")
+      (alphaLayerTheoremValue "x")
+  let second :=
+    .theorem "alphaLayerTheorem" []
+      (alphaLayerTheoremType "y")
+      (alphaLayerTheoremValue "z")
+  let declarations := baseDeclarations ++ [first]
+  let layer ← expectOkLabel "checked layer build"
+    (MPC.Adapters.Layer.build MPC.Configs.Poc { declarations, audit := {} })
+  let summary ← expectOkLabel "checked layer alpha replay"
+    (MPC.Adapters.Layer.replay MPC.Configs.Poc layer {} (baseDeclarations ++ [second]))
+  expect "checked layer alpha reuse count" (summary.reused == declarations.length)
+  expect "checked layer alpha checked count" (summary.checked == 0)
+
 def main : IO Unit := do
   checkUniverseComparison
   checkBasePackages
@@ -2255,3 +2279,4 @@ def main : IO Unit := do
   checkFunctionEta
   checkQuotients
   checkAdapters
+  checkLayerAlphaReuse

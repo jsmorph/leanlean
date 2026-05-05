@@ -548,6 +548,64 @@ def checkNoAnchorConflict (env : Env) (declaration : Declaration) : Result Unit 
     else
       pure ()
 
+def optionExprAlphaEq : Option Expr → Option Expr → Bool
+  | none, none => true
+  | some left, some right => left.alphaEq right
+  | _, _ => false
+
+def constantInfoMatchesAtomicDeclaration (info : ConstantInfo) : Declaration → Bool
+  | .axiom name levelParams type =>
+      info.name == name &&
+        info.levelParams == levelParams &&
+        info.type.alphaEq type &&
+        info.value?.isNone &&
+        info.kind == .axiom
+  | .definition name levelParams type value =>
+      info.name == name &&
+        info.levelParams == levelParams &&
+        info.type.alphaEq type &&
+        optionExprAlphaEq info.value? (some value) &&
+        info.kind == .definition
+  | .opaque name levelParams type value =>
+      info.name == name &&
+        info.levelParams == levelParams &&
+        info.type.alphaEq type &&
+        optionExprAlphaEq info.value? (some value) &&
+        info.kind == .opaque
+  | .theorem name levelParams type value =>
+      info.name == name &&
+        info.levelParams == levelParams &&
+        info.type.alphaEq type &&
+        optionExprAlphaEq info.value? (some value) &&
+        info.kind == .theorem
+  | _ => false
+
+def atomicDeclarationName? : Declaration → Option Name
+  | .axiom name ..
+  | .definition name ..
+  | .opaque name ..
+  | .theorem name .. => some name
+  | _ => none
+
+def checkExistingAtomicDeclaration (env : Env) (declaration : Declaration) : Result Bool := do
+  match atomicDeclarationName? declaration with
+  | none => pure false
+  | some name =>
+      match env.find? name with
+      | none => pure false
+      | some info =>
+          if constantInfoMatchesAtomicDeclaration info declaration then
+            pure true
+          else
+            fail s!"checked layer has a different declaration for {name}"
+
+def checkExistingDeclarationReuse (env : Env) (declaration : Declaration) : Result Bool := do
+  match ← checkExistingAtomicDeclaration env declaration with
+  | true => pure true
+  | false =>
+      checkNoAnchorConflict env declaration
+      pure false
+
 def CheckedLayer.reusable? (layer : CheckedLayer) (env : Env)
     (declaration : Declaration) : Result Bool := do
   let key := declarationContentKey declaration
@@ -556,8 +614,7 @@ def CheckedLayer.reusable? (layer : CheckedLayer) (env : Env)
       checkCachedNames env names
       pure true
   | none =>
-      checkNoAnchorConflict env declaration
-      pure false
+      checkExistingDeclarationReuse env declaration
 
 def parseContentMatchRow (row : String) : Result (Nat × List Name) := do
   let (indexText, namesJson) ← splitSqlitePair row
@@ -611,9 +668,12 @@ def replaySqlite (manifest : Manifest) (layerPath : System.FilePath)
                     | .error err => return .error err
                     | .ok () => reused := reused + 1
                 | none =>
-                    match checkNoAnchorConflict env declaration with
+                    match checkExistingDeclarationReuse env declaration with
                     | .error err => return .error err
-                    | .ok () =>
+                    | .ok true =>
+                        newContentToNames := newContentToNames.insert key (declarationAnchorNames declaration)
+                        reused := reused + 1
+                    | .ok false =>
                         let before := env
                         match addDecl manifest env declaration with
                         | .ok nextEnv =>
