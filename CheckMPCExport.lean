@@ -17,6 +17,7 @@ structure ReplayOptions where
 structure Config where
   inputPath : System.FilePath
   limit? : Option Nat := none
+  profileDeclaration? : Option Nat := none
   replayOptions : ReplayOptions := {}
   diagnosticAssumeGenerated : Bool := false
 
@@ -24,6 +25,7 @@ def usage : String :=
   "usage: mpc-check-export [<export.ndjson>]\n" ++
   "       mpc-check-export --input <export.ndjson>\n" ++
   "       mpc-check-export [--limit <n>] [--trace] [--stats|--stats-jsonl|--profile-jsonl] [--diagnostic-assume-generated] <export.ndjson>\n" ++
+  "       mpc-check-export --profile-declaration <n> <export.ndjson>\n" ++
   "       mpc-check-export [--assume-generated] <export.ndjson>  (alias for diagnostic mode)\n" ++
   "       IN=<export.ndjson> mpc-check-export"
 
@@ -35,18 +37,20 @@ def filePath (path : String) : Except String System.FilePath :=
 
 def configFromPath
     (limit? : Option Nat)
+    (profileDeclaration? : Option Nat)
     (replayOptions : ReplayOptions)
     (diagnosticAssumeGenerated : Bool)
     (path : String) :
     Except String Config := do
-  pure { inputPath := (← filePath path), limit?, replayOptions, diagnosticAssumeGenerated }
+  pure { inputPath := (← filePath path), limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated }
 
 def configFromEnv
     (limit? : Option Nat)
+    (profileDeclaration? : Option Nat)
     (replayOptions : ReplayOptions)
     (diagnosticAssumeGenerated : Bool) : IO (Except String Config) := do
   match ← IO.getEnv "IN" with
-  | some path => pure (configFromPath limit? replayOptions diagnosticAssumeGenerated path)
+  | some path => pure (configFromPath limit? profileDeclaration? replayOptions diagnosticAssumeGenerated path)
   | none => pure (.error "missing input path")
 
 def setInputPath (input? : Option String) (path : String) : Except String (Option String) := do
@@ -74,46 +78,53 @@ def setTelemetryFormat
 partial def parseArgsLoop
     (input? : Option String)
     (limit? : Option Nat)
+    (profileDeclaration? : Option Nat)
     (replayOptions : ReplayOptions)
     (diagnosticAssumeGenerated : Bool) :
-    List String → Except String (Option String × Option Nat × ReplayOptions × Bool)
-  | [] => pure (input?, limit?, replayOptions, diagnosticAssumeGenerated)
+    List String → Except String (Option String × Option Nat × Option Nat × ReplayOptions × Bool)
+  | [] => pure (input?, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated)
   | "--input" :: path :: rest => do
-      parseArgsLoop (← setInputPath input? path) limit? replayOptions diagnosticAssumeGenerated rest
+      parseArgsLoop (← setInputPath input? path) limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
   | "--input" :: [] => .error "missing value after --input"
   | "--limit" :: value :: rest => do
       if limit?.isSome then
         .error "multiple limits"
       else
-        parseArgsLoop input? (some (← parseNatArgument "limit" value)) replayOptions diagnosticAssumeGenerated rest
+        parseArgsLoop input? (some (← parseNatArgument "limit" value)) profileDeclaration? replayOptions diagnosticAssumeGenerated rest
   | "--limit" :: [] => .error "missing value after --limit"
+  | "--profile-declaration" :: value :: rest => do
+      if profileDeclaration?.isSome then
+        .error "multiple profile declaration indexes"
+      else
+        parseArgsLoop input? limit? (some (← parseNatArgument "profile declaration index" value)) replayOptions diagnosticAssumeGenerated rest
+  | "--profile-declaration" :: [] => .error "missing value after --profile-declaration"
   | "--trace" :: rest =>
-      parseArgsLoop input? limit? { replayOptions with trace := true } diagnosticAssumeGenerated rest
+      parseArgsLoop input? limit? profileDeclaration? { replayOptions with trace := true } diagnosticAssumeGenerated rest
   | "--stats" :: rest => do
-      parseArgsLoop input? limit? (← setTelemetryFormat replayOptions .text) diagnosticAssumeGenerated rest
+      parseArgsLoop input? limit? profileDeclaration? (← setTelemetryFormat replayOptions .text) diagnosticAssumeGenerated rest
   | "--stats-jsonl" :: rest => do
-      parseArgsLoop input? limit? (← setTelemetryFormat replayOptions .jsonl) diagnosticAssumeGenerated rest
+      parseArgsLoop input? limit? profileDeclaration? (← setTelemetryFormat replayOptions .jsonl) diagnosticAssumeGenerated rest
   | "--profile-jsonl" :: rest => do
-      parseArgsLoop input? limit? (← setTelemetryFormat replayOptions .profileJsonl) diagnosticAssumeGenerated rest
+      parseArgsLoop input? limit? profileDeclaration? (← setTelemetryFormat replayOptions .profileJsonl) diagnosticAssumeGenerated rest
   | "--diagnostic-assume-generated" :: rest =>
-      parseArgsLoop input? limit? replayOptions true rest
+      parseArgsLoop input? limit? profileDeclaration? replayOptions true rest
   | "--assume-generated" :: rest =>
-      parseArgsLoop input? limit? replayOptions true rest
+      parseArgsLoop input? limit? profileDeclaration? replayOptions true rest
   | "--help" :: _ => .error usage
   | arg :: rest =>
       if arg.startsWith "-" then
         .error s!"unknown argument: {arg}"
       else do
-        parseArgsLoop (← setInputPath input? arg) limit? replayOptions diagnosticAssumeGenerated rest
+        parseArgsLoop (← setInputPath input? arg) limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
 
 def parseArgs : List String → IO (Except String Config)
   | args => do
-      match parseArgsLoop none none {} false args with
+      match parseArgsLoop none none none {} false args with
       | .error err => pure (.error err)
-      | .ok (some path, limit?, replayOptions, diagnosticAssumeGenerated) =>
-          pure (configFromPath limit? replayOptions diagnosticAssumeGenerated path)
-      | .ok (none, limit?, replayOptions, diagnosticAssumeGenerated) =>
-          configFromEnv limit? replayOptions diagnosticAssumeGenerated
+      | .ok (some path, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated) =>
+          pure (configFromPath limit? profileDeclaration? replayOptions diagnosticAssumeGenerated path)
+      | .ok (none, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated) =>
+          configFromEnv limit? profileDeclaration? replayOptions diagnosticAssumeGenerated
 
 def printOutcome (status : String) (path : System.FilePath) (message : String) : IO Unit := do
   IO.println status
@@ -553,6 +564,27 @@ def replayConfig (config : Config) (state : MPC.Adapters.Export.ParseState) :
           | .ok () => pure (.ok env)
           | .error err => pure (.error err)
 
+def profileDeclarationAt (config : Config) (state : MPC.Adapters.Export.ParseState)
+    (index : Nat) : IO (Result Unit) := do
+  let declarations := prepareDeclarations { config with limit? := none } state
+  let prefixDeclarations := declarations.take index
+  let some declaration := declarations[index]?
+    | pure (.error { message := s!"profile declaration index {index} is out of range" })
+  match ← replayLoop MPC.Configs.LeanCore429 {} 0 0 emptyEnv prefixDeclarations with
+  | .error err => pure (.error err)
+  | .ok env =>
+      let telemetry : DeclarationTelemetry := {
+        index,
+        kind := MPC.Adapters.Export.declarationKindLabel declaration,
+        name := MPC.Adapters.Export.declarationNameLabel declaration,
+        elapsedMs := 0,
+        cumulativeMs := 0,
+        status := .checked,
+        profile? := some (profileDeclaration env declaration)
+      }
+      IO.println telemetry.toJson.compress
+      pure (.ok ())
+
 def run (args : List String) : IO UInt32 := do
   match ← parseArgs args with
   | .error err => do
@@ -567,6 +599,14 @@ def run (args : List String) : IO UInt32 := do
           printOutcome "unsupported" config.inputPath err.message
           return 2
       | .ok state =>
+          match config.profileDeclaration? with
+          | some index =>
+              match ← profileDeclarationAt config state index with
+              | .ok () => return 0
+              | .error err => do
+                  printOutcome "rejected" config.inputPath err.message
+                  return 1
+          | none => pure ()
           match ← replayConfig config state with
           | .error err => do
               printOutcome "rejected" config.inputPath err.message

@@ -102,3 +102,13 @@ With neutral string literals enabled, a traced prefix through declaration index 
 After adding specified-container positivity for `Array` and `List`, the same stress run checks through the exported theorem.  Declaration index 1243, `LeanLeanFaithfulness.ExportOmega.nat_linear_bounds._proof_1_1`, dominates the run at 123,902 ms, with 19,758 expression nodes and 2,512 transparent-definition head applications.  The checker then rejects during generated-recorder audit because the artifact expects `Lean.Syntax.rec_2`, which the current nested-inductive recursor generation does not produce.
 
 After adding generated nested recursor families for the specified unary containers, the Omega stress artifact accepts.  The accepted run checked 1245 declarations with environment size 1409, and the total measured replay time was 267,810 ms before nested recursor iota reduction and 248,858 ms after it.  Declaration index 1243 still dominates the profile: `LeanLeanFaithfulness.ExportOmega.nat_linear_bounds._proof_1_1` took 146,463 ms in the first accepted run and 129,394 ms after the iota rule, with the same 19,758 expression nodes and 2,512 transparent-definition head applications.  The nested-recursor counters are zero on that proof row, so the remaining performance issue remains broad conversion through ordinary proof terms rather than generated recursor audit, helper-target generation, or nested-recursive reduction.
+
+## MPC.Level Self-Check
+
+After projection-universe instantiation, `MPC.Level` no longer rejects at `MPC.Level.reduceIMax._proof_1`.  A prefix replay through declaration 1174 now reaches `Lean.Omega.IntList.dot_mod_gcd_left`, which dominates the current run.  The bounded prefix-1175 run accepted, but declaration 1174 alone took 81,846 ms out of 98,947 ms cumulative replay time.
+
+`mpc-check-export --profile-declaration <n>` replays the preceding declarations and emits structural counters for one selected declaration without checking that declaration.  This mode exists because `--profile-jsonl` emits only after a declaration finishes, which made the current wall hard to inspect.  The profile for declaration 1174 has 6,366 nodes, 830 transparent-definition head applications, no primitive Nat head applications, no projection nodes, and no nested recursor head applications, so the cost points to ordinary conversion through transparent proof definitions rather than a missing primitive or generated-reduction rule.
+
+| Index | Elapsed ms | Nodes | Def-head apps | Primitive Nat head apps | Nested recursor head apps | Declaration |
+|---:|---:|---:|---:|---:|---:|---|
+| 1174 | 81,846 | 6,366 | 830 | 0 | 0 | `Lean.Omega.IntList.dot_mod_gcd_left` |
