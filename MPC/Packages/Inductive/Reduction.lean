@@ -232,6 +232,8 @@ def reduceSimpleRecursorEta?
           pure (some (Expr.mkApps value trailing))
     | _ => pure none
 
+-- Avoid exported sparse matchers for recursor-reduction dispatch.
+set_option backward.match.sparseCases false in
 partial def reduceSimpleRecursor? (whnfFn : WhnfFn) (manifest : Manifest) (env : Env)
     (levelParams : LevelContext) (name : Name) (info : SimpleRecursorInfo)
     (levels : List Level) (args : List Expr) : Result (Option Expr) := do
@@ -284,6 +286,7 @@ partial def reduceSimpleRecursor? (whnfFn : WhnfFn) (manifest : Manifest) (env :
         | _ => pure none
     | none => pure none
 
+set_option backward.match.sparseCases false in
 partial def reduceMutualRecursor? (whnfFn : WhnfFn) (manifest : Manifest) (env : Env)
     (levelParams : LevelContext) (name : Name) (info : MutualRecursorInfo)
     (levels : List Level) (args : List Expr) : Result (Option Expr) := do
@@ -346,6 +349,7 @@ partial def reduceMutualRecursor? (whnfFn : WhnfFn) (manifest : Manifest) (env :
             | _ => pure none
       | _ => pure none
 
+set_option backward.match.sparseCases false in
 partial def reduceNestedRecursor? (whnfFn : WhnfFn) (manifest : Manifest) (env : Env)
     (levelParams : LevelContext) (name : Name) (info : NestedRecursorInfo)
     (levels : List Level) (args : List Expr) : Result (Option Expr) := do
@@ -420,6 +424,7 @@ partial def reduceNestedRecursor? (whnfFn : WhnfFn) (manifest : Manifest) (env :
             | _ => pure none
       | _ => pure none
 
+set_option backward.match.sparseCases false in
 partial def reduceIndexedRecursor? (whnfFn : WhnfFn) (manifest : Manifest) (env : Env)
     (levelParams : LevelContext) (name : Name) (info : IndexedRecursorInfo)
     (levels : List Level) (args : List Expr) : Result (Option Expr) := do
