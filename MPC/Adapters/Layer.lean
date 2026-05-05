@@ -569,6 +569,50 @@ def optionExprAlphaEq : Option Expr → Option Expr → Bool
   | some left, some right => left.alphaEq right
   | _, _ => false
 
+def binderListAlphaEq (left right : List Binder) : Bool :=
+  left.length == right.length &&
+    (left.zip right).all fun pair => pair.1.type.alphaEq pair.2.type
+
+def exprListAlphaEq (left right : List Expr) : Bool :=
+  left.length == right.length &&
+    (left.zip right).all fun pair => pair.1.alphaEq pair.2
+
+def simpleConstructorSpecAlphaEq (left right : SimpleConstructorSpec) : Bool :=
+  left.name == right.name && binderListAlphaEq left.fields right.fields
+
+def simpleConstructorSpecsAlphaEq
+    (left right : List SimpleConstructorSpec) : Bool :=
+  left.length == right.length &&
+    (left.zip right).all fun pair => simpleConstructorSpecAlphaEq pair.1 pair.2
+
+def simpleInductiveSpecAlphaEq
+    (left right : SimpleInductiveSpec) : Bool :=
+  left.name == right.name &&
+    left.levelParams == right.levelParams &&
+    binderListAlphaEq left.params right.params &&
+    left.resultLevel == right.resultLevel &&
+    simpleConstructorSpecsAlphaEq left.constructors right.constructors
+
+def indexedConstructorSpecAlphaEq
+    (left right : IndexedConstructorSpec) : Bool :=
+  left.name == right.name &&
+    binderListAlphaEq left.fields right.fields &&
+    exprListAlphaEq left.targetIndices right.targetIndices
+
+def indexedConstructorSpecsAlphaEq
+    (left right : List IndexedConstructorSpec) : Bool :=
+  left.length == right.length &&
+    (left.zip right).all fun pair => indexedConstructorSpecAlphaEq pair.1 pair.2
+
+def indexedInductiveSpecAlphaEq
+    (left right : IndexedInductiveSpec) : Bool :=
+  left.name == right.name &&
+    left.levelParams == right.levelParams &&
+    binderListAlphaEq left.params right.params &&
+    binderListAlphaEq left.indices right.indices &&
+    left.resultLevel == right.resultLevel &&
+    indexedConstructorSpecsAlphaEq left.constructors right.constructors
+
 def constantInfoMatchesAtomicDeclaration (info : ConstantInfo) : Declaration → Bool
   | .axiom name levelParams type =>
       info.name == name &&
@@ -603,6 +647,62 @@ def atomicDeclarationName? : Declaration → Option Name
   | .theorem name .. => some name
   | _ => none
 
+def constantInfoMatchesSimpleInductive (info : ConstantInfo)
+    (spec : SimpleInductiveSpec) : Bool :=
+  info.name == spec.name &&
+    info.levelParams == spec.levelParams &&
+    info.type.alphaEq (simpleInductiveType spec) &&
+    info.value?.isNone &&
+    match info.kind with
+    | .inductiveType cachedSpec => simpleInductiveSpecAlphaEq cachedSpec spec
+    | _ => false
+
+def constantInfoMatchesIndexedInductive (info : ConstantInfo)
+    (spec : IndexedInductiveSpec) : Bool :=
+  info.name == spec.name &&
+    info.levelParams == spec.levelParams &&
+    info.type.alphaEq (indexedInductiveType spec) &&
+    info.value?.isNone &&
+    match info.kind with
+    | .indexedInductiveType cachedSpec => indexedInductiveSpecAlphaEq cachedSpec spec
+    | _ => false
+
+def checkExistingSimpleInductiveDeclaration (env : Env) (spec : SimpleInductiveSpec) :
+    Result Bool := do
+  match env.find? spec.name with
+  | none => pure false
+  | some info =>
+      if constantInfoMatchesSimpleInductive info spec then
+        pure true
+      else
+        fail s!"checked layer has a different declaration for {spec.name}"
+
+def checkExistingIndexedInductiveDeclaration (env : Env) (spec : IndexedInductiveSpec) :
+    Result Bool := do
+  match env.find? spec.name with
+  | none => pure false
+  | some info =>
+      if constantInfoMatchesIndexedInductive info spec then
+        pure true
+      else
+        fail s!"checked layer has a different declaration for {spec.name}"
+
+def checkExistingInductiveBlockDeclaration (env : Env) (block : InductiveBlockSpec) :
+    Result Bool := do
+  let mut sawExisting := false
+  let mut sawMissing := false
+  for spec in block.specs do
+    match env.find? spec.name with
+    | none => sawMissing := true
+    | some info =>
+        sawExisting := true
+        if !(constantInfoMatchesSimpleInductive info { spec with levelParams := block.levelParams }) then
+          fail s!"checked layer has a different declaration for {spec.name}"
+  if sawExisting && sawMissing then
+    fail "checked layer contains only part of an inductive block"
+  else
+    pure sawExisting
+
 def checkExistingAtomicDeclaration (env : Env) (declaration : Declaration) : Result Bool := do
   match atomicDeclarationName? declaration with
   | none => pure false
@@ -619,8 +719,16 @@ def checkExistingDeclarationReuse (env : Env) (declaration : Declaration) : Resu
   match ← checkExistingAtomicDeclaration env declaration with
   | true => pure true
   | false =>
-      checkNoAnchorConflict env declaration
-      pure false
+      match declaration with
+      | .inductive spec =>
+          checkExistingSimpleInductiveDeclaration env spec
+      | .indexedInductive spec =>
+          checkExistingIndexedInductiveDeclaration env spec
+      | .inductiveBlock block =>
+          checkExistingInductiveBlockDeclaration env block
+      | _ =>
+          checkNoAnchorConflict env declaration
+          pure false
 
 def CheckedLayer.reusable? (layer : CheckedLayer) (env : Env)
     (declaration : Declaration) : Result Bool := do

@@ -2263,6 +2263,31 @@ def checkLayerAlphaReuse : IO Unit := do
   expect "checked layer alpha reuse count" (summary.reused == declarations.length)
   expect "checked layer alpha checked count" (summary.checked == 0)
 
+def alphaLayerInductiveSpec (paramName fieldName : Name) : SimpleInductiveSpec :=
+  {
+    name := "AlphaLayerBox"
+    params := [{ name := paramName, type := type0 }]
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "AlphaLayerBox.mk"
+          fields := [{ name := fieldName, type := .bvar 0 }]
+        }
+      ]
+  }
+
+def checkLayerInductiveAlphaReuse : IO Unit := do
+  let first := .inductive (alphaLayerInductiveSpec "α" "value")
+  let second := .inductive (alphaLayerInductiveSpec "β" "item")
+  let declarations := baseDeclarations ++ [first]
+  let layer ← expectOkLabel "checked layer inductive build"
+    (MPC.Adapters.Layer.build MPC.Configs.Poc { declarations, audit := {} })
+  let summary ← expectOkLabel "checked layer inductive alpha replay"
+    (MPC.Adapters.Layer.replay MPC.Configs.Poc layer {} (baseDeclarations ++ [second]))
+  expect "checked layer inductive alpha reuse count" (summary.reused == declarations.length)
+  expect "checked layer inductive alpha checked count" (summary.checked == 0)
+
 def main : IO Unit := do
   checkUniverseComparison
   checkBasePackages
@@ -2280,3 +2305,4 @@ def main : IO Unit := do
   checkQuotients
   checkAdapters
   checkLayerAlphaReuse
+  checkLayerInductiveAlphaReuse
