@@ -32,6 +32,9 @@ def expectEnvContains (label : String) (env : Env) (name : Name) : IO Unit :=
   else
     throw <| IO.userError s!"{label}: missing {name}"
 
+def shadowEnv (env : Env) (info : ConstantInfo) : Env :=
+  { entries := info :: env.entries, index := env.index.insert info.name info }
+
 def type0 : Expr :=
   .sort (.succ .zero)
 
@@ -2030,15 +2033,15 @@ def checkPrimitiveNat : IO Unit := do
   let badNatAddInfo : ConstantInfo :=
     { name := "Nat.add", levelParams := [], type := natBinaryBoolType, value? := some natBinaryBoolFalseValue, kind := .definition }
   expectError "Nat.add primitive declaration shape"
-    (normalize MPC.Configs.PrimitiveNatPoc (badNatAddInfo :: env) [] (appN (.const "Nat.add" []) [natZero, natZero]))
+    (normalize MPC.Configs.PrimitiveNatPoc (shadowEnv env badNatAddInfo) [] (appN (.const "Nat.add" []) [natZero, natZero]))
   let badNatBeqInfo : ConstantInfo :=
     { name := "Nat.beq", levelParams := [], type := natBinaryBoolType, kind := .axiom }
   expectError "Nat.beq primitive declaration kind"
-    (normalize MPC.Configs.PrimitiveNatPoc (badNatBeqInfo :: env) [] (appN (.const "Nat.beq" []) [natZero, natZero]))
+    (normalize MPC.Configs.PrimitiveNatPoc (shadowEnv env badNatBeqInfo) [] (appN (.const "Nat.beq" []) [natZero, natZero]))
   let badBoolTrueInfo : ConstantInfo :=
     { name := "Bool.true", levelParams := [], type := natType, kind := .constructor "Bool" 1 0 }
   expectError "Nat.beq primitive Bool constructor shape"
-    (normalize MPC.Configs.PrimitiveNatPoc (badBoolTrueInfo :: env) [] (appN (.const "Nat.beq" []) [natZero, natZero]))
+    (normalize MPC.Configs.PrimitiveNatPoc (shadowEnv env badBoolTrueInfo) [] (appN (.const "Nat.beq" []) [natZero, natZero]))
 
 def checkFunctionEta : IO Unit := do
   let declarations := baseDeclarations ++ etaDeclarations

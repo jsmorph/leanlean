@@ -1,5 +1,6 @@
 import MPC.Context
 import MPC.Manifest
+import Std.Data.HashMap
 
 namespace MPC
 
@@ -148,10 +149,12 @@ structure ConstantInfo where
   kind : ConstantKind
   deriving BEq, Repr, Inhabited
 
-abbrev Env := List ConstantInfo
+structure Env where
+  entries : List ConstantInfo := []
+  index : Std.HashMap Name ConstantInfo := {}
 
 def emptyEnv : Env :=
-  []
+  {}
 
 def listGet? : List α → Nat → Option α
   | [], _ => none
@@ -159,16 +162,19 @@ def listGet? : List α → Nat → Option α
   | _ :: rest, index + 1 => listGet? rest index
 
 def Env.find? (env : Env) (name : Name) : Option ConstantInfo :=
-  List.find? (fun info => info.name == name) env
+  env.index.get? name
 
 def Env.contains (env : Env) (name : Name) : Bool :=
-  (env.find? name).isSome
+  env.index.contains name
+
+def Env.length (env : Env) : Nat :=
+  env.entries.length
 
 def Env.add (env : Env) (info : ConstantInfo) : Result Env :=
   if env.contains info.name then
     fail s!"constant already exists: {info.name}"
   else
-    pure (info :: env)
+    pure { entries := info :: env.entries, index := env.index.insert info.name info }
 
 def ConstantInfo.levelSubst? (info : ConstantInfo) (levels : List Level) :
     Option (List (Name × Level)) :=

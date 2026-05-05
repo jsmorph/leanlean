@@ -171,8 +171,8 @@ partial def proofIrrelevanceDefEq (manifest : Manifest) (env : Env) (levelParams
     fail "proof irrelevance is disabled by the manifest"
   else
     let leftType ← infer manifest env levelParams ctx left
-    let rightType ← infer manifest env levelParams ctx right
     isPropExpr manifest env levelParams ctx leftType
+    let rightType ← infer manifest env levelParams ctx right
     defEq manifest env levelParams ctx leftType rightType
 
 partial def functionEtaDefEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)

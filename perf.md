@@ -105,10 +105,25 @@ After adding generated nested recursor families for the specified unary containe
 
 ## MPC.Level Self-Check
 
-After projection-universe instantiation, `MPC.Level` no longer rejects at `MPC.Level.reduceIMax._proof_1`.  A prefix replay through declaration 1174 now reaches `Lean.Omega.IntList.dot_mod_gcd_left`, which dominates the current run.  The bounded prefix-1175 run accepted, but declaration 1174 alone took 81,846 ms out of 98,947 ms cumulative replay time.
+After projection-universe instantiation, `MPC.Level` no longer rejects at `MPC.Level.reduceIMax._proof_1`.  A prefix replay through declaration 1174 then reached `Lean.Omega.IntList.dot_mod_gcd_left`, which dominated the run.  The original bounded prefix-1175 run accepted, but declaration 1174 alone took 81,846 ms out of 98,947 ms cumulative replay time.
 
 `mpc-check-export --profile-declaration <n>` replays the preceding declarations and emits structural counters for one selected declaration without checking that declaration.  This mode exists because `--profile-jsonl` emits only after a declaration finishes, which made the current wall hard to inspect.  The profile for declaration 1174 has 6,366 nodes, 830 transparent-definition head applications, no primitive Nat head applications, no projection nodes, and no nested recursor head applications, so the cost points to ordinary conversion through transparent proof definitions rather than a missing primitive or generated-reduction rule.
 
-| Index | Elapsed ms | Nodes | Def-head apps | Primitive Nat head apps | Nested recursor head apps | Declaration |
-|---:|---:|---:|---:|---:|---:|---|
-| 1174 | 81,846 | 6,366 | 830 | 0 | 0 | `Lean.Omega.IntList.dot_mod_gcd_left` |
+The first successful optimization indexes the environment by name.  The diagnostic chronological-list experiment showed that lookup order was a major cost by making old constants cheap and recent constants expensive.  The committed representation keeps a declaration list for size and diagnostics, while `Env.find?` reads from a `HashMap`, so lookup cost no longer depends on declaration age.
+
+| Run | Prefix setup ms | Declaration 1174 ms | Prefix total ms |
+|---|---:|---:|---:|
+| Latest-first list baseline | 17,101 | 81,846 | 98,947 |
+| Left-type-first proof irrelevance | 16,585 | 81,638 | 98,223 |
+| Chronological-list diagnostic | 3,307 | 21,342 | 24,649 |
+| Indexed environment | 1,632 | 15,637 | 17,269 |
+
+The indexed-environment run checks the full `MPC.Level` artifact in 34,288 ms: 1,396 declaration entries and environment size 1,594.  The remaining time is still concentrated in proof-heavy declarations, but the old single-declaration wall no longer blocks full replay.  The next performance question is repeated conversion and instantiation inside those proof terms, not environment search.
+
+| Index | Elapsed ms | Declaration |
+|---:|---:|---|
+| 1174 | 15,566 | `Lean.Omega.IntList.dot_mod_gcd_left` |
+| 1234 | 3,149 | `Lean.Omega.tidy_sat` |
+| 1274 | 2,559 | `MPC.Level.reduceIMax._proof_5` |
+| 1272 | 2,364 | `MPC.Level.reduceIMax._proof_3` |
+| 1302 | 2,361 | `MPC.Level.normalizeSummands?._proof_3` |
