@@ -18,12 +18,13 @@ structure Config where
   inputPath : System.FilePath
   limit? : Option Nat := none
   replayOptions : ReplayOptions := {}
-  assumeGenerated : Bool := false
+  diagnosticAssumeGenerated : Bool := false
 
 def usage : String :=
   "usage: mpc-check-export [<export.ndjson>]\n" ++
   "       mpc-check-export --input <export.ndjson>\n" ++
-  "       mpc-check-export [--limit <n>] [--trace] [--stats|--stats-jsonl|--profile-jsonl] [--assume-generated] <export.ndjson>\n" ++
+  "       mpc-check-export [--limit <n>] [--trace] [--stats|--stats-jsonl|--profile-jsonl] [--diagnostic-assume-generated] <export.ndjson>\n" ++
+  "       mpc-check-export [--assume-generated] <export.ndjson>  (alias for diagnostic mode)\n" ++
   "       IN=<export.ndjson> mpc-check-export"
 
 def filePath (path : String) : Except String System.FilePath :=
@@ -35,17 +36,17 @@ def filePath (path : String) : Except String System.FilePath :=
 def configFromPath
     (limit? : Option Nat)
     (replayOptions : ReplayOptions)
-    (assumeGenerated : Bool)
+    (diagnosticAssumeGenerated : Bool)
     (path : String) :
     Except String Config := do
-  pure { inputPath := (← filePath path), limit?, replayOptions, assumeGenerated }
+  pure { inputPath := (← filePath path), limit?, replayOptions, diagnosticAssumeGenerated }
 
 def configFromEnv
     (limit? : Option Nat)
     (replayOptions : ReplayOptions)
-    (assumeGenerated : Bool) : IO (Except String Config) := do
+    (diagnosticAssumeGenerated : Bool) : IO (Except String Config) := do
   match ← IO.getEnv "IN" with
-  | some path => pure (configFromPath limit? replayOptions assumeGenerated path)
+  | some path => pure (configFromPath limit? replayOptions diagnosticAssumeGenerated path)
   | none => pure (.error "missing input path")
 
 def setInputPath (input? : Option String) (path : String) : Except String (Option String) := do
@@ -74,26 +75,28 @@ partial def parseArgsLoop
     (input? : Option String)
     (limit? : Option Nat)
     (replayOptions : ReplayOptions)
-    (assumeGenerated : Bool) :
+    (diagnosticAssumeGenerated : Bool) :
     List String → Except String (Option String × Option Nat × ReplayOptions × Bool)
-  | [] => pure (input?, limit?, replayOptions, assumeGenerated)
+  | [] => pure (input?, limit?, replayOptions, diagnosticAssumeGenerated)
   | "--input" :: path :: rest => do
-      parseArgsLoop (← setInputPath input? path) limit? replayOptions assumeGenerated rest
+      parseArgsLoop (← setInputPath input? path) limit? replayOptions diagnosticAssumeGenerated rest
   | "--input" :: [] => .error "missing value after --input"
   | "--limit" :: value :: rest => do
       if limit?.isSome then
         .error "multiple limits"
       else
-        parseArgsLoop input? (some (← parseNatArgument "limit" value)) replayOptions assumeGenerated rest
+        parseArgsLoop input? (some (← parseNatArgument "limit" value)) replayOptions diagnosticAssumeGenerated rest
   | "--limit" :: [] => .error "missing value after --limit"
   | "--trace" :: rest =>
-      parseArgsLoop input? limit? { replayOptions with trace := true } assumeGenerated rest
+      parseArgsLoop input? limit? { replayOptions with trace := true } diagnosticAssumeGenerated rest
   | "--stats" :: rest => do
-      parseArgsLoop input? limit? (← setTelemetryFormat replayOptions .text) assumeGenerated rest
+      parseArgsLoop input? limit? (← setTelemetryFormat replayOptions .text) diagnosticAssumeGenerated rest
   | "--stats-jsonl" :: rest => do
-      parseArgsLoop input? limit? (← setTelemetryFormat replayOptions .jsonl) assumeGenerated rest
+      parseArgsLoop input? limit? (← setTelemetryFormat replayOptions .jsonl) diagnosticAssumeGenerated rest
   | "--profile-jsonl" :: rest => do
-      parseArgsLoop input? limit? (← setTelemetryFormat replayOptions .profileJsonl) assumeGenerated rest
+      parseArgsLoop input? limit? (← setTelemetryFormat replayOptions .profileJsonl) diagnosticAssumeGenerated rest
+  | "--diagnostic-assume-generated" :: rest =>
+      parseArgsLoop input? limit? replayOptions true rest
   | "--assume-generated" :: rest =>
       parseArgsLoop input? limit? replayOptions true rest
   | "--help" :: _ => .error usage
@@ -101,16 +104,16 @@ partial def parseArgsLoop
       if arg.startsWith "-" then
         .error s!"unknown argument: {arg}"
       else do
-        parseArgsLoop (← setInputPath input? arg) limit? replayOptions assumeGenerated rest
+        parseArgsLoop (← setInputPath input? arg) limit? replayOptions diagnosticAssumeGenerated rest
 
 def parseArgs : List String → IO (Except String Config)
   | args => do
       match parseArgsLoop none none {} false args with
       | .error err => pure (.error err)
-      | .ok (some path, limit?, replayOptions, assumeGenerated) =>
-          pure (configFromPath limit? replayOptions assumeGenerated path)
-      | .ok (none, limit?, replayOptions, assumeGenerated) =>
-          configFromEnv limit? replayOptions assumeGenerated
+      | .ok (some path, limit?, replayOptions, diagnosticAssumeGenerated) =>
+          pure (configFromPath limit? replayOptions diagnosticAssumeGenerated path)
+      | .ok (none, limit?, replayOptions, diagnosticAssumeGenerated) =>
+          configFromEnv limit? replayOptions diagnosticAssumeGenerated
 
 def printOutcome (status : String) (path : System.FilePath) (message : String) : IO Unit := do
   IO.println status
@@ -495,7 +498,7 @@ def prepareDeclarations (config : Config) (state : MPC.Adapters.Export.ParseStat
     match config.limit? with
     | some limit => state.declarations.take limit
     | none => state.declarations
-  if config.assumeGenerated then
+  if config.diagnosticAssumeGenerated then
     declarations.map fun declaration =>
       if generatedSupportAssumption declaration then
         assumeGeneratedSupport declaration
@@ -505,8 +508,8 @@ def prepareDeclarations (config : Config) (state : MPC.Adapters.Export.ParseStat
     declarations
 
 def generatedAssumptionCount (config : Config) (state : MPC.Adapters.Export.ParseState) : Nat :=
-  if config.assumeGenerated then
-    (prepareDeclarations { config with assumeGenerated := false } state).filter generatedSupportAssumption |>.length
+  if config.diagnosticAssumeGenerated then
+    (prepareDeclarations { config with diagnosticAssumeGenerated := false } state).filter generatedSupportAssumption |>.length
   else
     0
 
@@ -552,11 +555,16 @@ def run (args : List String) : IO UInt32 := do
                 | none => ""
               let assumptionText :=
                 let count := generatedAssumptionCount config state
-                if count == 0 then
+                if !config.diagnosticAssumeGenerated then
                   ""
                 else
                   s!"; assumed {count} generated-support declarations"
-              printOutcome "accepted" config.inputPath s!"checked {prefixText}{checked} declaration entries; environment size {env.length}{assumptionText}"
+              let status :=
+                if config.diagnosticAssumeGenerated then
+                  "diagnostic-accepted"
+                else
+                  "accepted"
+              printOutcome status config.inputPath s!"checked {prefixText}{checked} declaration entries; environment size {env.length}{assumptionText}"
               return 0
 
 end MPC.CheckExport
