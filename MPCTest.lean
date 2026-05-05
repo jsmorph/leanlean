@@ -383,6 +383,114 @@ def nestedIndexedClosedRecursorOnNil : Expr :=
       nestedIndexedClosedTarget
     ]
 
+def nestedIndexedParamClosedSpec : SimpleInductiveSpec :=
+  {
+    name := "NestedIndexedParamClosed"
+    params := [{ name := "A", type := type0 }]
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "NestedIndexedParamClosed.mk"
+          fields :=
+            [
+              {
+                name := "children"
+                type :=
+                  appN
+                    (.const "Vec" [])
+                    [
+                      .app (.const "NestedIndexedParamClosed" []) (.bvar 0),
+                      .const "Nat.zero" []
+                    ]
+              }
+            ]
+        }
+      ]
+  }
+
+def nestedIndexedParamLocalSpec : SimpleInductiveSpec :=
+  {
+    name := "NestedIndexedParamLocal"
+    params := [{ name := "A", type := type0 }]
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "NestedIndexedParamLocal.mk"
+          fields :=
+            [
+              {
+                name := "children"
+                type :=
+                  pi "fuel" natType
+                    (appN
+                      (.const "Vec" [])
+                      [
+                        .app (.const "NestedIndexedParamLocal" []) (.bvar 1),
+                        .bvar 0
+                      ])
+              }
+            ]
+        }
+      ]
+  }
+
+def nestedIndexedParamClosedNatType : Expr :=
+  .app (.const "NestedIndexedParamClosed" []) natType
+
+def vecNestedIndexedParamClosedZero : Expr :=
+  appN
+    (.const "Vec" [])
+    [
+      nestedIndexedParamClosedNatType,
+      .const "Nat.zero" []
+    ]
+
+def vecNestedIndexedParamClosedNil : Expr :=
+  .app (.const "Vec.nil" []) nestedIndexedParamClosedNatType
+
+def nestedIndexedParamClosedTarget : Expr :=
+  appN
+    (.const "NestedIndexedParamClosed.mk" [])
+    [
+      natType,
+      vecNestedIndexedParamClosedNil
+    ]
+
+def nestedIndexedParamClosedRootMotive : Expr :=
+  .lam "target" nestedIndexedParamClosedNatType (.const "P" [])
+
+def nestedIndexedParamClosedVecMotive : Expr :=
+  .lam "n" natType
+    (.lam "target"
+      (appN (.const "Vec" []) [nestedIndexedParamClosedNatType, .bvar 0])
+      (.const "P" []))
+
+def nestedIndexedParamClosedRootMinor : Expr :=
+  .lam "children" vecNestedIndexedParamClosedZero
+    (.lam "ih" (.const "P" []) (.bvar 0))
+
+def nestedIndexedParamClosedVecConsMinor : Expr :=
+  .lam "n" natType
+    (.lam "head" nestedIndexedParamClosedNatType
+      (.lam "tail" (appN (.const "Vec" []) [nestedIndexedParamClosedNatType, .bvar 1])
+        (.lam "headIH" (.const "P" [])
+          (.lam "tailIH" (.const "P" []) (.bvar 0)))))
+
+def nestedIndexedParamClosedRecursorOnNil : Expr :=
+  appN
+    (.const "NestedIndexedParamClosed.rec" [.zero])
+    [
+      natType,
+      nestedIndexedParamClosedRootMotive,
+      nestedIndexedParamClosedVecMotive,
+      nestedIndexedParamClosedRootMinor,
+      .const "p" [],
+      nestedIndexedParamClosedVecConsMinor,
+      nestedIndexedParamClosedTarget
+    ]
+
 def badNestedArraySpec : SimpleInductiveSpec :=
   {
     name := "BadNestedArray"
@@ -1222,6 +1330,39 @@ def checkSimpleInductives : IO Unit := do
       | none => throw <| IO.userError "local indexed helper target missing"
   | some _ => throw <| IO.userError "local indexed helper recursor has wrong kind"
   | none => throw <| IO.userError "local indexed helper recursor missing"
+  let nestedIndexedParamClosedEnv ← expectOkLabel "parameterized closed indexed helper replay"
+    (replay MPC.Configs.LeanCore429 emptyEnv
+      (baseDeclarations ++ [.indexedInductive vecSpec, .inductive nestedIndexedParamClosedSpec]))
+  expectEnvContains
+    "parameterized closed indexed helper target recursor"
+    nestedIndexedParamClosedEnv
+    "NestedIndexedParamClosed.rec_1"
+  let nestedIndexedParamClosedReduced ←
+    expectOkLabel "parameterized closed indexed helper reduction"
+      (normalize
+        MPC.Configs.LeanCore429
+        nestedIndexedParamClosedEnv
+        []
+        nestedIndexedParamClosedRecursorOnNil)
+  expectExprEq
+    "parameterized closed indexed helper iota"
+    nestedIndexedParamClosedReduced
+    (.const "p" [])
+  let nestedIndexedParamLocalEnv ← expectOkLabel "parameterized local indexed helper replay"
+    (replay MPC.Configs.LeanCore429 emptyEnv
+      (baseDeclarations ++ [.indexedInductive vecSpec, .inductive nestedIndexedParamLocalSpec]))
+  expectEnvContains
+    "parameterized local indexed helper target recursor"
+    nestedIndexedParamLocalEnv
+    "NestedIndexedParamLocal.rec_1"
+  match nestedIndexedParamLocalEnv.find? "NestedIndexedParamLocal.rec_1" with
+  | some { kind := .nestedRecursor info, .. } =>
+      match listGet? info.targets 1 with
+      | some target =>
+          expect "parameterized local indexed helper target local count" (target.locals.length == 1)
+      | none => throw <| IO.userError "parameterized local indexed helper target missing"
+  | some _ => throw <| IO.userError "parameterized local indexed helper recursor has wrong kind"
+  | none => throw <| IO.userError "parameterized local indexed helper recursor missing"
   expectError "negative occurrence inside nested container"
     (replay MPC.Configs.LeanCore429 emptyEnv
       (baseDeclarations ++ [.inductive listSpec, .inductive arraySpec, .inductive badNestedArraySpec]))

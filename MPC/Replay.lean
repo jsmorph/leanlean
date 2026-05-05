@@ -238,8 +238,15 @@ def instantiateIndexBinders (levelSubst : List (Name × Level)) (targetArgs : Li
       { binder with type } :: instantiateIndexBinders levelSubst targetArgs (bound + 1) rest
 
 def nestedContainerOccurrence? (manifest : Manifest) (env : Env) (rootName : Name)
-    (expr : Expr) : Result (Option NestedContainerOccurrence) := do
+    (fieldCount localCount : Nat) (expr : Expr) :
+    Result (Option NestedContainerOccurrence) := do
   let (head, args) := expr.getAppFnArgs
+  let lowerTargetParameter (arg : Expr) : Result Expr := do
+    let some withoutFields := dropBVarsFrom fieldCount localCount arg
+      | fail s!"nested target parameter depends on constructor fields: {repr arg}"
+    let some lowered := dropBVars localCount withoutFields
+      | fail s!"nested target parameter depends on local binders: {repr arg}"
+    pure lowered
   match head with
   | .const name levels =>
       match availableCovariantContainer? manifest env name with
@@ -261,29 +268,33 @@ def nestedContainerOccurrence? (manifest : Manifest) (env : Env) (rootName : Nam
                     fail s!"nested indexed target {name} has wrong universe arity"
                   else if args.length != spec.params.length + spec.indices.length then
                     fail s!"nested indexed target {name} has wrong argument arity"
+                  else if info.positiveArgIndex >= spec.params.length then
+                    fail s!"recursive occurrence appears outside a positive parameter of {name}"
                   else
-                    let params := args.take spec.params.length
-                    if info.positiveArgIndex >= spec.params.length then
-                      fail s!"recursive occurrence appears outside a positive parameter of {name}"
-                    else
-                      let levelSubst := spec.levelParams.zip levels
-                      let locals := instantiateIndexBinders levelSubst params 0 spec.indices
-                      let localArgs := sourceOrderBvars locals.length 0
-                      let target :=
-                        Expr.mkApps (.const name levels) (params ++ localArgs)
-                      pure
-                        (some
-                          {
-                            schema := { locals, target }
-                            targetArgs := args.drop spec.params.length
-                          })
+                    let params ←
+                      (args.take spec.params.length).mapM lowerTargetParameter
+                    let levelSubst := spec.levelParams.zip levels
+                    let locals := instantiateIndexBinders levelSubst params 0 spec.indices
+                    let localArgs := sourceOrderBvars locals.length 0
+                    let targetParams := params.map (·.lift locals.length)
+                    let target :=
+                      Expr.mkApps (.const name levels) (targetParams ++ localArgs)
+                    pure
+                      (some
+                        {
+                          schema := { locals, target }
+                          targetArgs := args.drop spec.params.length
+                        })
               | _ =>
-                  pure (some { schema := { target := expr }, targetArgs := [] })
+                  let schemaArgs ←
+                    args.mapM lowerTargetParameter
+                  let target := Expr.mkApps (.const name levels) schemaArgs
+                  pure (some { schema := { target }, targetArgs := [] })
       | none => pure none
   | _ => pure none
 
-def instantiateNestedTarget (target : NestedRecursorTargetInfo) (locals : List Expr) : Expr :=
-  target.target.instantiateMany locals
+def nestedTargetExpr (target : NestedRecursorTargetInfo) : Expr :=
+  target.target
 
 def instantiateTargetFields (levelSubst : List (Name × Level)) (targetArgs : List Expr) :
     Nat → List Binder → List Binder
@@ -320,7 +331,9 @@ partial def nestedRecursiveFieldInType?
             if rootRecursiveTarget? spec localCount lowered then
               pure (some { fieldIndex, binders, targetIndex := 0, targetArgs := [] }, schemas)
             else
-              match ← nestedContainerOccurrence? manifest env spec.name type with
+              match ←
+                nestedContainerOccurrence? manifest env spec.name fieldCount localCount type
+              with
               | some occurrence =>
                   let (targetIndex, schemas) := internNestedSchema schemas occurrence.schema
                   pure
@@ -334,7 +347,7 @@ partial def nestedRecursiveFieldInType?
                       schemas)
               | none => fail s!"unsupported nested recursive field shape: {repr lowered}"
         | none =>
-            match ← nestedContainerOccurrence? manifest env spec.name type with
+            match ← nestedContainerOccurrence? manifest env spec.name fieldCount localCount type with
             | some occurrence =>
                 let (targetIndex, schemas) := internNestedSchema schemas occurrence.schema
                 pure
@@ -420,7 +433,7 @@ partial def buildNestedRecursorTargets
       | _ => fail s!"nested recursor target is not a constant application: {repr targetExpr}"
     let mut schemas := schemas
     let mut ctors : List NestedRecursorConstructorInfo := []
-    let paramCount ←
+    let (paramCount, params) ←
       match ← specForNestedTarget env root headName with
       | .simple targetSpec =>
           if !schema.locals.isEmpty then
@@ -447,7 +460,7 @@ partial def buildNestedRecursorTargets
                       recursiveFields
                     }
                   ]
-            pure targetSpec.params.length
+            pure (targetSpec.params.length, targetParams)
       | .indexed targetSpec =>
           if levels.length != targetSpec.levelParams.length then
             fail s!"nested recursor target {headName} has wrong universe arity"
@@ -456,7 +469,12 @@ partial def buildNestedRecursorTargets
           else if targetArgs.length != targetSpec.params.length + targetSpec.indices.length then
             fail s!"nested recursor target {headName} has wrong argument arity"
           else
-            let targetParams := targetArgs.take targetSpec.params.length
+            let targetParams ←
+              (targetArgs.take targetSpec.params.length).mapM fun arg =>
+                match dropBVars schema.locals.length arg with
+                | some lowered => pure lowered
+                | none =>
+                    fail s!"nested recursor target parameter depends on target locals: {repr arg}"
             let levelSubst := targetSpec.levelParams.zip levels
             for ctor in targetSpec.constructors do
               let fields := instantiateTargetFields levelSubst targetParams 0 ctor.fields
@@ -476,7 +494,7 @@ partial def buildNestedRecursorTargets
                       recursiveFields
                     }
                   ]
-            pure targetSpec.params.length
+            pure (targetSpec.params.length, targetParams)
     let info : NestedRecursorTargetInfo :=
       {
         recursorName := nestedRecursorName root.name built.length
@@ -485,6 +503,7 @@ partial def buildNestedRecursorTargets
         levels
         target := targetExpr
         paramCount
+        params
         constructors := ctors
       }
     buildNestedRecursorTargets manifest env root schemas (built ++ [info])
@@ -606,7 +625,7 @@ def nestedRecursiveHypothesisBinders
 def nestedCtorParamArgs
     (target : NestedRecursorTargetInfo)
     (offset : Nat) : List Expr :=
-  (target.target.lift offset).getAppFnArgs.2.take target.paramCount
+  target.params.map (·.lift offset)
 
 def nestedCtorAppFromFields
     (motiveCount previousMinors recursiveCount : Nat)
@@ -648,7 +667,7 @@ def nestedMotiveBinders
         let localCount := target.locals.length
         bindForall (liftFieldBindersForOuter pair.1 0 target.locals)
           (.forallE "target"
-            ((instantiateNestedTarget target (sourceOrderBvars localCount 0)).liftFrom
+            ((nestedTargetExpr target).liftFrom
               pair.1
               localCount)
             (.sort motiveLevel))
@@ -661,7 +680,7 @@ def nestedTargetBinderType
   let outerCount := motiveCount + minorCount
   bindForall (liftFieldBindersForOuter outerCount 0 target.locals)
     (.forallE "target"
-      ((instantiateNestedTarget target (sourceOrderBvars target.locals.length 0)).liftFrom outerCount target.locals.length)
+      ((nestedTargetExpr target).liftFrom outerCount target.locals.length)
       body)
 
 def nestedRecursorType

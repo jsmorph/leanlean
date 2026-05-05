@@ -84,6 +84,7 @@ structure NestedRecursorTargetInfo where
   levels : List Level
   target : Expr
   paramCount : Nat
+  params : List Expr := []
   constructors : List NestedRecursorConstructorInfo := []
   deriving BEq, Repr, Inhabited
 
