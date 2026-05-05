@@ -513,6 +513,46 @@ def badNestedArraySpec : SimpleInductiveSpec :=
       ]
   }
 
+def contraBoxSpec : SimpleInductiveSpec :=
+  {
+    name := "ContraBox"
+    params := [{ name := "A", type := type0 }]
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "ContraBox.mk"
+          fields :=
+            [
+              {
+                name := "fn"
+                type := pi "x" (.bvar 0) natType
+              }
+            ]
+        }
+      ]
+  }
+
+def badNestedContraBoxSpec : SimpleInductiveSpec :=
+  {
+    name := "BadNestedContraBox"
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "BadNestedContraBox.mk"
+          fields :=
+            [
+              {
+                name := "box"
+                type :=
+                  .app (.const "ContraBox" []) (.const "BadNestedContraBox" [])
+              }
+            ]
+        }
+      ]
+  }
+
 def recNatSpec : SimpleInductiveSpec :=
   {
     name := "RecNat"
@@ -1366,6 +1406,9 @@ def checkSimpleInductives : IO Unit := do
   expectError "negative occurrence inside nested container"
     (replay MPC.Configs.LeanCore429 emptyEnv
       (baseDeclarations ++ [.inductive listSpec, .inductive arraySpec, .inductive badNestedArraySpec]))
+  expectError "non-covariant user container"
+    (replay MPC.Configs.LeanCore429 emptyEnv
+      (baseDeclarations ++ [.inductive contraBoxSpec, .inductive badNestedContraBoxSpec]))
   expectError "proposition-valued simple inductive"
     (replay MPC.Configs.Poc emptyEnv (baseDeclarations ++ [.inductive propInductiveSpec]))
   let boxEnv ← expectOkLabel "box replay" (replay MPC.Configs.Poc emptyEnv (baseDeclarations ++ [.inductive boxSpec]))

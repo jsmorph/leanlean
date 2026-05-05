@@ -11,7 +11,7 @@ fi
 
 mkdir -p "$artifact_dir"
 
-lake build Faithfulness.ExportArithmetic mpc-check-export
+lake build Faithfulness.ExportArithmetic Faithfulness.ExportNestedIndexed mpc-check-export
 
 checker=".lake/build/bin/mpc-check-export"
 lean_path="$(pwd)/.lake/build/lib/lean"
@@ -55,3 +55,9 @@ run_generated \
   "Faithfulness.ExportArithmetic" \
   "LeanLeanFaithfulness.ExportArithmetic.gcd_sum_diff_eq_one" \
   "checked 493 declaration entries; environment size 571"
+
+run_generated \
+  "mpc-nested-indexed-param" \
+  "Faithfulness.ExportNestedIndexed" \
+  "LeanLeanFaithfulness.ExportNestedIndexed.paramValue" \
+  "checked 7 declaration entries; environment size 18"

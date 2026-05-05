@@ -288,7 +288,7 @@ def lean429CovariantContainerInfo? : Name → Option CovariantContainerInfo
   | "Vec" => some { argCount := 2, positiveArgIndex := 0 }
   | _ => none
 
-def availableCovariantContainer? (manifest : Manifest) (env : Env) (name : Name) :
+def availableFixedCovariantContainer? (manifest : Manifest) (env : Env) (name : Name) :
     Option CovariantContainerInfo :=
   if !manifest.supportsLean429NestedContainers then
     none
@@ -297,6 +297,116 @@ def availableCovariantContainer? (manifest : Manifest) (env : Env) (name : Name)
     | some info, some { kind := .inductiveType .., .. } => some info
     | some info, some { kind := .indexedInductiveType .., .. } => some info
     | _, _ => none
+
+partial def containsBVarAt (target : Nat) : Expr → Bool
+  | .bvar index => index == target
+  | .sort _ => false
+  | .const _ _ => false
+  | .lit _ => false
+  | .app fn arg => containsBVarAt target fn || containsBVarAt target arg
+  | .lam _ type body => containsBVarAt target type || containsBVarAt (target + 1) body
+  | .forallE _ type body => containsBVarAt target type || containsBVarAt (target + 1) body
+  | .letE _ type value body =>
+      containsBVarAt target type || containsBVarAt target value || containsBVarAt (target + 1) body
+  | .proj _ _ projectionTarget => containsBVarAt target projectionTarget
+
+def checkFieldTypeUnderAllFields (fieldCount fieldIndex : Nat) (type : Expr) : Expr :=
+  type.liftFrom (fieldCount - fieldIndex) 0
+
+def listAllIdx (p : Nat → α → Bool) : Nat → List α → Bool
+  | _, [] => true
+  | index, value :: rest => p index value && listAllIdx p (index + 1) rest
+
+mutual
+
+partial def bvarStrictlyPositive (manifest : Manifest) (env : Env) (selfName : Name)
+    (paramCount paramIndex target : Nat) (expr : Expr) : Bool :=
+  match expr with
+  | .bvar index => index == target
+  | .forallE _ domain body =>
+      !containsBVarAt target domain &&
+        bvarStrictlyPositive manifest env selfName paramCount paramIndex (target + 1) body
+  | _ =>
+      let (head, args) := expr.getAppFnArgs
+      match head with
+      | .const name _ =>
+          if name == selfName then
+            args.length >= paramCount &&
+              listAllIdx (fun index arg =>
+                if index == paramIndex then
+                  bvarStrictlyPositive manifest env selfName paramCount paramIndex target arg
+                else
+                  !containsBVarAt target arg)
+                0
+                args
+          else
+            match availableCovariantContainer? manifest env name with
+            | some info =>
+                args.length == info.argCount &&
+                  listAllIdx (fun index arg =>
+                    if index == info.positiveArgIndex then
+                      bvarStrictlyPositive manifest env selfName paramCount paramIndex target arg
+                    else
+                      !containsBVarAt target arg)
+                    0
+                    args
+            | none => !containsBVarAt target expr
+      | _ => !containsBVarAt target expr
+
+partial def simpleSingleParamCovariant? (manifest : Manifest) (env : Env)
+    (spec : SimpleInductiveSpec) : Option CovariantContainerInfo :=
+  if spec.params.length != 1 then
+    none
+  else
+    let paramIndex := 0
+    let ok :=
+      spec.constructors.all fun ctor =>
+        let fieldCount := ctor.fields.length
+        listAllIdx (fun fieldIndex field =>
+          let type := checkFieldTypeUnderAllFields fieldCount fieldIndex field.type
+          let target := fieldCount + spec.params.length - 1 - paramIndex
+          bvarStrictlyPositive manifest env spec.name spec.params.length paramIndex target type)
+          0
+          ctor.fields
+    if ok then some { argCount := spec.params.length, positiveArgIndex := paramIndex } else none
+
+partial def indexedSingleParamCovariant? (manifest : Manifest) (env : Env)
+    (spec : IndexedInductiveSpec) : Option CovariantContainerInfo :=
+  if spec.params.length != 1 then
+    none
+  else
+    let paramIndex := 0
+    let ok :=
+      spec.constructors.all fun ctor =>
+        let fieldCount := ctor.fields.length
+        let target := fieldCount + spec.params.length - 1 - paramIndex
+        ctor.targetIndices.all (fun index => !containsBVarAt target index) &&
+          listAllIdx (fun fieldIndex field =>
+            let type := checkFieldTypeUnderAllFields fieldCount fieldIndex field.type
+            bvarStrictlyPositive manifest env spec.name spec.params.length paramIndex target type)
+            0
+            ctor.fields
+    if ok then
+      some { argCount := spec.params.length + spec.indices.length, positiveArgIndex := paramIndex }
+    else
+      none
+
+partial def availableCovariantContainer? (manifest : Manifest) (env : Env) (name : Name) :
+    Option CovariantContainerInfo :=
+  match availableFixedCovariantContainer? manifest env name with
+  | some info => some info
+  | none =>
+      if !manifest.supportsLean429NestedContainers then
+        none
+      else
+        match env.find? name with
+        | some { kind := .inductiveType spec, .. } =>
+            simpleSingleParamCovariant? manifest env spec
+        | some { kind := .indexedInductiveType spec, .. } =>
+            indexedSingleParamCovariant? manifest env spec
+        | _ => none
+
+end
 
 partial def simpleStrictlyPositive (manifest : Manifest) (env : Env) (target : Name)
     (expr : Expr) : Bool :=

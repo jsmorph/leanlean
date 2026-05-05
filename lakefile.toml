@@ -30,6 +30,9 @@ name = "Faithfulness.ExportArithmetic"
 name = "Faithfulness.ExportOmega"
 
 [[lean_lib]]
+name = "Faithfulness.ExportNestedIndexed"
+
+[[lean_lib]]
 name = "Faithfulness.UnsupportedModule"
 
 [[lean_lib]]
