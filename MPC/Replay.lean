@@ -251,16 +251,20 @@ def nestedContainerOccurrence? (manifest : Manifest) (env : Env) (rootName : Nam
   | .const name levels =>
       match availableCovariantContainer? manifest env name with
       | some info =>
-          if args.length != info.argCount then
+          if args.length != info.positiveArgs.length then
             pure none
           else
-            let some positiveArg := listGet? args info.positiveArgIndex
-              | pure none
-            if !containsConst rootName positiveArg then
+            let mut hasPositiveOccurrence := false
+            for pair in enumerate args do
+              if listGetD info.positiveArgs pair.1 then
+                if containsConst rootName pair.2 then
+                  hasPositiveOccurrence := true
+              else if containsConst rootName pair.2 then
+                fail s!"recursive occurrence appears in non-positive nested target argument: {repr expr}"
+              else
+                pure ()
+            if !hasPositiveOccurrence then
               pure none
-            else if (enumerate args).any fun pair =>
-                pair.1 != info.positiveArgIndex && containsConst rootName pair.2 then
-              fail s!"recursive occurrence appears in non-positive nested target argument: {repr expr}"
             else
               match env.find? name with
               | some { kind := .indexedInductiveType spec, .. } =>
@@ -268,7 +272,7 @@ def nestedContainerOccurrence? (manifest : Manifest) (env : Env) (rootName : Nam
                     fail s!"nested indexed target {name} has wrong universe arity"
                   else if args.length != spec.params.length + spec.indices.length then
                     fail s!"nested indexed target {name} has wrong argument arity"
-                  else if info.positiveArgIndex >= spec.params.length then
+                  else if !(listTakeD info.positiveArgs spec.params.length).any id then
                     fail s!"recursive occurrence appears outside a positive parameter of {name}"
                   else
                     let params ←

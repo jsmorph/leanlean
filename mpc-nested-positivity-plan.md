@@ -12,7 +12,7 @@ A recursive occurrence of the inductive being admitted is strictly positive when
 
 This rule is source-backed but static.  `Array` is admitted because Lean's prelude specifies it as a proof-facing wrapper around `List`; `List` is admitted because its ordinary inductive declaration is positive in its element parameter.  The checker should require the container constant to exist in the environment before using the rule.  This keeps a misspelled or unavailable container from silently widening positivity.
 
-The rule remains structural inside the container argument.  `Array Syntax` is positive.  `Array (Syntax -> Nat)` is rejected because the recursive occurrence is in a function domain inside the covariant argument.  `Array (Box Syntax)` is rejected until `Box` becomes a specified covariant container or a generic parameter-positivity analysis proves its covariance.
+The rule remains structural inside the container argument.  `Array Syntax` is positive.  `Array (Syntax -> Nat)` is rejected because the recursive occurrence is in a function domain inside the covariant argument.  `Array (Box Syntax)` is accepted only when the checker can prove the relevant `Box` parameter covariant from the admitted inductive declaration.
 
 ## Implementation
 

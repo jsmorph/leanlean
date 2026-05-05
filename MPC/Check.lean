@@ -278,14 +278,13 @@ def getAppHeadName? (expr : Expr) : Option Name :=
   | _ => none
 
 structure CovariantContainerInfo where
-  argCount : Nat
-  positiveArgIndex : Nat
+  positiveArgs : List Bool
   deriving BEq, Repr, Inhabited
 
 def lean429CovariantContainerInfo? : Name → Option CovariantContainerInfo
-  | "Array" => some { argCount := 1, positiveArgIndex := 0 }
-  | "List" => some { argCount := 1, positiveArgIndex := 0 }
-  | "Vec" => some { argCount := 2, positiveArgIndex := 0 }
+  | "Array" => some { positiveArgs := [true] }
+  | "List" => some { positiveArgs := [true] }
+  | "Vec" => some { positiveArgs := [true, false] }
   | _ => none
 
 def availableFixedCovariantContainer? (manifest : Manifest) (env : Env) (name : Name) :
@@ -317,24 +316,49 @@ def listAllIdx (p : Nat → α → Bool) : Nat → List α → Bool
   | _, [] => true
   | index, value :: rest => p index value && listAllIdx p (index + 1) rest
 
+def listGetD [Inhabited α] : List α → Nat → α
+  | [], _ => default
+  | value :: _, 0 => value
+  | _ :: rest, index + 1 => listGetD rest index
+
+def listTakeD [Inhabited α] (values : List α) (count : Nat) : List α :=
+  (List.range count).map fun index => listGetD values index
+
+def boolFlagsEqual (left right : List Bool) : Bool :=
+  left.length == right.length &&
+    (left.zip right).all fun pair => pair.1 == pair.2
+
+def computeCovariantFlags (paramCount : Nat) (check : List Bool → Nat → Bool) : List Bool :=
+  let rec loop : Nat → List Bool → List Bool
+    | 0, flags => flags
+    | fuel + 1, flags =>
+        let next :=
+          (List.range paramCount).map fun index =>
+            listGetD flags index && check flags index
+        if boolFlagsEqual flags next then
+          flags
+        else
+          loop fuel next
+  loop (paramCount + 1) (List.replicate paramCount true)
+
 mutual
 
 partial def bvarStrictlyPositive (manifest : Manifest) (env : Env) (selfName : Name)
-    (paramCount paramIndex target : Nat) (expr : Expr) : Bool :=
+    (selfPositive : List Bool) (target : Nat) (expr : Expr) : Bool :=
   match expr with
-  | .bvar index => index == target
+  | .bvar _ => true
   | .forallE _ domain body =>
       !containsBVarAt target domain &&
-        bvarStrictlyPositive manifest env selfName paramCount paramIndex (target + 1) body
+        bvarStrictlyPositive manifest env selfName selfPositive (target + 1) body
   | _ =>
       let (head, args) := expr.getAppFnArgs
       match head with
       | .const name _ =>
           if name == selfName then
-            args.length >= paramCount &&
+            args.length == selfPositive.length &&
               listAllIdx (fun index arg =>
-                if index == paramIndex then
-                  bvarStrictlyPositive manifest env selfName paramCount paramIndex target arg
+                if listGetD selfPositive index then
+                  bvarStrictlyPositive manifest env selfName selfPositive target arg
                 else
                   !containsBVarAt target arg)
                 0
@@ -342,10 +366,10 @@ partial def bvarStrictlyPositive (manifest : Manifest) (env : Env) (selfName : N
           else
             match availableCovariantContainer? manifest env name with
             | some info =>
-                args.length == info.argCount &&
+                args.length == info.positiveArgs.length &&
                   listAllIdx (fun index arg =>
-                    if index == info.positiveArgIndex then
-                      bvarStrictlyPositive manifest env selfName paramCount paramIndex target arg
+                    if listGetD info.positiveArgs index then
+                      bvarStrictlyPositive manifest env selfName selfPositive target arg
                     else
                       !containsBVarAt target arg)
                     0
@@ -353,41 +377,42 @@ partial def bvarStrictlyPositive (manifest : Manifest) (env : Env) (selfName : N
             | none => !containsBVarAt target expr
       | _ => !containsBVarAt target expr
 
-partial def simpleSingleParamCovariant? (manifest : Manifest) (env : Env)
+partial def simpleCovariantContainer? (manifest : Manifest) (env : Env)
     (spec : SimpleInductiveSpec) : Option CovariantContainerInfo :=
-  if spec.params.length != 1 then
+  if spec.params.isEmpty then
     none
   else
-    let paramIndex := 0
-    let ok :=
-      spec.constructors.all fun ctor =>
-        let fieldCount := ctor.fields.length
-        listAllIdx (fun fieldIndex field =>
-          let type := checkFieldTypeUnderAllFields fieldCount fieldIndex field.type
+    let flags :=
+      computeCovariantFlags spec.params.length fun selfFlags paramIndex =>
+        spec.constructors.all fun ctor =>
+          let fieldCount := ctor.fields.length
           let target := fieldCount + spec.params.length - 1 - paramIndex
-          bvarStrictlyPositive manifest env spec.name spec.params.length paramIndex target type)
-          0
-          ctor.fields
-    if ok then some { argCount := spec.params.length, positiveArgIndex := paramIndex } else none
-
-partial def indexedSingleParamCovariant? (manifest : Manifest) (env : Env)
-    (spec : IndexedInductiveSpec) : Option CovariantContainerInfo :=
-  if spec.params.length != 1 then
-    none
-  else
-    let paramIndex := 0
-    let ok :=
-      spec.constructors.all fun ctor =>
-        let fieldCount := ctor.fields.length
-        let target := fieldCount + spec.params.length - 1 - paramIndex
-        ctor.targetIndices.all (fun index => !containsBVarAt target index) &&
           listAllIdx (fun fieldIndex field =>
             let type := checkFieldTypeUnderAllFields fieldCount fieldIndex field.type
-            bvarStrictlyPositive manifest env spec.name spec.params.length paramIndex target type)
+            bvarStrictlyPositive manifest env spec.name selfFlags target type)
             0
             ctor.fields
-    if ok then
-      some { argCount := spec.params.length + spec.indices.length, positiveArgIndex := paramIndex }
+    if flags.any id then some { positiveArgs := flags } else none
+
+partial def indexedCovariantContainer? (manifest : Manifest) (env : Env)
+    (spec : IndexedInductiveSpec) : Option CovariantContainerInfo :=
+  if spec.params.isEmpty then
+    none
+  else
+    let flags :=
+      computeCovariantFlags spec.params.length fun selfParamFlags paramIndex =>
+        let selfFlags := selfParamFlags ++ List.replicate spec.indices.length false
+        spec.constructors.all fun ctor =>
+          let fieldCount := ctor.fields.length
+          let target := fieldCount + spec.params.length - 1 - paramIndex
+          ctor.targetIndices.all (fun index => !containsBVarAt target index) &&
+            listAllIdx (fun fieldIndex field =>
+              let type := checkFieldTypeUnderAllFields fieldCount fieldIndex field.type
+              bvarStrictlyPositive manifest env spec.name selfFlags target type)
+              0
+              ctor.fields
+    if flags.any id then
+      some { positiveArgs := flags ++ List.replicate spec.indices.length false }
     else
       none
 
@@ -401,9 +426,9 @@ partial def availableCovariantContainer? (manifest : Manifest) (env : Env) (name
       else
         match env.find? name with
         | some { kind := .inductiveType spec, .. } =>
-            simpleSingleParamCovariant? manifest env spec
+            simpleCovariantContainer? manifest env spec
         | some { kind := .indexedInductiveType spec, .. } =>
-            indexedSingleParamCovariant? manifest env spec
+            indexedCovariantContainer? manifest env spec
         | _ => none
 
 end
@@ -422,12 +447,12 @@ partial def simpleStrictlyPositive (manifest : Manifest) (env : Env) (target : N
               | _, [] => true
               | index, arg :: rest =>
                   let ok :=
-                    if index == info.positiveArgIndex then
+                    if listGetD info.positiveArgs index then
                       simpleStrictlyPositive manifest env target arg
                     else
                       !containsConst target arg
                   ok && argsStrictlyPositive (index + 1) rest
-            args.length == info.argCount && argsStrictlyPositive 0 args
+            args.length == info.positiveArgs.length && argsStrictlyPositive 0 args
         | none =>
             match expr with
             | .forallE _ domain body =>

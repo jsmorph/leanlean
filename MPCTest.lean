@@ -553,6 +553,150 @@ def badNestedContraBoxSpec : SimpleInductiveSpec :=
       ]
   }
 
+def pairBoxSpec : SimpleInductiveSpec :=
+  {
+    name := "PairBox"
+    params :=
+      [
+        { name := "A", type := type0 },
+        { name := "B", type := type0 }
+      ]
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "PairBox.mk"
+          fields :=
+            [
+              { name := "fst", type := .bvar 1 },
+              { name := "snd", type := .bvar 1 }
+            ]
+        }
+      ]
+  }
+
+def nestedPairBoxSpec : SimpleInductiveSpec :=
+  {
+    name := "NestedPairBox"
+    params := [{ name := "A", type := type0 }]
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "NestedPairBox.mk"
+          fields :=
+            [
+              {
+                name := "children"
+                type :=
+                  appN
+                    (.const "PairBox" [])
+                    [
+                      .bvar 0,
+                      .app (.const "NestedPairBox" []) (.bvar 0)
+                    ]
+              }
+            ]
+        }
+      ]
+  }
+
+def indexedPairBoxSpec : IndexedInductiveSpec :=
+  {
+    name := "IndexedPairBox"
+    params :=
+      [
+        { name := "A", type := type0 },
+        { name := "B", type := type0 }
+      ]
+    indices := [{ name := "n", type := natType }]
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "IndexedPairBox.mk"
+          fields := [{ name := "value", type := .bvar 0 }]
+          targetIndices := [.const "Nat.zero" []]
+        }
+      ]
+  }
+
+def nestedIndexedPairBoxSpec : SimpleInductiveSpec :=
+  {
+    name := "NestedIndexedPairBox"
+    params := [{ name := "A", type := type0 }]
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "NestedIndexedPairBox.mk"
+          fields :=
+            [
+              {
+                name := "children"
+                type :=
+                  appN
+                    (.const "IndexedPairBox" [])
+                    [
+                      .bvar 0,
+                      .app (.const "NestedIndexedPairBox" []) (.bvar 0),
+                      .const "Nat.zero" []
+                    ]
+              }
+            ]
+        }
+      ]
+  }
+
+def badPairBoxSpec : SimpleInductiveSpec :=
+  {
+    name := "BadPairBox"
+    params :=
+      [
+        { name := "A", type := type0 },
+        { name := "B", type := type0 }
+      ]
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "BadPairBox.mk"
+          fields :=
+            [
+              {
+                name := "fn"
+                type := pi "x" (.bvar 0) natType
+              }
+            ]
+        }
+      ]
+  }
+
+def badNestedPairBoxSpec : SimpleInductiveSpec :=
+  {
+    name := "BadNestedPairBox"
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "BadNestedPairBox.mk"
+          fields :=
+            [
+              {
+                name := "children"
+                type :=
+                  appN
+                    (.const "BadPairBox" [])
+                    [
+                      natType,
+                      .const "BadNestedPairBox" []
+                    ]
+              }
+            ]
+        }
+      ]
+  }
+
 def recNatSpec : SimpleInductiveSpec :=
   {
     name := "RecNat"
@@ -1403,12 +1547,38 @@ def checkSimpleInductives : IO Unit := do
       | none => throw <| IO.userError "parameterized local indexed helper target missing"
   | some _ => throw <| IO.userError "parameterized local indexed helper recursor has wrong kind"
   | none => throw <| IO.userError "parameterized local indexed helper recursor missing"
+  let nestedPairBoxEnv ← expectOkLabel "multi-parameter nested helper replay"
+    (replay MPC.Configs.LeanCore429 emptyEnv
+      (baseDeclarations ++ [.inductive pairBoxSpec, .inductive nestedPairBoxSpec]))
+  expectEnvContains
+    "multi-parameter nested helper target recursor"
+    nestedPairBoxEnv
+    "NestedPairBox.rec_1"
+  let nestedIndexedPairBoxEnv ← expectOkLabel "multi-parameter indexed helper replay"
+    (replay MPC.Configs.LeanCore429 emptyEnv
+      (baseDeclarations ++
+        [.indexedInductive indexedPairBoxSpec, .inductive nestedIndexedPairBoxSpec]))
+  expectEnvContains
+    "multi-parameter indexed helper target recursor"
+    nestedIndexedPairBoxEnv
+    "NestedIndexedPairBox.rec_1"
+  match nestedIndexedPairBoxEnv.find? "NestedIndexedPairBox.rec_1" with
+  | some { kind := .nestedRecursor info, .. } =>
+      match listGet? info.targets 1 with
+      | some target =>
+          expect "multi-parameter indexed helper target local count" (target.locals.length == 1)
+      | none => throw <| IO.userError "multi-parameter indexed helper target missing"
+  | some _ => throw <| IO.userError "multi-parameter indexed helper recursor has wrong kind"
+  | none => throw <| IO.userError "multi-parameter indexed helper recursor missing"
   expectError "negative occurrence inside nested container"
     (replay MPC.Configs.LeanCore429 emptyEnv
       (baseDeclarations ++ [.inductive listSpec, .inductive arraySpec, .inductive badNestedArraySpec]))
   expectError "non-covariant user container"
     (replay MPC.Configs.LeanCore429 emptyEnv
       (baseDeclarations ++ [.inductive contraBoxSpec, .inductive badNestedContraBoxSpec]))
+  expectError "non-covariant two-parameter user container"
+    (replay MPC.Configs.LeanCore429 emptyEnv
+      (baseDeclarations ++ [.inductive badPairBoxSpec, .inductive badNestedPairBoxSpec]))
   expectError "proposition-valued simple inductive"
     (replay MPC.Configs.Poc emptyEnv (baseDeclarations ++ [.inductive propInductiveSpec]))
   let boxEnv ← expectOkLabel "box replay" (replay MPC.Configs.Poc emptyEnv (baseDeclarations ++ [.inductive boxSpec]))

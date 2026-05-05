@@ -10,7 +10,7 @@ The next rule package should generate the same nested recursor family that justi
 
 This package belongs to inductive admission.  Artifact adapters should continue to treat exported recursor rows as redundant records.  The adapter can compare those rows only after MPC has generated the corresponding recursor constants and metadata.
 
-The first implementation should cover one-root data inductives whose nested recursive occurrences pass through the specified unary containers already admitted by the nested-positivity package.  The target stress case is `Lean.Syntax`, where the helper targets are `List Syntax` and `Array Syntax`.  Mutual blocks, arbitrary user-defined containers, and nested indexed helper targets can remain outside this slice.
+The first implementation should cover one-root data inductives whose nested recursive occurrences pass through containers admitted by the nested-positivity package.  The target stress case is `Lean.Syntax`, where the helper targets are `List Syntax` and `Array Syntax`.  Mutual blocks can remain outside this slice.
 
 ## Rule
 
@@ -41,3 +41,5 @@ The local-telescope slice now handles recursive fields whose nested occurrence a
 Two expected-rejection fixtures now pin that extension.  `NestedIndexedClosed` contains `Vec T 0`, which needs an indexed covariant-container rule.  `NestedIndexedLocal` contains `(fuel : Nat) -> Vec T fuel`, which additionally needs helper targets represented as schemas over local binders.  The latter is the gcd-like gap: recursive-call structure is indexed by a local measure argument.
 
 The schema-target refactor is now partially in place.  `NestedRecursorTargetInfo` carries a local telescope, and motive and recursor target binders are generated through that telescope.  Current helper targets still have empty telescopes, so this is a representation checkpoint rather than an indexed-container admission rule.
+
+The later indexed-helper work added helper schemas with local target binders, user-defined indexed containers, and per-argument covariance.  The maintained export fixtures now include `IVec`, `PairBox`, and `IBox`, so helper-target discovery no longer depends only on the fixed `Array`, `List`, and `Vec` names.
