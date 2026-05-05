@@ -1,5 +1,7 @@
 import MPC.Declaration
 import MPC.Normalize
+import MPC.Packages.Literal
+import MPC.Packages.Projection
 
 namespace MPC
 
@@ -19,54 +21,6 @@ def inferPiSort (manifest : Manifest) (domain codomain : Level) : Level :=
 def sortLevel? : Expr → Option Level
   | .sort level => some level
   | _ => none
-
-def requireNatLiteralSupport (env : Env) : Result Unit := do
-  if env.contains "Nat" && env.contains "Nat.zero" && env.contains "Nat.succ" then
-    pure ()
-  else
-    fail "natural literals require Nat, Nat.zero, and Nat.succ in the environment"
-
-def requireStringLiteralSupport (env : Env) : Result Unit := do
-  if env.contains "String" then
-    pure ()
-  else
-    fail "string literals require String in the environment"
-
-def natLiteralConstructorSpine (env : Env) : Nat → Result Expr
-  | 0 => do
-      requireNatLiteralSupport env
-      pure (.const "Nat.zero" [])
-  | n + 1 => do
-      requireNatLiteralSupport env
-      pure (.app (.const "Nat.succ" []) (← natLiteralConstructorSpine env n))
-
-def projectionFieldType (env : Env) (structureName : Name) (fieldIndex : Nat)
-    (target targetType : Expr) : Result Expr := do
-  let (head, targetArgs) := targetType.getAppFnArgs
-  match head with
-  | .const targetName levels =>
-      if targetName != structureName then
-        fail s!"projection target has type {targetName}, expected {structureName}"
-      else
-        match env.find? structureName with
-        | some { kind := .inductiveType spec, levelParams, .. } =>
-            if levels.length != levelParams.length then
-              fail s!"projection target has wrong universe arity for {structureName}"
-            else if targetArgs.length != spec.params.length then
-              fail s!"projection target has wrong parameter arity for {structureName}"
-            else
-              match spec.constructors with
-              | [ctor] =>
-                  let some field := listGet? ctor.fields fieldIndex
-                    | fail s!"projection field {fieldIndex} is out of range for {structureName}"
-                  let previousFields :=
-                    (List.range fieldIndex).map fun index =>
-                      .proj structureName index target
-                  pure (field.type.instantiateSourceArgs (targetArgs ++ previousFields))
-              | _ => fail s!"projection target {structureName} is not a one-constructor structure"
-        | some _ => fail s!"projection target {structureName} is not an inductive type"
-        | none => fail s!"unknown projection structure: {structureName}"
-  | _ => fail s!"projection target type is not a structure application: {repr targetType}"
 
 mutual
 
@@ -92,13 +46,13 @@ partial def infer (manifest : Manifest) (env : Env) (levelParams : LevelContext)
       if !manifest.supportsNatLiterals then
         fail "natural literals are disabled by the manifest"
       else
-        requireNatLiteralSupport env
+        MPC.Packages.Literal.requireNatSupport env
         pure (.const "Nat" [])
   | .lit (.str _) => do
       if !manifest.supportsStringLiterals then
         fail "string literals are disabled by the manifest"
       else
-        requireStringLiteralSupport env
+        MPC.Packages.Literal.requireStringSupport env
         pure (.const "String" [])
   | .app fn arg => do
       let fnType ← whnf manifest env levelParams (← infer manifest env levelParams ctx fn)
@@ -124,7 +78,7 @@ partial def infer (manifest : Manifest) (env : Env) (levelParams : LevelContext)
         fail "projection expressions are disabled by the manifest"
       else
         let targetType ← whnf manifest env levelParams (← infer manifest env levelParams ctx target)
-        projectionFieldType env structureName fieldIndex target targetType
+        MPC.Packages.Projection.fieldType env structureName fieldIndex target targetType
 
 partial def inferSort (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (expr : Expr) : Result Level := do
@@ -175,12 +129,14 @@ partial def structuralDefEq (manifest : Manifest) (env : Env) (levelParams : Lev
       if !manifest.supportsNatLiterals then
         fail "natural literals are disabled by the manifest"
       else
-        structuralDefEq manifest env levelParams ctx (← natLiteralConstructorSpine env value) right
+        structuralDefEq manifest env levelParams ctx
+          (← MPC.Packages.Literal.natConstructorSpine env value) right
   | _, .lit (.nat value) =>
       if !manifest.supportsNatLiterals then
         fail "natural literals are disabled by the manifest"
       else
-        structuralDefEq manifest env levelParams ctx left (← natLiteralConstructorSpine env value)
+        structuralDefEq manifest env levelParams ctx left
+          (← MPC.Packages.Literal.natConstructorSpine env value)
   | .app leftFn leftArg, .app rightFn rightArg =>
       defEq manifest env levelParams ctx leftFn rightFn
       defEq manifest env levelParams ctx leftArg rightArg
