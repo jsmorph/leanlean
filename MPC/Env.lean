@@ -16,6 +16,11 @@ structure SimpleInductiveSpec where
   constructors : List SimpleConstructorSpec
   deriving BEq, Repr, Inhabited
 
+structure InductiveBlockSpec where
+  levelParams : LevelContext := []
+  specs : List SimpleInductiveSpec
+  deriving BEq, Repr, Inhabited
+
 structure IndexedConstructorSpec where
   name : Name
   fields : List Binder := []
@@ -44,6 +49,24 @@ structure SimpleRecursorConstructorInfo where
 structure SimpleRecursorInfo where
   inductiveName : Name
   constructors : List SimpleRecursorConstructorInfo
+  deriving BEq, Repr, Inhabited
+
+structure MutualRecursiveFieldInfo where
+  fieldIndex : Nat
+  targetIndex : Nat
+  deriving BEq, Repr, Inhabited
+
+structure MutualRecursorConstructorInfo where
+  inductiveIndex : Nat
+  name : Name
+  fieldCount : Nat
+  recursiveFields : List MutualRecursiveFieldInfo
+  deriving BEq, Repr, Inhabited
+
+structure MutualRecursorInfo where
+  targetIndex : Nat
+  inductiveNames : List Name
+  constructors : List MutualRecursorConstructorInfo
   deriving BEq, Repr, Inhabited
 
 structure IndexedRecursiveFieldInfo where
@@ -103,6 +126,7 @@ inductive ConstantKind where
   | indexedInductiveType : IndexedInductiveSpec → ConstantKind
   | constructor : Name → Nat → Nat → ConstantKind
   | recursor : SimpleRecursorInfo → ConstantKind
+  | mutualRecursor : MutualRecursorInfo → ConstantKind
   | indexedRecursor : IndexedRecursorInfo → ConstantKind
   | nestedRecursor : NestedRecursorInfo → ConstantKind
   | equalityType

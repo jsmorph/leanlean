@@ -18,6 +18,12 @@ def findSimpleRecursorConstructor? (name : Name) : List SimpleRecursorConstructo
   | ctor :: rest =>
       if ctor.name == name then some ctor else findSimpleRecursorConstructor? name rest
 
+def findMutualRecursorConstructor? (name : Name) : List MutualRecursorConstructorInfo →
+    Option MutualRecursorConstructorInfo
+  | [] => none
+  | ctor :: rest =>
+      if ctor.name == name then some ctor else findMutualRecursorConstructor? name rest
+
 def findIndexedConstructor? (name : Name) : List IndexedRecursorConstructorInfo →
     Option IndexedRecursorConstructorInfo
   | [] => none
@@ -415,6 +421,68 @@ partial def reduceSimpleRecursor? (manifest : Manifest) (env : Env) (levelParams
         | _ => pure none
     | none => pure none
 
+partial def reduceMutualRecursor? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (name : Name) (info : MutualRecursorInfo) (levels : List Level) (args : List Expr) :
+    Result (Option Expr) := do
+  if !manifest.supportsInductiveBlocks then
+    pure none
+  else
+    let some targetName := listGet? info.inductiveNames info.targetIndex
+      | pure none
+    if name != targetName ++ ".rec" then
+      pure none
+    else
+      match env.find? targetName with
+      | some { kind := .inductiveType targetSpec, .. } =>
+          let motiveCount := info.inductiveNames.length
+          let minorCount := info.constructors.length
+          let required := targetSpec.params.length + motiveCount + minorCount + 1
+          if args.length < required then
+            pure none
+          else
+            let paramArgs := args.take targetSpec.params.length
+            let rest := args.drop targetSpec.params.length
+            let motiveArgs := rest.take motiveCount
+            let rest := rest.drop motiveCount
+            let minorArgs := rest.take minorCount
+            let some target := listGet? rest minorCount
+              | pure none
+            let trailing := rest.drop (minorCount + 1)
+            let targetWhnf ← whnf manifest env levelParams target
+            let (targetHead, targetArgs) := targetWhnf.getAppFnArgs
+            match targetHead with
+            | Expr.const ctorName ctorLevels =>
+                if ctorLevels.length != targetSpec.levelParams.length then
+                  pure none
+                else
+                  let some ctorInfo := findMutualRecursorConstructor? ctorName info.constructors
+                    | pure none
+                  if ctorInfo.inductiveIndex != info.targetIndex then
+                    pure none
+                  else
+                    let some ctorIndex :=
+                        info.constructors.findIdx? (fun ctor => ctor.name == ctorName)
+                      | pure none
+                    let some minor := listGet? minorArgs ctorIndex
+                      | pure none
+                    let fieldArgs := targetArgs.drop targetSpec.params.length
+                    if fieldArgs.length != ctorInfo.fieldCount then
+                      pure none
+                    else
+                      let recursiveResults ←
+                        ctorInfo.recursiveFields.mapM fun rec => do
+                          let some fieldValue := listGet? fieldArgs rec.fieldIndex
+                            | fail s!"missing recursive field {rec.fieldIndex} for {ctorName}"
+                          let some recName := listGet? info.inductiveNames rec.targetIndex
+                            | fail s!"unknown mutual recursive target {rec.targetIndex}"
+                          let recursor := .const (recName ++ ".rec") levels
+                          pure (Expr.mkApps recursor
+                            (paramArgs ++ motiveArgs ++ minorArgs ++ [fieldValue]))
+                      let value := Expr.mkApps minor (fieldArgs ++ recursiveResults)
+                      pure (some (Expr.mkApps value trailing))
+            | _ => pure none
+      | _ => pure none
+
 partial def reduceNestedRecursor? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (name : Name) (info : NestedRecursorInfo) (levels : List Level) (args : List Expr) :
     Result (Option Expr) := do
@@ -650,6 +718,10 @@ partial def whnf (manifest : Manifest) (env : Env) (levelParams : LevelContext)
               match env.find? name with
               | some { kind := .recursor info, .. } =>
                   match ← reduceSimpleRecursor? manifest env levelParams name info levels args with
+                  | some reduced => whnf manifest env levelParams reduced
+                  | none => pure (Expr.mkApps head args)
+              | some { kind := .mutualRecursor info, .. } =>
+                  match ← reduceMutualRecursor? manifest env levelParams name info levels args with
                   | some reduced => whnf manifest env levelParams reduced
                   | none => pure (Expr.mkApps head args)
               | some { kind := .indexedRecursor info, .. } =>

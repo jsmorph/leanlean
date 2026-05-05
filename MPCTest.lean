@@ -96,6 +96,64 @@ def natInductiveSpec : SimpleInductiveSpec :=
       ]
   }
 
+def mutEvenSpec : SimpleInductiveSpec :=
+  {
+    name := "MutEven"
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        { name := "MutEven.zero" },
+        {
+          name := "MutEven.succOdd"
+          fields := [{ name := "pred", type := .const "MutOdd" [] }]
+        }
+      ]
+  }
+
+def mutOddSpec : SimpleInductiveSpec :=
+  {
+    name := "MutOdd"
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "MutOdd.succEven"
+          fields := [{ name := "pred", type := .const "MutEven" [] }]
+        }
+      ]
+  }
+
+def mutEvenOddBlock : InductiveBlockSpec :=
+  { levelParams := [], specs := [mutEvenSpec, mutOddSpec] }
+
+def badMutASpec : SimpleInductiveSpec :=
+  {
+    name := "BadMutA"
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "BadMutA.mk"
+          fields := [
+            { name := "f", type := .forallE "x" (.const "BadMutB" []) natType }
+          ]
+        }
+      ]
+  }
+
+def badMutBSpec : SimpleInductiveSpec :=
+  {
+    name := "BadMutB"
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        { name := "BadMutB.mk", fields := [{ name := "x", type := .const "BadMutA" [] }] }
+      ]
+  }
+
+def badMutualBlock : InductiveBlockSpec :=
+  { levelParams := [], specs := [badMutASpec, badMutBSpec] }
+
 def listSpec : SimpleInductiveSpec :=
   {
     name := "List"
@@ -1654,6 +1712,43 @@ def checkSimpleInductives : IO Unit := do
     (normalize MPC.Configs.LeanCore429 ofNatEnv [] ofNatZeroExpr)
   expectExprEq "OfNat.ofNat value" ofNatReduced (.lit (.nat 0))
 
+def checkMutualInductives : IO Unit := do
+  let manifest := { MPC.Configs.Poc with inductiveBlocks := .mutual }
+  expectError "mutual inductive blocks disabled"
+    (replay MPC.Configs.Poc emptyEnv
+      (baseDeclarations ++ [.inductiveBlock mutEvenOddBlock]))
+  let env ← expectOkLabel "mutual even/odd replay"
+    (replay manifest emptyEnv (baseDeclarations ++ [.inductiveBlock mutEvenOddBlock]))
+  expectEnvContains "mutual even recursor" env "MutEven.rec"
+  expectEnvContains "mutual odd recursor" env "MutOdd.rec"
+  expectError "negative mutual occurrence"
+    (replay manifest emptyEnv (baseDeclarations ++ [.inductiveBlock badMutualBlock]))
+  let evenMotive := .lam "target" (.const "MutEven" []) (.const "P" [])
+  let oddMotive := .lam "target" (.const "MutOdd" []) (.const "P" [])
+  let zeroMinor := .const "p" []
+  let succOddMinor :=
+    .lam "pred" (.const "MutOdd" [])
+      (.lam "ih" (.const "P" []) (.bvar 0))
+  let succEvenMinor :=
+    .lam "pred" (.const "MutEven" [])
+      (.lam "ih" (.const "P" []) (.bvar 0))
+  let oddOne := .app (.const "MutOdd.succEven" []) (.const "MutEven.zero" [])
+  let evenTwo := .app (.const "MutEven.succOdd" []) oddOne
+  let recursor :=
+    appN
+      (.const "MutEven.rec" [.zero])
+      [
+        evenMotive,
+        oddMotive,
+        zeroMinor,
+        succOddMinor,
+        succEvenMinor,
+        evenTwo
+      ]
+  let reduced ← expectOkLabel "mutual recursor reduction"
+    (normalize manifest env [] recursor)
+  expectExprEq "mutual recursor iota" reduced (.const "p" [])
+
 def checkPropInductives : IO Unit := do
   expectError "Prop inductive package requires Prop"
     (replay { MPC.Configs.InductivePropPoc with prop := .disabled } emptyEnv
@@ -2035,6 +2130,7 @@ def main : IO Unit := do
   checkUniverseComparison
   checkBasePackages
   checkSimpleInductives
+  checkMutualInductives
   checkPropInductives
   checkIndexedInductives
   checkIndexedPropInductives

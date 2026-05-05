@@ -15,4 +15,16 @@ def oddOne : MOdd :=
 def evenTwo : MEven :=
   MEven.succOdd oddOne
 
+noncomputable def squashEven (e : MEven) : MEven :=
+  MEven.rec
+    (motive_1 := fun _ => MEven)
+    (motive_2 := fun _ => MEven)
+    MEven.zero
+    (fun _ ih => ih)
+    (fun _ ih => ih)
+    e
+
+noncomputable def squashedEvenTwo : MEven :=
+  squashEven evenTwo
+
 end LeanLeanFaithfulness.ExportMutual

@@ -949,6 +949,251 @@ def addSimpleInductive (manifest : Manifest) (env : Env) (spec : SimpleInductive
               }
         }
 
+structure MutualConstructorEntry where
+  inductiveIndex : Nat
+  constructorIndex : Nat
+  spec : SimpleInductiveSpec
+  ctor : SimpleConstructorSpec
+  deriving BEq, Repr, Inhabited
+
+def mutualBlockNames (block : InductiveBlockSpec) : List Name :=
+  block.specs.map (·.name)
+
+def mutualConstructorEntriesFrom :
+    List SimpleInductiveSpec → Nat → List MutualConstructorEntry
+  | [], _ => []
+  | spec :: rest, index =>
+      (enumerate spec.constructors |>.map fun pair =>
+        { inductiveIndex := index, constructorIndex := pair.1, spec, ctor := pair.2 }) ++
+        mutualConstructorEntriesFrom rest (index + 1)
+
+def mutualConstructorEntries (block : InductiveBlockSpec) : List MutualConstructorEntry :=
+  mutualConstructorEntriesFrom block.specs 0
+
+def mutualSpecIndex? (name : Name) : List SimpleInductiveSpec → Nat → Option Nat
+  | [], _ => none
+  | spec :: rest, index =>
+      if spec.name == name then
+        some index
+      else
+        mutualSpecIndex? name rest (index + 1)
+
+def checkMutualInductiveField
+    (manifest : Manifest)
+    (env : Env)
+    (levelParams : LevelContext)
+    (blockNames : List Name)
+    (ctx : Context)
+    (field : Binder) : Result Context := do
+  let _ ← inferSort manifest env levelParams ctx field.type
+  if mutualStrictlyPositive manifest env blockNames field.type then
+    pure (ctx.extend field.name field.type)
+  else
+    fail s!"field {field.name} is not strictly positive in mutual block"
+
+partial def checkMutualInductiveFields
+    (manifest : Manifest)
+    (env : Env)
+    (levelParams : LevelContext)
+    (blockNames : List Name)
+    (ctx : Context) : List Binder → Result Unit
+  | [] => pure ()
+  | field :: rest => do
+      let ctx ← checkMutualInductiveField manifest env levelParams blockNames ctx field
+      checkMutualInductiveFields manifest env levelParams blockNames ctx rest
+
+def mutualDirectRecursiveField? (block : InductiveBlockSpec)
+    (fieldCount fieldIndex : Nat) (field : Binder) : Option MutualRecursiveFieldInfo :=
+  let type := fieldTypeUnderAllFields fieldCount fieldIndex field.type
+  let (head, args) := type.getAppFnArgs
+  match head with
+  | .const name levels =>
+      match mutualSpecIndex? name block.specs 0, block.specs.find? (fun spec => spec.name == name) with
+      | some targetIndex, some targetSpec =>
+          let expectedArgs := simpleParamArgs targetSpec fieldCount
+          if levels.length == targetSpec.levelParams.length &&
+              args.length == targetSpec.params.length &&
+              (args.zip expectedArgs).all (fun pair => pair.1.alphaEq pair.2) then
+            some { fieldIndex, targetIndex }
+          else
+            none
+      | _, _ => none
+  | _ => none
+
+def mutualRecursiveFields (block : InductiveBlockSpec) (ctor : SimpleConstructorSpec) :
+    List MutualRecursiveFieldInfo :=
+  enumerate ctor.fields |>.filterMap fun pair =>
+    mutualDirectRecursiveField? block ctor.fields.length pair.1 pair.2
+
+def mutualRecursiveHypothesisType
+    (motiveCount previousMinors fieldCount recursiveIndex : Nat)
+    (rec : MutualRecursiveFieldInfo) : Expr :=
+  let motiveIndex :=
+    fieldCount + recursiveIndex + previousMinors + motiveCount - 1 - rec.targetIndex
+  let motive := .bvar motiveIndex
+  let fieldValue := .bvar (recursiveIndex + fieldCount - 1 - rec.fieldIndex)
+  .app motive fieldValue
+
+def mutualRecursiveHypothesisBinders
+    (motiveCount previousMinors fieldCount : Nat)
+    (recFields : List MutualRecursiveFieldInfo) : List Binder :=
+  enumerate recFields |>.map fun pair =>
+    {
+      name := s!"ih{pair.2.fieldIndex}"
+      type :=
+        mutualRecursiveHypothesisType motiveCount previousMinors fieldCount pair.1 pair.2
+    }
+
+def mutualCtorAppFromFields
+    (motiveCount previousMinors recursiveCount : Nat)
+    (spec : SimpleInductiveSpec)
+    (ctor : SimpleConstructorSpec) : Expr :=
+  let paramArgs :=
+    simpleParamArgs spec (ctor.fields.length + recursiveCount + previousMinors + motiveCount)
+  let fieldArgs := sourceOrderBvars ctor.fields.length recursiveCount
+  Expr.mkApps (.const ctor.name (simpleInductiveLevels spec)) (paramArgs ++ fieldArgs)
+
+def mutualMinorType (block : InductiveBlockSpec) (motiveCount previousMinors : Nat)
+    (entry : MutualConstructorEntry) : Expr :=
+  let ctor := entry.ctor
+  let fieldCount := ctor.fields.length
+  let recFields := mutualRecursiveFields block ctor
+  let recursiveCount := recFields.length
+  let fieldBinders := liftFieldBindersForOuter (previousMinors + motiveCount) 0 ctor.fields
+  let recursiveBinders :=
+    mutualRecursiveHypothesisBinders motiveCount previousMinors fieldCount recFields
+  let motiveIndex :=
+    fieldCount + recursiveCount + previousMinors + motiveCount - 1 - entry.inductiveIndex
+  let body :=
+    .app (.bvar motiveIndex)
+      (mutualCtorAppFromFields motiveCount previousMinors recursiveCount entry.spec ctor)
+  bindForall (fieldBinders ++ recursiveBinders) body
+
+def mutualRecursorConstructorInfo (block : InductiveBlockSpec)
+    (entry : MutualConstructorEntry) : MutualRecursorConstructorInfo :=
+  {
+    inductiveIndex := entry.inductiveIndex
+    name := entry.ctor.name
+    fieldCount := entry.ctor.fields.length
+    recursiveFields := mutualRecursiveFields block entry.ctor
+  }
+
+def mutualRecursorType (block : InductiveBlockSpec) (targetIndex : Nat)
+    (motiveLevel : Level) : Result Expr := do
+  let some targetSpec := listGet? block.specs targetIndex
+    | fail s!"mutual recursor target index {targetIndex} is out of range"
+  let motiveCount := block.specs.length
+  let entries := mutualConstructorEntries block
+  let motiveBinders :=
+    block.specs.map fun spec =>
+      { name := spec.name ++ ".motive", type := simpleMotiveType spec motiveLevel }
+  let minorBinders :=
+    enumerate entries |>.map fun pair =>
+      {
+        name := pair.2.ctor.name ++ ".minor"
+        type := mutualMinorType block motiveCount pair.1 pair.2
+      }
+  let target :=
+    {
+      name := "target"
+      type := simpleInductiveTargetAt targetSpec (minorBinders.length + motiveCount)
+    }
+  let motiveIndex := minorBinders.length + motiveCount - 1 - targetIndex + 1
+  let body := .app (.bvar motiveIndex) (.bvar 0)
+  pure (bindForall targetSpec.params (bindForall (motiveBinders ++ minorBinders ++ [target]) body))
+
+def mutualBlockMotiveLevel
+    (block : InductiveBlockSpec)
+    (largeElimEligible : Bool) : Level :=
+  if block.specs.all (fun spec => spec.resultLevel.defEq .zero) && !largeElimEligible then
+    .zero
+  else
+    .param (MPC.Packages.Inductive.Prop.freshLevelParam block.levelParams)
+
+def checkInductiveBlockHeader
+    (manifest : Manifest)
+    (env : Env)
+    (block : InductiveBlockSpec)
+    (sharedParams : List Binder)
+    (spec : SimpleInductiveSpec) : Result Unit := do
+  if spec.levelParams != block.levelParams then
+    fail s!"inductive {spec.name} must use the block universe parameters"
+  else if !binderTypesAlphaEq spec.params sharedParams then
+    fail s!"inductive {spec.name} must use the block parameter telescope"
+  else if spec.resultLevel.defEq .zero then
+    MPC.Packages.Inductive.Prop.checkPropInductiveEnabled manifest
+  else
+    pure ()
+  let _ ← inferSort manifest env block.levelParams [] (.sort spec.resultLevel)
+  let _ ← inferSort manifest env block.levelParams [] (simpleInductiveType spec)
+  pure ()
+
+def addInductiveBlock (manifest : Manifest) (env : Env) (block : InductiveBlockSpec) :
+    Result Env := do
+  Manifest.validate manifest
+  if !manifest.supportsInductiveBlocks then
+    fail "mutual inductive blocks are disabled by the manifest"
+  else if !manifest.supportsSimpleInductives then
+    fail "simple inductives are disabled by the manifest"
+  else
+    pure ()
+  let firstSpec ←
+    match block.specs with
+    | [] => fail "mutual inductive block must contain at least one inductive"
+    | spec :: _ => pure spec
+  for spec in block.specs do
+    checkInductiveBlockHeader manifest env block firstSpec.params spec
+  let mut provisionalEnv := env
+  for spec in block.specs do
+    provisionalEnv ← Env.add provisionalEnv
+      {
+        name := spec.name
+        levelParams := block.levelParams
+        type := simpleInductiveType spec
+        kind := .inductiveType spec
+      }
+  let blockNames := mutualBlockNames block
+  let paramCtx := extendBinders [] firstSpec.params
+  for spec in block.specs do
+    for ctor in spec.constructors do
+      checkMutualInductiveFields manifest provisionalEnv block.levelParams blockNames
+        paramCtx ctor.fields
+      let _ ← inferSort manifest provisionalEnv block.levelParams []
+        (simpleConstructorType spec ctor)
+      pure ()
+  let mut env := provisionalEnv
+  for entry in mutualConstructorEntries block do
+    env ← Env.add env
+      {
+        name := entry.ctor.name
+        levelParams := block.levelParams
+        type := simpleConstructorType entry.spec entry.ctor
+        kind := .constructor entry.spec.name entry.constructorIndex entry.ctor.fields.length
+      }
+  let largeElimEligible := false
+  let motiveLevel := mutualBlockMotiveLevel block largeElimEligible
+  let recursorLevelParams :=
+    MPC.Packages.Inductive.Prop.recursorLevelParams motiveLevel block.levelParams
+  let ctorInfos := (mutualConstructorEntries block).map (mutualRecursorConstructorInfo block)
+  let inductiveNames := mutualBlockNames block
+  for pair in enumerate block.specs do
+    let recursorType ← mutualRecursorType block pair.1 motiveLevel
+    let _ ← inferSort manifest env recursorLevelParams [] recursorType
+    env ← Env.add env
+      {
+        name := simpleRecursorName pair.2
+        levelParams := recursorLevelParams
+        type := recursorType
+        kind :=
+          .mutualRecursor
+            {
+              targetIndex := pair.1
+              inductiveNames
+              constructors := ctorInfos
+            }
+      }
+  pure env
+
 def checkIndexedConstructor
     (manifest : Manifest)
     (env : Env)
@@ -1035,6 +1280,8 @@ def addDecl (manifest : Manifest) (env : Env) : Declaration → Result Env
           Env.add env { name, levelParams, type, value? := some value, kind := .theorem }
       | .inductive spec =>
           addSimpleInductive manifest env spec
+      | .inductiveBlock block =>
+          addInductiveBlock manifest env block
       | .indexedInductive spec =>
           addIndexedInductive manifest env spec
       | .equalityPrimitives =>

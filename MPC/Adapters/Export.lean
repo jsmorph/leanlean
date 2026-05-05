@@ -462,25 +462,34 @@ def kernelConstructorToSimple
   else
     fail s!"kernel constructor {ctor.name} targets indexed form of non-indexed {specName}"
 
+def kernelTypeToSimple
+    (decl : KernelInductiveDecl)
+    (typeDecl : KernelInductiveTypeDecl) : Result SimpleInductiveSpec := do
+  let (params, indices, resultLevel) ← kernelTypeHeader decl typeDecl
+  if !indices.isEmpty then
+    fail s!"indexed mutual inductive {typeDecl.name} is outside this MPC rule package"
+  let constructors ←
+    typeDecl.ctors.mapM fun ctor =>
+      kernelConstructorToSimple decl typeDecl.name params ctor
+  pure
+    {
+      name := typeDecl.name
+      levelParams := decl.levelParams
+      params
+      resultLevel
+      constructors
+    }
+
 def lowerKernelInductive (decl : KernelInductiveDecl) : Result Declaration := do
   match decl.types with
   | [] => fail "kernel inductive declaration must contain at least one type"
-  | _ :: _ :: _ => fail "mutual inductive groups are outside the first MPC export adapter"
+  | _ :: _ :: _ => do
+      let specs ← decl.types.mapM (kernelTypeToSimple decl)
+      pure (.inductiveBlock { levelParams := decl.levelParams, specs })
   | [typeDecl] => do
       let (params, indices, resultLevel) ← kernelTypeHeader decl typeDecl
       if indices.isEmpty then
-        let constructors ←
-          typeDecl.ctors.mapM fun ctor =>
-            kernelConstructorToSimple decl typeDecl.name params ctor
-        pure
-          (.inductive
-            {
-              name := typeDecl.name
-              levelParams := decl.levelParams
-              params
-              resultLevel
-              constructors
-            })
+        pure (.inductive (← kernelTypeToSimple decl typeDecl))
       else
         let constructors ←
           typeDecl.ctors.mapM fun ctor =>
@@ -608,6 +617,10 @@ def declarationNameLabel : Declaration → String
   | .opaque name .. => name
   | .theorem name .. => name
   | .inductive spec => spec.name
+  | .inductiveBlock block =>
+      match block.specs with
+      | [] => "empty inductive block"
+      | spec :: _ => spec.name
   | .indexedInductive spec => spec.name
   | .equalityPrimitives => "equality primitives"
   | .quotientPrimitives => "quotient primitives"
@@ -618,6 +631,7 @@ def declarationKindLabel : Declaration → String
   | .opaque .. => "opaque"
   | .theorem .. => "theorem"
   | .inductive .. => "inductive"
+  | .inductiveBlock .. => "inductive-block"
   | .indexedInductive .. => "indexed-inductive"
   | .equalityPrimitives => "equality-primitives"
   | .quotientPrimitives => "quotient-primitives"
@@ -640,6 +654,7 @@ def auditGenerated (env : Env) (audit : Audit) : Result Unit := do
   for name in audit.recursors do
     match env.find? name with
     | some { kind := .recursor .., .. } => pure ()
+    | some { kind := .mutualRecursor .., .. } => pure ()
     | some { kind := .indexedRecursor .., .. } => pure ()
     | some { kind := .nestedRecursor .., .. } => pure ()
     | some { kind := .equalityRec, .. } => pure ()

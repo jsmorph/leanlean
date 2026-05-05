@@ -11,7 +11,7 @@ fi
 
 mkdir -p "$artifact_dir"
 
-lake build Faithfulness.ExportArithmetic Faithfulness.ExportNestedIndexed mpc-check-export
+lake build Faithfulness.ExportArithmetic Faithfulness.ExportNestedIndexed Faithfulness.ExportMutual mpc-check-export
 
 checker=".lake/build/bin/mpc-check-export"
 lean_path="$(pwd)/.lake/build/lib/lean"
@@ -79,3 +79,9 @@ run_generated \
   "Faithfulness.ExportNestedIndexed" \
   "LeanLeanFaithfulness.ExportNestedIndexed.NestedIndexedPairBox" \
   "checked 6 declaration entries; environment size 16"
+
+run_generated \
+  "mpc-mutual-even-odd" \
+  "Faithfulness.ExportMutual" \
+  "LeanLeanFaithfulness.ExportMutual.squashedEvenTwo" \
+  "checked 5 declaration entries; environment size 11"

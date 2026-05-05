@@ -15,7 +15,7 @@ The generated recursor family should use one motive per block member and one min
 ## Initial Tasks
 
 - [x] Add a mutual inductive fixture that currently fails at the export adapter boundary.
-- [ ] Add MPC block declaration data and a manifest switch for mutual inductive blocks.
-- [ ] Implement simple mutual block admission, constructor generation, recursor generation, and recursor reduction.
-- [ ] Lower exported simple mutual groups into the new declaration form.
-- [ ] Add native and exported tests for the even/odd block.
+- [x] Add MPC block declaration data and a manifest switch for mutual inductive blocks.
+- [x] Implement simple mutual block admission, constructor generation, recursor generation, and recursor reduction.
+- [x] Lower exported simple mutual groups into the new declaration form.
+- [x] Add native and exported tests for the even/odd block.

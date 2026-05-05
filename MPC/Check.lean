@@ -272,6 +272,20 @@ partial def containsConst (target : Name) : Expr → Bool
       containsConst target type || containsConst target value || containsConst target body
   | .proj _ _ projectionTarget => containsConst target projectionTarget
 
+partial def containsAnyConst (targets : List Name) : Expr → Bool
+  | .bvar _ => false
+  | .sort _ => false
+  | .const name _ => targets.contains name
+  | .lit _ => false
+  | .app fn arg => containsAnyConst targets fn || containsAnyConst targets arg
+  | .lam _ type body => containsAnyConst targets type || containsAnyConst targets body
+  | .forallE _ type body => containsAnyConst targets type || containsAnyConst targets body
+  | .letE _ type value body =>
+      containsAnyConst targets type ||
+        containsAnyConst targets value ||
+        containsAnyConst targets body
+  | .proj _ _ projectionTarget => containsAnyConst targets projectionTarget
+
 def getAppHeadName? (expr : Expr) : Option Name :=
   match expr.getAppFnArgs.1 with
   | .const name _ => some name
@@ -463,5 +477,43 @@ partial def simpleStrictlyPositive (manifest : Manifest) (env : Env) (target : N
         | .forallE _ domain body =>
             !containsConst target domain && simpleStrictlyPositive manifest env target body
         | _ => !containsConst target expr
+
+partial def mutualStrictlyPositive (manifest : Manifest) (env : Env) (targets : List Name)
+    (expr : Expr) : Bool :=
+  match getAppHeadName? expr with
+  | some name =>
+      if targets.contains name then
+        true
+      else
+        checkHead
+  | none => checkHead
+where
+  checkHead : Bool :=
+    let (head, args) := expr.getAppFnArgs
+    match head with
+    | .const name _ =>
+        match availableCovariantContainer? manifest env name with
+        | some info =>
+            let rec argsStrictlyPositive : Nat → List Expr → Bool
+              | _, [] => true
+              | index, arg :: rest =>
+                  let ok :=
+                    if listGetD info.positiveArgs index then
+                      mutualStrictlyPositive manifest env targets arg
+                    else
+                      !containsAnyConst targets arg
+                  ok && argsStrictlyPositive (index + 1) rest
+            args.length == info.positiveArgs.length && argsStrictlyPositive 0 args
+        | none =>
+            match expr with
+            | .forallE _ domain body =>
+                !containsAnyConst targets domain &&
+                  mutualStrictlyPositive manifest env targets body
+            | _ => !containsAnyConst targets expr
+    | _ =>
+        match expr with
+        | .forallE _ domain body =>
+            !containsAnyConst targets domain && mutualStrictlyPositive manifest env targets body
+        | _ => !containsAnyConst targets expr
 
 end MPC

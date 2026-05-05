@@ -168,6 +168,7 @@ def auditGenerated (env : Env) (audit : Audit) : Result Unit := do
   for name in audit.recursors do
     match env.find? name with
     | some { kind := .recursor .., .. } => pure ()
+    | some { kind := .mutualRecursor .., .. } => pure ()
     | some { kind := .nestedRecursor .., .. } => pure ()
     | some _ => fail s!"generated recursor audit found non-recursor: {name}"
     | none => fail s!"generated recursor audit found unknown name: {name}"

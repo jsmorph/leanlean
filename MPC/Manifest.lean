@@ -24,6 +24,11 @@ inductive InductiveMode where
   | indexed
   deriving BEq, Repr, Inhabited
 
+inductive InductiveBlockMode where
+  | disabled
+  | mutual
+  deriving BEq, Repr, Inhabited
+
 inductive NestedContainerMode where
   | disabled
   | lean429
@@ -65,6 +70,7 @@ structure Manifest where
   prop : PropMode := .disabled
   literals : LiteralMode := .none
   inductives : InductiveMode := .none
+  inductiveBlocks : InductiveBlockMode := .disabled
   nestedContainers : NestedContainerMode := .disabled
   inductiveProp : InductivePropMode := .disabled
   equality : EqualityMode := .disabled
@@ -85,6 +91,9 @@ def Manifest.supportsSimpleInductives (manifest : Manifest) : Bool :=
 
 def Manifest.supportsIndexedInductives (manifest : Manifest) : Bool :=
   manifest.inductives == .indexed
+
+def Manifest.supportsInductiveBlocks (manifest : Manifest) : Bool :=
+  manifest.inductiveBlocks == .mutual
 
 def Manifest.supportsPropInductives (manifest : Manifest) : Bool :=
   manifest.inductiveProp == .propOnly || manifest.inductiveProp == .largeElim

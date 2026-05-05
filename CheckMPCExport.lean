@@ -139,6 +139,7 @@ structure ExprProfile where
   maxAppArgs : Nat := 0
   definitionHeadApps : Nat := 0
   simpleRecursorHeadApps : Nat := 0
+  mutualRecursorHeadApps : Nat := 0
   indexedRecursorHeadApps : Nat := 0
   nestedRecursorHeadApps : Nat := 0
   equalityRecHeadApps : Nat := 0
@@ -155,6 +156,7 @@ structure ExprProfile where
   opaqueConsts : Nat := 0
   axiomConsts : Nat := 0
   simpleRecursorConsts : Nat := 0
+  mutualRecursorConsts : Nat := 0
   indexedRecursorConsts : Nat := 0
   nestedRecursorConsts : Nat := 0
   equalityRecConsts : Nat := 0
@@ -171,6 +173,7 @@ def ExprProfile.add (left right : ExprProfile) : ExprProfile :=
     maxAppArgs := Nat.max left.maxAppArgs right.maxAppArgs
     definitionHeadApps := left.definitionHeadApps + right.definitionHeadApps
     simpleRecursorHeadApps := left.simpleRecursorHeadApps + right.simpleRecursorHeadApps
+    mutualRecursorHeadApps := left.mutualRecursorHeadApps + right.mutualRecursorHeadApps
     indexedRecursorHeadApps := left.indexedRecursorHeadApps + right.indexedRecursorHeadApps
     nestedRecursorHeadApps := left.nestedRecursorHeadApps + right.nestedRecursorHeadApps
     equalityRecHeadApps := left.equalityRecHeadApps + right.equalityRecHeadApps
@@ -187,6 +190,7 @@ def ExprProfile.add (left right : ExprProfile) : ExprProfile :=
     opaqueConsts := left.opaqueConsts + right.opaqueConsts
     axiomConsts := left.axiomConsts + right.axiomConsts
     simpleRecursorConsts := left.simpleRecursorConsts + right.simpleRecursorConsts
+    mutualRecursorConsts := left.mutualRecursorConsts + right.mutualRecursorConsts
     indexedRecursorConsts := left.indexedRecursorConsts + right.indexedRecursorConsts
     nestedRecursorConsts := left.nestedRecursorConsts + right.nestedRecursorConsts
     equalityRecConsts := left.equalityRecConsts + right.equalityRecConsts
@@ -218,6 +222,7 @@ def profileConst (env : Env) (name : Name) : ExprProfile :=
       | .opaque => { base with opaqueConsts := base.opaqueConsts + 1 }
       | .axiom => { base with axiomConsts := base.axiomConsts + 1 }
       | .recursor .. => { base with simpleRecursorConsts := base.simpleRecursorConsts + 1 }
+      | .mutualRecursor .. => { base with mutualRecursorConsts := base.mutualRecursorConsts + 1 }
       | .indexedRecursor .. => { base with indexedRecursorConsts := base.indexedRecursorConsts + 1 }
       | .nestedRecursor .. => { base with nestedRecursorConsts := base.nestedRecursorConsts + 1 }
       | .equalityRec => { base with equalityRecConsts := base.equalityRecConsts + 1 }
@@ -242,6 +247,7 @@ def profileHeadApp (env : Env) (expr : Expr) : ExprProfile :=
           match info.kind with
           | .definition => { base with definitionHeadApps := base.definitionHeadApps + 1 }
           | .recursor .. => { base with simpleRecursorHeadApps := base.simpleRecursorHeadApps + 1 }
+          | .mutualRecursor .. => { base with mutualRecursorHeadApps := base.mutualRecursorHeadApps + 1 }
           | .indexedRecursor .. => { base with indexedRecursorHeadApps := base.indexedRecursorHeadApps + 1 }
           | .nestedRecursor .. => { base with nestedRecursorHeadApps := base.nestedRecursorHeadApps + 1 }
           | .equalityRec => { base with equalityRecHeadApps := base.equalityRecHeadApps + 1 }
@@ -326,6 +332,17 @@ def profileDeclaration (env : Env) : Declaration → DeclarationProfile
             (fun profile ctor => profile.add (profileSimpleConstructor env ctor))
             {})
       { typeNodes := profile.nodes, exprs := profile }
+  | .inductiveBlock block =>
+      let profile :=
+        block.specs.foldl
+          (fun profile spec =>
+            profile.add
+              ((profileBinders env spec.params).add
+                (spec.constructors.foldl
+                  (fun ctorProfile ctor => ctorProfile.add (profileSimpleConstructor env ctor))
+                  {})))
+          {}
+      { typeNodes := profile.nodes, exprs := profile }
   | .indexedInductive spec =>
       let profile :=
         (profileBinders env spec.params).add
@@ -348,6 +365,7 @@ def DeclarationProfile.toJsonFields (profile : DeclarationProfile) : List (Strin
     ("profile_max_app_args", jsonNat exprs.maxAppArgs),
     ("profile_definition_head_apps", jsonNat exprs.definitionHeadApps),
     ("profile_simple_recursor_head_apps", jsonNat exprs.simpleRecursorHeadApps),
+    ("profile_mutual_recursor_head_apps", jsonNat exprs.mutualRecursorHeadApps),
     ("profile_indexed_recursor_head_apps", jsonNat exprs.indexedRecursorHeadApps),
     ("profile_nested_recursor_head_apps", jsonNat exprs.nestedRecursorHeadApps),
     ("profile_eq_rec_head_apps", jsonNat exprs.equalityRecHeadApps),
@@ -364,6 +382,7 @@ def DeclarationProfile.toJsonFields (profile : DeclarationProfile) : List (Strin
     ("profile_opaque_consts", jsonNat exprs.opaqueConsts),
     ("profile_axiom_consts", jsonNat exprs.axiomConsts),
     ("profile_simple_recursor_consts", jsonNat exprs.simpleRecursorConsts),
+    ("profile_mutual_recursor_consts", jsonNat exprs.mutualRecursorConsts),
     ("profile_indexed_recursor_consts", jsonNat exprs.indexedRecursorConsts),
     ("profile_nested_recursor_consts", jsonNat exprs.nestedRecursorConsts),
     ("profile_eq_rec_consts", jsonNat exprs.equalityRecConsts),
