@@ -157,6 +157,67 @@ def nestedArraySpec : SimpleInductiveSpec :=
       ]
   }
 
+def nestedArrayType : Expr :=
+  .const "NestedArray" []
+
+def listNestedArrayType : Expr :=
+  .app (.const "List" []) nestedArrayType
+
+def arrayNestedArrayType : Expr :=
+  .app (.const "Array" []) nestedArrayType
+
+def listNestedArrayNil : Expr :=
+  .app (.const "List.nil" []) nestedArrayType
+
+def arrayNestedArrayMk (values : Expr) : Expr :=
+  appN (.const "Array.mk" []) [nestedArrayType, values]
+
+def nestedArrayMk (args : Expr) : Expr :=
+  .app (.const "NestedArray.mk" []) args
+
+def nestedArrayEmpty : Expr :=
+  nestedArrayMk (arrayNestedArrayMk listNestedArrayNil)
+
+def listNestedArrayCons (head tail : Expr) : Expr :=
+  appN (.const "List.cons" []) [nestedArrayType, head, tail]
+
+def nestedArrayRootMotive : Expr :=
+  .lam "target" nestedArrayType (.const "P" [])
+
+def nestedArrayArrayMotive : Expr :=
+  .lam "target" arrayNestedArrayType (.const "P" [])
+
+def nestedArrayListMotive : Expr :=
+  .lam "target" listNestedArrayType (.const "P" [])
+
+def nestedArrayRootMinor : Expr :=
+  .lam "args" arrayNestedArrayType
+    (.lam "ih" (.const "P" []) (.const "p" []))
+
+def nestedArrayArrayMinor : Expr :=
+  .lam "toList" listNestedArrayType
+    (.lam "ih" (.const "P" []) (.const "p" []))
+
+def nestedArrayListConsMinor : Expr :=
+  .lam "head" nestedArrayType
+    (.lam "tail" listNestedArrayType
+      (.lam "headIH" (.const "P" [])
+        (.lam "tailIH" (.const "P" []) (.bvar 0))))
+
+def nestedArrayRecursorOnCons : Expr :=
+  appN
+    (.const "NestedArray.rec_2" [.zero])
+    [
+      nestedArrayRootMotive,
+      nestedArrayArrayMotive,
+      nestedArrayListMotive,
+      nestedArrayRootMinor,
+      nestedArrayArrayMinor,
+      .const "p" [],
+      nestedArrayListConsMinor,
+      listNestedArrayCons nestedArrayEmpty listNestedArrayNil
+    ]
+
 def badNestedArraySpec : SimpleInductiveSpec :=
   {
     name := "BadNestedArray"
@@ -950,6 +1011,9 @@ def checkSimpleInductives : IO Unit := do
       expect "nested recursor family target count" (info.targets.length == 3)
   | some _ => throw <| IO.userError "nested List helper recursor has wrong kind"
   | none => throw <| IO.userError "nested List helper recursor missing"
+  let nestedReduced ← expectOkLabel "nested helper recursor reduction"
+    (normalize MPC.Configs.LeanCore429 nestedEnv [] nestedArrayRecursorOnCons)
+  expectExprEq "nested helper recursor iota" nestedReduced (.const "p" [])
   expectError "negative occurrence inside nested container"
     (replay MPC.Configs.LeanCore429 emptyEnv
       (baseDeclarations ++ [.inductive listSpec, .inductive arraySpec, .inductive badNestedArraySpec]))

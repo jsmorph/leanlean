@@ -24,6 +24,29 @@ def findIndexedConstructor? (name : Name) : List IndexedRecursorConstructorInfo 
   | ctor :: rest =>
       if ctor.name == name then some ctor else findIndexedConstructor? name rest
 
+def findNestedConstructor? (name : Name) : List NestedRecursorConstructorInfo →
+    Option NestedRecursorConstructorInfo
+  | [] => none
+  | ctor :: rest =>
+      if ctor.name == name then some ctor else findNestedConstructor? name rest
+
+def nestedMinorIndex? (targets : List NestedRecursorTargetInfo) (targetIndex : Nat)
+    (ctorName : Name) : Option Nat :=
+  let rec loopTargets (offset index : Nat) : List NestedRecursorTargetInfo → Option Nat
+    | [] => none
+    | target :: rest =>
+        if index == targetIndex then
+          match target.constructors.findIdx? (fun ctor => ctor.name == ctorName) with
+          | some ctorIndex => some (offset + ctorIndex)
+          | none => none
+        else
+          loopTargets (offset + target.constructors.length) (index + 1) rest
+  loopTargets 0 0 targets
+
+def levelListsDefEq (left right : List Level) : Bool :=
+  left.length == right.length &&
+    (left.zip right).all fun pair => pair.1.defEq pair.2
+
 def recursorSourceOrderBvars (count offset : Nat) : List Expr :=
   (List.range count).map fun index =>
     .bvar (offset + count - 1 - index)
@@ -332,6 +355,65 @@ partial def reduceSimpleRecursor? (manifest : Manifest) (env : Env) (levelParams
         | _ => pure none
     | none => pure none
 
+partial def reduceNestedRecursor? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (name : Name) (info : NestedRecursorInfo) (levels : List Level) (args : List Expr) :
+    Result (Option Expr) := do
+  if !manifest.supportsLean429NestedContainers then
+    pure none
+  else
+    let some targetInfo := listGet? info.targets info.targetIndex
+      | pure none
+    if name != targetInfo.recursorName then
+      pure none
+    else
+      match env.find? info.rootName with
+      | some { kind := .inductiveType rootSpec, .. } =>
+          let motiveCount := info.targets.length
+          let minorCount :=
+            info.targets.foldl (fun count target => count + target.constructors.length) 0
+          let required := rootSpec.params.length + motiveCount + minorCount + 1
+          if args.length < required then
+            pure none
+          else
+            let paramArgs := args.take rootSpec.params.length
+            let rest := args.drop rootSpec.params.length
+            let motiveArgs := rest.take motiveCount
+            let rest := rest.drop motiveCount
+            let minorArgs := rest.take minorCount
+            let some target := listGet? args (required - 1)
+              | pure none
+            let trailing := args.drop required
+            let targetWhnf ← whnf manifest env levelParams target
+            let (targetHead, targetArgs) := targetWhnf.getAppFnArgs
+            match targetHead with
+            | Expr.const ctorName ctorLevels =>
+                if !levelListsDefEq ctorLevels targetInfo.levels then
+                  pure none
+                else
+                  let some ctorInfo := findNestedConstructor? ctorName targetInfo.constructors
+                    | pure none
+                  let some minorIndex := nestedMinorIndex? info.targets info.targetIndex ctorName
+                    | pure none
+                  let some minor := listGet? minorArgs minorIndex
+                    | pure none
+                  let fieldArgs := targetArgs.drop targetInfo.paramCount
+                  if fieldArgs.length != ctorInfo.fields.length then
+                    pure none
+                  else
+                    let recursiveResults ←
+                      ctorInfo.recursiveFields.mapM fun rec => do
+                        let some recTarget := listGet? info.targets rec.targetIndex
+                          | fail s!"unknown nested recursor target {rec.targetIndex}"
+                        let some fieldValue := listGet? fieldArgs rec.fieldIndex
+                          | fail s!"missing recursive field {rec.fieldIndex} for {ctorName}"
+                        pure
+                          (Expr.mkApps (.const recTarget.recursorName levels)
+                            (paramArgs ++ motiveArgs ++ minorArgs ++ [fieldValue]))
+                    let value := Expr.mkApps minor (fieldArgs ++ recursiveResults)
+                    pure (some (Expr.mkApps value trailing))
+            | _ => pure none
+      | _ => pure none
+
 partial def reduceIndexedRecursor? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (name : Name) (info : IndexedRecursorInfo) (levels : List Level) (args : List Expr) :
     Result (Option Expr) := do
@@ -497,6 +579,10 @@ partial def whnf (manifest : Manifest) (env : Env) (levelParams : LevelContext)
                   | none => pure (Expr.mkApps head args)
               | some { kind := .indexedRecursor info, .. } =>
                   match ← reduceIndexedRecursor? manifest env levelParams name info levels args with
+                  | some reduced => whnf manifest env levelParams reduced
+                  | none => pure (Expr.mkApps head args)
+              | some { kind := .nestedRecursor info, .. } =>
+                  match ← reduceNestedRecursor? manifest env levelParams name info levels args with
                   | some reduced => whnf manifest env levelParams reduced
                   | none => pure (Expr.mkApps head args)
               | some { kind := .quotientLift, .. } =>
