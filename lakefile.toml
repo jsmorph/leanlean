@@ -1,9 +1,6 @@
 name = "LeanLean"
 version = "0.1.0"
-defaultTargets = ["leanlean"]
-
-[[lean_lib]]
-name = "LeanLean"
+defaultTargets = ["mpc-check-export"]
 
 [[lean_lib]]
 name = "MPC"
@@ -45,33 +42,8 @@ name = "Faithfulness.Arena.Bogus1"
 name = "Faithfulness.Arena.ProjOfProp"
 
 [[lean_exe]]
-name = "leanlean"
-root = "Main"
-
-[[lean_exe]]
-name = "leanleantest"
-root = "Test"
-
-[[lean_exe]]
 name = "leanleanfaith"
 root = "Faithfulness.Runner"
-
-[[lean_exe]]
-name = "leanleanimport"
-root = "Faithfulness.ImportSmoke"
-
-[[lean_exe]]
-name = "leanleandiff"
-root = "Faithfulness.Differential"
-
-[[lean_exe]]
-name = "leanlean-check-module"
-root = "CheckModule"
-supportInterpreter = true
-
-[[lean_exe]]
-name = "leanlean-check-export"
-root = "CheckExport"
 
 [[lean_exe]]
 name = "mpc-check-export"
@@ -80,11 +52,6 @@ root = "CheckMPCExport"
 [[lean_exe]]
 name = "leanlean-export-roots"
 root = "ExportRoots"
-supportInterpreter = true
-
-[[lean_exe]]
-name = "leanlean-self-check"
-root = "SelfCheck"
 supportInterpreter = true
 
 [[lean_exe]]
