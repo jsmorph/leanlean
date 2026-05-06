@@ -475,6 +475,8 @@ The corrected category-theory root `CategoryTheory.Functor.map_comp_assoc` accep
 
 `CategoryTheory.Limits.pushout.map_comp` accepts as the colimit-side companion in the same module.  The run reused the pullback build and most of the category cache, then checked 73 new declarations for the pushout side.  MPC produced environment size 11,045, giving binary pullback and pushout map-composition coverage without exposing a new checker rule.
 
+`CategoryTheory.Limits.kernelComparison_comp_ι` accepts as the first kernel-comparison probe.  Building `Mathlib.CategoryTheory.Limits.Shapes.Kernels` added zero objects, equalizers, image declarations, zero morphisms, and kernel support.  MPC reused 434 declaration entries, checked 81 new entries, and produced environment size 11,329.
+
 `CategoryTheory.Limits.Pi.map_comp_map` accepts as a product-family category probe.  The target checks the dependent product-family version of the map-composition pattern after the binary pullback and pushout probes.  MPC reused 430 declaration entries, checked 58 new entries, and produced environment size 11,109.
 
 `CategoryTheory.Limits.Sigma.map_comp_map` accepts as the coproduct-family companion.  The target reuses most of the product-family cache and checks the dual map-composition pattern over coproduct families.  MPC reused 462 declaration entries, checked 37 new entries, and produced environment size 11,148.
