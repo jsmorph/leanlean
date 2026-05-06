@@ -1,5 +1,44 @@
 # MPC Performance Notes
 
+## How To Measure
+
+Performance measurements should name the artifact, command, cache mode, declaration count, environment size, and elapsed replay time.  Cold replay is the right measurement for checker changes because it exercises parsing, lowering, generated-record audit, and ordinary declaration checking from an empty MPC environment.  SQLite cache replay is the right measurement for self-check workflow costs, cache hit behavior, and adapter overhead, but it cannot be compared directly with cold replay.
+
+Use `MPC_LEAN4EXPORT` when `lean4export` is not on `PATH`.  The generated artifacts used below live under `.lake/build/export-tests` or `.lake/build/mpc-export-self-check`, and profiling scratch files should live under `.tmp`.  Keep the exact command in the note for each measurement, because `--limit`, cache mode, telemetry mode, and the selected root change the meaning of the numbers.
+
+| Task | Command |
+| --- | --- |
+| Build the checker | `lake build mpc-check-export` |
+| Generate and check the GCD fixture | `env MPC_LEAN4EXPORT=/path/to/lean4export tools/mpc-export-gcd.sh` |
+| Run the generated export regression set | `env MPC_LEAN4EXPORT=/path/to/lean4export tools/mpc-export-tests.sh` |
+| Run the export self-check with cache | `env MPC_LEAN4EXPORT=/path/to/lean4export MPC_CACHE_DB=.tmp/mpc-self-check-cache.db tools/mpc-export-self-check.sh` |
+| Run the export self-check cold | `env MPC_LEAN4EXPORT=/path/to/lean4export MPC_CACHE_DB= tools/mpc-export-self-check.sh` |
+| Run the Omega stress profiler | `env MPC_LEAN4EXPORT=/path/to/lean4export MPC_STRESS_TIMEOUT=120 tools/mpc-omega-stress.sh` |
+
+Use `--stats-jsonl` for per-declaration timing without structural counters.  Use `--profile-jsonl` when the question needs expression-size counters, head-application counters, or constant-kind counters beside timing.  Use `--profile-declaration <n>` when declaration `n` takes too long to finish and the prefix before it can still replay, because this mode replays the prefix and emits counters for the selected declaration without checking that declaration.
+
+```bash
+.lake/build/bin/mpc-check-export \
+  --stats-jsonl \
+  .lake/build/export-tests/mpc-gcd-parity-arithmetic.ndjson \
+  > .tmp/mpc-gcd-stats.jsonl
+
+.lake/build/bin/mpc-check-export \
+  --profile-jsonl \
+  --limit 430 \
+  .lake/build/export-tests/mpc-gcd-parity-arithmetic.ndjson \
+  > .tmp/mpc-gcd-profile-limit430.jsonl
+
+.lake/build/bin/mpc-check-export \
+  --profile-declaration 1174 \
+  .lake/build/mpc-export-self-check/mpc-level.ndjson \
+  > .tmp/mpc-level-decl-1174.profile.jsonl
+```
+
+`--cache-layer`, `--load-layer`, and `--save-layer` measure checked-layer behavior.  `--cache-layer` mutates a SQLite DB and rejects if an existing cached name has different declaration content, which can happen after source changes; use `MPC_CACHE_DB=` for a cold self-check when that distinction is not under test.  Cache modes do not support `--profile-jsonl`, and `--cache-layer` also rejects `--limit`, so cache measurements should use the text outcome or `--stats-jsonl` where supported.
+
+When comparing runs, compare the same artifact and the same declaration prefix.  The most useful columns are declaration index, declaration name, status, elapsed milliseconds, cumulative milliseconds, expression node count, and transparent-definition head-application count.  A useful optimization note records both the winning and rejected hypotheses, because several cheap optimizations in this file measured inside run-to-run noise.
+
 ## Baseline
 
 The first full GCD replay profile used `mpc-check-export --stats-jsonl` against `.lake/build/export-tests/mpc-gcd-parity-arithmetic.ndjson`.  It accepted 493 declaration entries with environment size 571.  The measured declaration replay time was 597,416 ms, or about 9 minutes and 57 seconds.
