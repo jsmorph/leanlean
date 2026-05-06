@@ -41,7 +41,7 @@ The first implementation target is a small data fragment.  It includes closed un
 
 ## Next Plan
 
-- [x] Draft [Helper-Target Design](helper-target-design.md) for telescope-aware nested helper targets.
+- [x] Draft the telescope-aware helper-target design note.
 - [x] Replace closed helper-target expressions with contextual target schemas and indexed field shapes.
 - [x] Rewrite family construction, motive formation, minor-premise generation, and iota reduction around target schemas.
 - [x] Check nested positive examples against Lean's local-variable restriction.
@@ -426,3 +426,5 @@ The root plan files have been removed.  They recorded completed package slices a
 `design.md` has been rewritten as the MPC architecture note.  It now records the checker boundary, file organization, package ownership, adapter rules, checked-layer behavior, and maintained drivers.  The document remains separate from `spec.md`: the specification states the typing and conversion rules, while the design note states where those rules live and which repository code is allowed to translate, cache, profile, or audit around them.
 
 `metatheory.md` has been rewritten for the MPC-only repository.  It removes the old Lean importer and faithfulness-harness theorem statements, then restates the proof obligations around canonical declaration scripts, manifests, rule-package preservation, adapter theorems, checked-layer replay refinement, and resource classification.  The evidence table now points to current MPC tests, generated export scripts, self-check artifacts, name encoding, and profiling drivers.
+
+`helper-target-design.md` has been removed from the root.  Its implemented design now belongs to the current specification, architecture note, metatheory note, and historical journal entries rather than a stale standalone design file.  `.gitignore` now ignores `.tmp`, matching the cache and profiling paths used by the maintained scripts.
