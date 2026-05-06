@@ -154,6 +154,21 @@ The selected declaration has 196,906 expression nodes, 98,428 application nodes,
 
 Two cheap traversal changes were tested and not kept.  Comparing application spines directly inside structural conversion did not advance past declaration 2615, and adding an exact-structural `BEq` fast path before alpha equivalence also did not advance past the declaration.  The result keeps the classification as proof-checking throughput over a large generated arithmetic certificate.
 
+## Mathlib Nat Prime Factors
+
+The `Nat.primeFactorsList_unique` probe used `Mathlib.Data.Nat.Factors` with the shared mathlib SQLite cache.  The artifact is 14 MB, and the cached stats run reused every declaration before the hard point.  The reused prefix reached declaration index 2717 in 6,045 ms, then the 300-second command timed out while checking declaration index 2718.
+
+```bash
+timeout 300s .lake/build/bin/mpc-check-export \
+  --stats-jsonl \
+  --cache-layer .tmp/mathlib-probes/mathlib-cache.db \
+  .tmp/mathlib-probes/nat-primeFactorsList-unique.ndjson \
+  > .tmp/mathlib-probes/nat-primeFactorsList-unique.stats.jsonl \
+  2> .tmp/mathlib-probes/nat-primeFactorsList-unique.stats.err
+```
+
+The hard declaration is `_private.Mathlib.Data.Nat.Sqrt.0.Nat.sqrt_isSqrt`, not `Nat.primeFactorsList_unique`.  The theorem has 9 type nodes and 47,233 value nodes.  A head-count scan is dominated by `OfNat.ofNat`, `HAdd.hAdd`, `HDiv.hDiv`, `Nat.log2`, `HShiftLeft.hShiftLeft`, `HMul.hMul`, and `Nat.sqrt`, which points to numeric proof conversion through ordinary definitions and overloaded arithmetic projections rather than a rule-package conclusion.
+
 ## Mathlib Measure Rat Proof
 
 The measure-theory probe used `Mathlib.MeasureTheory.Constructions.BorelSpace.Metric`, root `Measurable.dist`, with the shared mathlib SQLite cache.  The exported artifact has 834,810 NDJSON rows and a 43 MB file size.  The first cached stats run failed before reaching the hard declaration because requested-content lookup built one SQLite temporary table containing every target declaration key, which exhausted SQLite temporary storage.
