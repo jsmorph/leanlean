@@ -263,6 +263,38 @@ bash -c 'TIMEFORMAT="elapsed %R"; time .lake/build/bin/mpc-check-export \
 
 That warm run reused 5,174 declaration entries, checked none, produced environment size 5,753, emitted no checker stderr, and took 135.290 seconds.  The result validates digest reuse and also shows that warm-cache mathlib probes still pay a front-end cost over large NDJSON artifacts.  That cost is outside MPC rule checking, but it matters for development iteration.
 
+## Mathlib Snake No-Main
+
+The v4 no-main snake-lemma support run used the existing support artifact and the shared digest cache:
+
+```bash
+timeout 7200s .lake/build/bin/mpc-check-export \
+  --cache-layer .tmp/mathlib-probes/mathlib-cache-v4.db \
+  --stats-jsonl \
+  .tmp/mathlib-probes/snake-lemma-no-main.ndjson \
+  > .tmp/mathlib-probes/snake-lemma-no-main-v4.stats.jsonl \
+  2> .tmp/mathlib-probes/snake-lemma-no-main-v4.stats.err
+```
+
+The run accepted 7,691 target declarations, reused 5,095 declaration entries, checked 2,596 new entries, produced environment size 8,447, emitted no stderr, and grew the v4 cache to 107 MB.  The cumulative declaration time was 2,822,125 ms, and the final telemetry timestamp was 5,207,774 ms.  This support artifact ends at `CategoryTheory.ShortComplex.SnakeInput.naturality_δ`, so it does not include the main `CategoryTheory.ShortComplex.SnakeInput.snake_lemma` theorem.
+
+The slowest checked declarations were concentrated in homology-data packaging, with one later finite-category equivalence proof:
+
+| Elapsed ms | Index | Declaration |
+|---:|---:|---|
+| 550,380 | 6033 | `CategoryTheory.ShortComplex.HomologyData.ofAbelian._proof_2` |
+| 290,910 | 6034 | `CategoryTheory.ShortComplex.HomologyData.ofAbelian` |
+| 169,275 | 6700 | `CategoryTheory.FinCategory.asTypeEquivObjAsType._proof_2` |
+| 166,482 | 5784 | `CategoryTheory.ShortComplex.LeftHomologyData.ofAbelian._proof_12` |
+| 153,716 | 5946 | `CategoryTheory.ShortComplex.RightHomologyData.ofAbelian._proof_11` |
+| 130,140 | 5781 | `CategoryTheory.ShortComplex.LeftHomologyData.ofAbelian._proof_11` |
+| 125,793 | 5944 | `CategoryTheory.ShortComplex.RightHomologyData.ofAbelian._proof_10` |
+| 87,728 | 4737 | `CategoryTheory.ShortComplex.LeftHomologyData.ofAbelian._proof_8` |
+| 82,358 | 5792 | `CategoryTheory.ShortComplex.RightHomologyData.ofAbelian._proof_7` |
+| 62,198 | 5787 | `CategoryTheory.ShortComplex.LeftHomologyData.ofAbelian` |
+
+This run changes the snake-lemma support classification from host-resource failure to accepted support with serious proof-conversion cost.  The next probe should run the main snake artifact against the same v4 cache, because the accepted support prefix now covers the expensive homology-data declarations.  If the main theorem fails, the result should be interpreted against this support baseline rather than against the earlier v3 host kill.
+
 ## Conversion Fast Paths
 
 The useful optimization was a top-level alpha-equivalence check at the start of `defEq`.  If two terms are already equal up to binder names and universe equality, conversion now returns before weak-head reduction, structural recursion, eta, or proof irrelevance.  This preserves the conversion relation and removes repeated normalization of subterms that are already identical in exported proof terms.
