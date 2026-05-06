@@ -134,6 +134,26 @@ The selected declaration has 32,596 expression nodes, 16,094 application nodes, 
 
 The SQLite cache exposed an adapter problem during this probe.  Before the cache change, killed `--cache-layer` runs did not persist the accepted prefix because the adapter appended new rows only after complete replay.  The cache path now appends each checked declaration in its own SQLite transaction; in the `Finset.range_filter_eq` probe, killing the run after it reached the slow proof increased the cache from 803 to 1,922 environment rows, with `Nat.le_of_not_lt` as the last cached declaration before the slow proof.
 
+## Mathlib BigOperators Finset
+
+The first `BigOperators` finite-set probe used `Mathlib.Algebra.BigOperators.Group.Finset.Basic`, root `Finset.prod_biUnion`, with the shared SQLite mathlib cache.  Replay reused the accepted prefix through declaration index 2614 and then spent the useful probe budget on declaration 2615, `_private.Init.Grind.Ring.Basic.0.Lean.Grind.Ring.intCast_nat_sub._proof_1_2`.  This declaration comes from Lean's `Init.Grind.Ring.Basic`, theorem `intCast_nat_sub`, whose successor case uses `omega`.
+
+```bash
+.lake/build/bin/mpc-check-export \
+  --cache-layer .tmp/mathlib-probes/mathlib-cache.db \
+  --stats-jsonl \
+  .tmp/mathlib-probes/bigops-finset-prod-biUnion.ndjson \
+  > .tmp/mathlib-probes/bigops-finset-prod-biUnion.spine-stats.jsonl
+
+.lake/build/bin/mpc-check-export \
+  --profile-declaration 2615 \
+  .tmp/mathlib-probes/bigops-finset-prod-biUnion.ndjson
+```
+
+The selected declaration has 196,906 expression nodes, 98,428 application nodes, 35,330 transparent-definition constants, and 25,701 transparent-definition head applications.  It has no primitive Nat head applications, no recursor head applications, no quotient-lift head applications, and no projection nodes.  A head-frequency scan reports the largest applied heads as `List.cons`, `Nat.cast`, `OfNat.ofNat`, `HSub.hSub`, `HAdd.hAdd`, `Lean.Omega.LinearCombo.mk`, `Lean.Omega.Coeffs.ofList`, and `Lean.Omega.LinearCombo.eval`.
+
+Two cheap traversal changes were tested and not kept.  Comparing application spines directly inside structural conversion did not advance past declaration 2615, and adding an exact-structural `BEq` fast path before alpha equivalence also did not advance past the declaration.  The result keeps the classification as proof-checking throughput over a large generated arithmetic certificate.
+
 ## Conversion Fast Paths
 
 The useful optimization was a top-level alpha-equivalence check at the start of `defEq`.  If two terms are already equal up to binder names and universe equality, conversion now returns before weak-head reduction, structural recursion, eta, or proof irrelevance.  This preserves the conversion relation and removes repeated normalization of subterms that are already identical in exported proof terms.

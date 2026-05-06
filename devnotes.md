@@ -44,6 +44,8 @@ The first implementation target is a small data fragment.  It includes closed un
 | 2026-05-05 | `Mathlib.Data.Finset.Basic`, roots `Finset.choose_spec` and `Finset.equivToSet` | Accepted | The cache runs checked 34 and 13 new declarations, respectively.  These roots add unique-choice and finite-set-to-set equivalence coverage after the range-filter performance boundary. |
 | 2026-05-05 | `Mathlib.Algebra.Group.Basic`, roots `mul_left_comm` and `inv_mul_eq_of_eq_mul` | Accepted | The cache runs checked 13 and 67 new declarations.  These are the first algebraic-structure probes after the finite-set slice. |
 | 2026-05-05 | `Mathlib.Algebra.Ring.Basic`, roots `vieta_formula_quadratic` and `noZeroDivisors_tfae` | Accepted | The cache runs checked 169 and 92 new declarations.  These roots exercise ring structure, bundled homomorphism dependencies, and `List.TFAE` proposition packaging. |
+| 2026-05-05 | `Mathlib.Algebra.BigOperators.Group.List.Basic`, root `List.prod_range_div` | Accepted | The SQLite-cache run reused 430 declarations and checked 52 new declarations.  This root adds product-folding coverage without crossing a new rule boundary. |
+| 2026-05-05 | `Mathlib.Algebra.BigOperators.Group.Finset.Basic`, root `Finset.prod_biUnion` | Rejected: performance | Replay reached `_private.Init.Grind.Ring.Basic.0.Lean.Grind.Ring.intCast_nat_sub._proof_1_2` at declaration index 2615, then exceeded the useful probe budget.  Static profiling reports 196,906 expression nodes, 98,428 app nodes, 35,330 transparent-definition constants, and 25,701 transparent-definition head applications.  A head-frequency scan is dominated by list constructors, casts, heterogeneous addition and subtraction wrappers, and Omega linear-combination certificates. |
 
 ## Small Plan
 
