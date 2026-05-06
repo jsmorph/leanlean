@@ -193,6 +193,8 @@ After the cache lookup changed to bounded direct key queries, the `Measurable.di
 
 Two diagnostics failed to move the boundary.  Disabling the equality-rec endpoint fallback did not advance the isolated proof, so the prior equality-rec fix is not the cause of this wall.  Direct reduction of projection constants also did not advance the isolated proof, though that reducer is still a projection-package correction for exported structure accessors.  The remaining question needs dynamic counters for `defEq`, `whnf`, equality transport, proof irrelevance, and transparent unfolding if this rational proof becomes the next performance target.
 
+The same rational proof wall appears in `Real.continuous_sqrt` from `Mathlib.Data.Real.Sqrt`.  The cached stats run reached `Rat.addCommGroup._proof_1` at declaration index 3290 after reusing the prefix through `Rat.one_mul` in 4,673 ms, then timed out.  This makes `Rat.addCommGroup._proof_1` a reusable blocker for analysis roots, not an artifact of the measure-theory export.
+
 ## Mathlib LinearEquiv NoConfusion
 
 The `LinearMap.det_comp` probe used `Mathlib.LinearAlgebra.Determinant` with the shared mathlib SQLite cache.  The exported artifact is 62 MB, and the cached stats run reused the prefix through declaration index 7357 in 13,926 ms.  The 300-second command then timed out while checking declaration index 7358, before reaching `LinearMap.det_comp`.
