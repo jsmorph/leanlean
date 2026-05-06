@@ -1055,10 +1055,24 @@ def equalityDeclarations : List Declaration :=
   [
     .axiom "Alpha" [] type0,
     .axiom "Beta" [] type0,
+    .axiom "Fam" [] (pi "T" type0 type0),
+    .definition "AlphaAlias" [] type0 alphaType,
     .axiom "Pred" [] predType,
     .axiom "a" [] alphaType,
     .axiom "predProof" [] predA,
-    .axiom "b" [] betaType
+    .axiom "b" [] betaType,
+    .axiom "famValue" [] (appN (.const "Fam" []) [alphaType])
+  ]
+
+def equalityEndpointProofDeclarations : List Declaration :=
+  [
+    .axiom "famEq" []
+      (appN (.const "Eq" [.succ (.succ .zero)])
+        [
+          type0,
+          appN (.const "Fam" []) [alphaType],
+          appN (.const "Fam" []) [.const "AlphaAlias" []]
+        ])
   ]
 
 def quotientDeclarations : List Declaration :=
@@ -1197,6 +1211,29 @@ def eqRecKTransport : Expr :=
       .const "predProof" [],
       .const "a" [],
       .const "aEqA" []
+    ]
+
+def eqRecNestedEndpointMotive : Expr :=
+  .lam "T" type0
+    (.lam "h"
+      (appN (.const "Eq" [.succ (.succ .zero)])
+        [
+          type0,
+          appN (.const "Fam" []) [alphaType],
+          .bvar 0
+        ])
+      (.bvar 1))
+
+def eqRecNestedEndpointTransport : Expr :=
+  appN
+    (.const "Eq.rec" [.succ .zero, .succ (.succ .zero)])
+    [
+      type0,
+      appN (.const "Fam" []) [alphaType],
+      eqRecNestedEndpointMotive,
+      .const "famValue" [],
+      appN (.const "Fam" []) [.const "AlphaAlias" []],
+      .const "famEq" []
     ]
 
 def eqNdRecMotive : Expr :=
@@ -2104,6 +2141,7 @@ def checkEquality : IO Unit := do
         [.equalityPrimitives] ++
         [MPC.Packages.Equality.eqNdRecDefinition] ++
         equalityDeclarations ++
+        equalityEndpointProofDeclarations ++
         [.axiom "aEqA" [] (eqAlpha (.const "a" []) (.const "a" []))]))
   expectEnvContains "equality primitives" env "Eq.rec"
   expectOkLabel "proof irrelevance"
@@ -2121,6 +2159,9 @@ def checkEquality : IO Unit := do
   let kReduced ← expectOkLabel "Eq.rec K reduction"
     (normalize MPC.Configs.EqualityPoc env [] eqRecKTransport)
   expectExprEq "Eq.rec K value" kReduced (.const "predProof" [])
+  let nestedEndpointReduced ← expectOkLabel "Eq.rec nested endpoint reduction"
+    (normalize MPC.Configs.EqualityPoc env [] eqRecNestedEndpointTransport)
+  expectExprEq "Eq.rec nested endpoint value" nestedEndpointReduced (.const "famValue" [])
   let proofBoxEnv ← expectOkLabel "Eq.rec proof endpoint replay"
     (replay MPC.Configs.EqualityPoc env
       [.inductive proofBoxSpec, .axiom "proofBoxEq" [] proofBoxEqType])

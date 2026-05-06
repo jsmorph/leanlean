@@ -6,6 +6,45 @@ namespace MPC
 
 mutual
 
+partial def whnfAlphaEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (left right : Expr) : Result Bool := do
+  let left ← whnf manifest env levelParams left
+  let right ← whnf manifest env levelParams right
+  match left, right with
+  | .bvar left, .bvar right => pure (left == right)
+  | .sort left, .sort right => pure (left.defEq right)
+  | .const leftName leftLevels, .const rightName rightLevels =>
+      pure
+        (leftName == rightName &&
+          leftLevels.length == rightLevels.length &&
+          (leftLevels.zip rightLevels).all fun pair => pair.1.defEq pair.2)
+  | .lit left, .lit right => pure (left == right)
+  | .app leftFn leftArg, .app rightFn rightArg => do
+      if ← whnfAlphaEq manifest env levelParams leftFn rightFn then
+        whnfAlphaEq manifest env levelParams leftArg rightArg
+      else
+        pure false
+  | .lam _ leftType leftBody, .lam _ rightType rightBody => do
+      if ← whnfAlphaEq manifest env levelParams leftType rightType then
+        whnfAlphaEq manifest env levelParams leftBody rightBody
+      else
+        pure false
+  | .forallE _ leftType leftBody, .forallE _ rightType rightBody => do
+      if ← whnfAlphaEq manifest env levelParams leftType rightType then
+        whnfAlphaEq manifest env levelParams leftBody rightBody
+      else
+        pure false
+  | .letE _ _ leftValue leftBody, _ =>
+      whnfAlphaEq manifest env levelParams (Expr.instantiate1 leftBody leftValue) right
+  | _, .letE _ _ rightValue rightBody =>
+      whnfAlphaEq manifest env levelParams left (Expr.instantiate1 rightBody rightValue)
+  | .proj leftStruct leftIndex leftTarget, .proj rightStruct rightIndex rightTarget =>
+      if leftStruct == rightStruct && leftIndex == rightIndex then
+        whnfAlphaEq manifest env levelParams leftTarget rightTarget
+      else
+        pure false
+  | _, _ => pure false
+
 partial def reduceQuotLift? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (_levels : List Level) (args : List Expr) : Result (Option Expr) := do
   if !manifest.supportsQuotients then
@@ -55,9 +94,7 @@ partial def reduceEqRec? (manifest : Manifest) (env : Env) (levelParams : LevelC
       let proofWhnf ← whnf manifest env levelParams proofArg
       let (proofHead, proofArgs) := proofWhnf.getAppFnArgs
       let reduceToMinorIfEndpointsMatch : Result (Option Expr) := do
-        let aWhnf ← whnf manifest env levelParams aArg
-        let bWhnf ← whnf manifest env levelParams bArg
-        if aWhnf.alphaEq bWhnf then
+        if ← whnfAlphaEq manifest env levelParams aArg bArg then
           pure (some (Expr.mkApps minorArg trailing))
         else
           pure none
