@@ -101,43 +101,51 @@ partial def whnf (manifest : Manifest) (env : Env) (levelParams : LevelContext)
       match primitiveReduction? with
       | some reduced => whnf manifest env levelParams reduced
       | none =>
-          let head ← whnf manifest env levelParams head
-          match head with
-          | Expr.const name levels =>
-              match env.find? name with
-              | some { kind := .recursor info, .. } =>
-                  match ← reduceSimpleRecursor? whnf manifest env levelParams name info levels args with
-                  | some reduced => whnf manifest env levelParams reduced
-                  | none => pure (Expr.mkApps head args)
-              | some { kind := .mutualRecursor info, .. } =>
-                  match ← reduceMutualRecursor? whnf manifest env levelParams name info levels args with
-                  | some reduced => whnf manifest env levelParams reduced
-                  | none => pure (Expr.mkApps head args)
-              | some { kind := .indexedRecursor info, .. } =>
-                  match ← reduceIndexedRecursor? whnf manifest env levelParams name info levels args with
-                  | some reduced => whnf manifest env levelParams reduced
-                  | none => pure (Expr.mkApps head args)
-              | some { kind := .nestedRecursor info, .. } =>
-                  match ← reduceNestedRecursor? whnf manifest env levelParams name info levels args with
-                  | some reduced => whnf manifest env levelParams reduced
-                  | none => pure (Expr.mkApps head args)
-              | some { kind := .quotientLift, .. } =>
-                  match ← reduceQuotLift? manifest env levelParams levels args with
-                  | some reduced => whnf manifest env levelParams reduced
-                  | none => pure (Expr.mkApps head args)
-              | some { kind := .equalityRec, .. } =>
-                  match ← reduceEqRec? manifest env levelParams args with
-                  | some reduced => whnf manifest env levelParams reduced
-                  | none => pure (Expr.mkApps head args)
+          let projectionReduction? ←
+            match head with
+            | .const name levels =>
+                MPC.Packages.Projection.reduceConstant? whnf manifest env levelParams name levels args
+            | _ => pure none
+          match projectionReduction? with
+          | some reduced => whnf manifest env levelParams reduced
+          | none =>
+              let head ← whnf manifest env levelParams head
+              match head with
+              | Expr.const name levels =>
+                  match env.find? name with
+                  | some { kind := .recursor info, .. } =>
+                      match ← reduceSimpleRecursor? whnf manifest env levelParams name info levels args with
+                      | some reduced => whnf manifest env levelParams reduced
+                      | none => pure (Expr.mkApps head args)
+                  | some { kind := .mutualRecursor info, .. } =>
+                      match ← reduceMutualRecursor? whnf manifest env levelParams name info levels args with
+                      | some reduced => whnf manifest env levelParams reduced
+                      | none => pure (Expr.mkApps head args)
+                  | some { kind := .indexedRecursor info, .. } =>
+                      match ← reduceIndexedRecursor? whnf manifest env levelParams name info levels args with
+                      | some reduced => whnf manifest env levelParams reduced
+                      | none => pure (Expr.mkApps head args)
+                  | some { kind := .nestedRecursor info, .. } =>
+                      match ← reduceNestedRecursor? whnf manifest env levelParams name info levels args with
+                      | some reduced => whnf manifest env levelParams reduced
+                      | none => pure (Expr.mkApps head args)
+                  | some { kind := .quotientLift, .. } =>
+                      match ← reduceQuotLift? manifest env levelParams levels args with
+                      | some reduced => whnf manifest env levelParams reduced
+                      | none => pure (Expr.mkApps head args)
+                  | some { kind := .equalityRec, .. } =>
+                      match ← reduceEqRec? manifest env levelParams args with
+                      | some reduced => whnf manifest env levelParams reduced
+                      | none => pure (Expr.mkApps head args)
+                  | _ => pure (Expr.mkApps head args)
+              | .lam _ _ body =>
+                  match args with
+                  | first :: rest =>
+                      whnf manifest env levelParams (Expr.mkApps (Expr.instantiate1 body first) rest)
+                  | [] => pure head
+              | .app _ _ =>
+                  whnf manifest env levelParams (Expr.mkApps head args)
               | _ => pure (Expr.mkApps head args)
-          | .lam _ _ body =>
-              match args with
-              | first :: rest =>
-                  whnf manifest env levelParams (Expr.mkApps (Expr.instantiate1 body first) rest)
-              | [] => pure head
-          | .app _ _ =>
-              whnf manifest env levelParams (Expr.mkApps head args)
-          | _ => pure (Expr.mkApps head args)
   | .const name levels =>
       match env.find? name with
       | some info =>

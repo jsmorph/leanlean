@@ -2159,13 +2159,25 @@ def checkProjections : IO Unit := do
     (infer MPC.Configs.ProjectionPoc env [] [] (.proj "DPair" 2 dPairTarget))
   let hAddLikeDeclarations :=
     [
+      .axiom "Alpha" [] type0,
       .inductive hAddLikeSpec,
       .definition "HAddLike.hAdd" ["u", "v", "w"]
-        hAddLikeAccessorType hAddLikeAccessorValue
+        hAddLikeAccessorType hAddLikeAccessorValue,
+      .axiom "hAddFn" [] (pi "x" alphaType (pi "y" alphaType alphaType))
     ]
   let hAddLikeEnv ← expectOkLabel "dependent projection with binders replay"
     (replay MPC.Configs.ProjectionPoc emptyEnv hAddLikeDeclarations)
   expectEnvContains "dependent projection accessor" hAddLikeEnv "HAddLike.hAdd"
+  let hAddLikeLevels := [.succ .zero, .succ .zero, .succ .zero]
+  let hAddLikeSelf :=
+    appN (.const "HAddLike.mk" hAddLikeLevels)
+      [alphaType, alphaType, alphaType, .const "hAddFn" []]
+  let hAddLikeProjected :=
+    appN (.const "HAddLike.hAdd" hAddLikeLevels)
+      [alphaType, alphaType, alphaType, hAddLikeSelf]
+  let hAddLikeReduced ← expectOkLabel "projection constant reduction"
+    (normalize MPC.Configs.ProjectionPoc hAddLikeEnv [] hAddLikeProjected)
+  expectExprEq "projection constant value" hAddLikeReduced (.const "hAddFn" [])
   let universeFieldEnv ← expectOkLabel "projection universe substitution replay"
     (replay MPC.Configs.ProjectionPoc emptyEnv (baseDeclarations ++ [.inductive universeFieldSpec]))
   let universeFieldType ← expectOkLabel "projection universe substitution inference"

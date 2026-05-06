@@ -37,6 +37,21 @@ def fieldType (env : Env) (structureName : Name) (fieldIndex : Nat)
         | none => fail s!"unknown projection structure: {structureName}"
   | _ => fail s!"projection target type is not a structure application: {repr targetType}"
 
+def projectionName? (name : Name) : Option (Name × Name) :=
+  match name.splitOn "." |>.reverse with
+  | fieldName :: parentRev =>
+      match parentRev.reverse with
+      | [] => none
+      | parentParts => some (String.intercalate "." parentParts, fieldName)
+  | [] => none
+
+def fieldIndexByName? (fields : List Binder) (fieldName : Name) : Option Nat :=
+  let rec loop : Nat → List Binder → Option Nat
+    | _, [] => none
+    | index, field :: rest =>
+        if field.name == fieldName then some index else loop (index + 1) rest
+  loop 0 fields
+
 -- Avoid an exported sparse matcher for the constructor-kind test.
 set_option backward.match.sparseCases false in
 partial def reduce? (whnfFn : Manifest → Env → LevelContext → Expr → Result Expr)
@@ -63,5 +78,31 @@ partial def reduce? (whnfFn : Manifest → Env → LevelContext → Expr → Res
               | _ => pure none
         | _ => pure none
     | _ => pure none
+
+partial def reduceConstant? (_whnfFn : Manifest → Env → LevelContext → Expr → Result Expr)
+    (manifest : Manifest) (env : Env) (_levelParams : LevelContext)
+    (name : Name) (levels : List Level) (args : List Expr) : Result (Option Expr) := do
+  if !manifest.supportsProjections then
+    pure none
+  else
+    match projectionName? name with
+    | none => pure none
+    | some (structureName, fieldName) =>
+        match env.find? name, env.find? structureName with
+        | some { kind := .definition, .. }, some { kind := .inductiveType spec, levelParams, .. } =>
+            if levels.length != levelParams.length || args.length <= spec.params.length then
+              pure none
+            else
+              match spec.constructors with
+              | [ctor] =>
+                  match fieldIndexByName? ctor.fields fieldName with
+                  | none => pure none
+                  | some fieldIndex =>
+                      let some target := listGet? args spec.params.length
+                        | pure none
+                      let projected := .proj structureName fieldIndex target
+                      pure (some (Expr.mkApps projected (args.drop (spec.params.length + 1))))
+              | _ => pure none
+        | _, _ => pure none
 
 end MPC.Packages.Projection
