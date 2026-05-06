@@ -34,6 +34,7 @@ lake build \
   MPC.Packages.Inductive.Reduction \
   MPC.Packages.Inductive.Prop \
   MPC.Normalize \
+  MPC.Check \
   mpc-check-export \
   leanlean-export-roots
 
@@ -116,3 +117,4 @@ run_mpc_export_self_check "mpc-packages-inductive-admission" "MPC.Packages.Induc
 run_mpc_export_self_check "mpc-packages-inductive-reduction" "MPC.Packages.Inductive.Reduction" "layer"
 run_mpc_export_self_check "mpc-packages-inductive-prop" "MPC.Packages.Inductive.Prop" "layer"
 run_mpc_export_self_check "mpc-normalize" "MPC.Normalize" "layer"
+run_mpc_export_self_check "mpc-check" "MPC.Check" "layer"
