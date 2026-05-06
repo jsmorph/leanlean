@@ -89,7 +89,15 @@ This is an accepted Tier 0 result.  It verifies the external checkout, module bu
 | Finset singleton filter | `Mathlib.Data.Finset.Basic` | `Finset.filter_singleton` | Accepted | SQLite-cache run checked 593 target declarations into a new mathlib probe cache. |
 | Finset filter union | `Mathlib.Data.Finset.Basic` | `Finset.filter_union` | Accepted | SQLite-cache run reused 555 declarations and checked 90 new declarations on the first pass; after the cache grew, it reused all 645 target declarations. |
 | Finset range filter | `Mathlib.Data.Finset.Basic` | `Finset.range_filter_eq` | Rejected: performance | Replay reached declaration index 1430, `_private.Init.Data.List.Nat.Range.0.List.pairwise_lt_range'._proof_1_4`, then exceeded the useful probe budget.  The selected declaration has 32,596 expression nodes, 16,094 app nodes, 5,457 transparent-definition constants, and 3,799 transparent-definition head applications. |
+| Finset unique choice | `Mathlib.Data.Finset.Basic` | `Finset.choose_spec` | Accepted | SQLite-cache run reused 372 declarations and checked 34 new declarations. |
+| Finset-to-set equivalence | `Mathlib.Data.Finset.Basic` | `Finset.equivToSet` | Accepted | SQLite-cache run reused 544 declarations and checked 13 new declarations. |
+| Group left commutation | `Mathlib.Algebra.Group.Basic` | `mul_left_comm` | Accepted | SQLite-cache run reused 12 declarations and checked 13 new declarations. |
+| Group inverse cancellation | `Mathlib.Algebra.Group.Basic` | `inv_mul_eq_of_eq_mul` | Accepted | SQLite-cache run reused 299 declarations and checked 67 new declarations. |
+| Ring quadratic identity | `Mathlib.Algebra.Ring.Basic` | `vieta_formula_quadratic` | Accepted | SQLite-cache run reused 306 declarations and checked 169 new declarations. |
+| Ring no-zero-divisors TFAE | `Mathlib.Algebra.Ring.Basic` | `noZeroDivisors_tfae` | Accepted | SQLite-cache run reused 530 declarations and checked 92 new declarations. |
 
 The quotient probe reached MPC replay, checked the declaration prefix, and then exposed a WHNF bug in conversion.  Inspecting the exported `Quot.congr_mk` term showed that Lean's ordinary `rfl` proof depends on `Quot.congr` and `Quot.map` reducing through a partial `Quot.lift`.  The fixed run accepts the root, so the next probe can move past the low-level quotient constructor case.
 
 The first serious mathlib performance boundary is an Omega-generated proof imported by a finite-set range theorem.  This is a checker-throughput problem over ordinary proof terms, not a new rule-package requirement.  The SQLite checked-layer cache now persists each checked declaration as it succeeds, so interrupted long probes keep the accepted prefix they have already checked.
+
+The first algebra probes accepted through the same path.  These roots exercise class-heavy structures, bundled homomorphisms, inverse/cancellation lemmas, and `List.TFAE` proposition packaging without exposing a new checker rule.
