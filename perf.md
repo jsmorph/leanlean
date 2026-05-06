@@ -114,6 +114,26 @@ The first profile run used prefix 430, which includes `Nat.gcd_dvd` but stops be
 
 The next instrumentation should be dynamic but still narrow: per-declaration counters for `defEq` calls, `whnf` calls, structural failures, eta attempts and successes, proof-irrelevance attempts and successes, delta unfolds, and recursor reductions.  Those counters should be emitted once per declaration, not as per-call logs.
 
+## Mathlib Finset Range Filter
+
+The first mathlib finite-set performance boundary came from `Finset.range_filter_eq` in `Mathlib.Data.Finset.Basic`.  The cold profile command reached declaration index 1429 in about 20.8 seconds, then spent the remaining run time on declaration 1430, `_private.Init.Data.List.Nat.Range.0.List.pairwise_lt_range'._proof_1_4`.  That proof comes from Lean's `Init.Data.List.Nat.Range`, where `pairwise_lt_range'` uses `omega` in the successor case.
+
+```bash
+.lake/build/bin/mpc-check-export \
+  --profile-jsonl \
+  .tmp/mathlib-probes/finset-range-filter-eq.ndjson \
+  > .tmp/mathlib-probes/finset-range-filter-eq.profile.jsonl
+
+.lake/build/bin/mpc-check-export \
+  --profile-declaration 1430 \
+  .tmp/mathlib-probes/finset-range-filter-eq.ndjson \
+  > .tmp/mathlib-probes/finset-range-filter-eq.decl1430-profile.json
+```
+
+The selected declaration has 32,596 expression nodes, 16,094 application nodes, 5,457 transparent-definition constants, and 3,799 transparent-definition head applications.  Trying proof irrelevance before structure eta did not advance past the declaration and slightly increased the prefix time, so that change was reverted.  This leaves the issue classified as proof-conversion throughput over ordinary exported terms rather than a missing rule package.
+
+The SQLite cache exposed an adapter problem during this probe.  Before the cache change, killed `--cache-layer` runs did not persist the accepted prefix because the adapter appended new rows only after complete replay.  The cache path now appends each checked declaration in its own SQLite transaction; in the `Finset.range_filter_eq` probe, killing the run after it reached the slow proof increased the cache from 803 to 1,922 environment rows, with `Nat.le_of_not_lt` as the last cached declaration before the slow proof.
+
 ## Conversion Fast Paths
 
 The useful optimization was a top-level alpha-equivalence check at the start of `defEq`.  If two terms are already equal up to binder names and universe equality, conversion now returns before weak-head reduction, structural recursion, eta, or proof irrelevance.  This preserves the conversion relation and removes repeated normalization of subterms that are already identical in exported proof terms.

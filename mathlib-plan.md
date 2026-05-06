@@ -80,5 +80,16 @@ This is an accepted Tier 0 result.  It verifies the external checkout, module bu
 | Nat set induction | `Mathlib.Data.Nat.Basic` | `Nat.set_induction` | Accepted | 140 checked declarations, environment size 184. |
 | Quot congruence on constructors | `Mathlib.Logic.Equiv.Defs` | `Quot.congr_mk` | Accepted | 338 checked declarations, environment size 459.  The first run exposed a WHNF spine-reprocessing bug: delta reduction of `Quot.congr` and `Quot.map` exposed a partially applied `Quot.lift`, while the quotient argument remained outside the unfolded head. |
 | SetLike extensionality | `Mathlib.Data.SetLike.Basic` | `SetLike.ext` | Accepted | 23 checked declarations, environment size 36.  This is the first structure/set probe after the quotient fix. |
+| Quotient binary lift | `Mathlib.Data.Quot` | `Quotient.lift₂_mk` | Accepted | 20 checked declarations, environment size 33. |
+| Quotient representative equation | `Mathlib.Data.Quot` | `Quotient.out_eq` | Accepted | 26 checked declarations, environment size 43. |
+| Fin constructor equality | `Mathlib.Data.Fin.Basic` | `Fin.mk_eq_mk` | Accepted | 22 checked declarations, environment size 39. |
+| Fin small arithmetic proof | `Mathlib.Data.Fin.Basic` | `Fin.eq_one_of_ne_zero` | Accepted | 1,623 checked declarations, environment size 1,859.  This root uses a `lia` proof and pulls in the Omega proof stack. |
+| Finset singleton erase | `Mathlib.Data.Finset.Basic` | `Finset.erase_singleton` | Accepted | 887 checked declarations, environment size 1,071. |
+| Finset range union | `Mathlib.Data.Finset.Basic` | `Finset.range_union_range` | Accepted | 1,792 checked declarations, environment size 2,042.  This accepted run took long enough to serve as a finite-set performance signal. |
+| Finset singleton filter | `Mathlib.Data.Finset.Basic` | `Finset.filter_singleton` | Accepted | SQLite-cache run checked 593 target declarations into a new mathlib probe cache. |
+| Finset filter union | `Mathlib.Data.Finset.Basic` | `Finset.filter_union` | Accepted | SQLite-cache run reused 555 declarations and checked 90 new declarations on the first pass; after the cache grew, it reused all 645 target declarations. |
+| Finset range filter | `Mathlib.Data.Finset.Basic` | `Finset.range_filter_eq` | Rejected: performance | Replay reached declaration index 1430, `_private.Init.Data.List.Nat.Range.0.List.pairwise_lt_range'._proof_1_4`, then exceeded the useful probe budget.  The selected declaration has 32,596 expression nodes, 16,094 app nodes, 5,457 transparent-definition constants, and 3,799 transparent-definition head applications. |
 
 The quotient probe reached MPC replay, checked the declaration prefix, and then exposed a WHNF bug in conversion.  Inspecting the exported `Quot.congr_mk` term showed that Lean's ordinary `rfl` proof depends on `Quot.congr` and `Quot.map` reducing through a partial `Quot.lift`.  The fixed run accepts the root, so the next probe can move past the low-level quotient constructor case.
+
+The first serious mathlib performance boundary is an Omega-generated proof imported by a finite-set range theorem.  This is a checker-throughput problem over ordinary proof terms, not a new rule-package requirement.  The SQLite checked-layer cache now persists each checked declaration as it succeeds, so interrupted long probes keep the accepted prefix they have already checked.

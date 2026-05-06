@@ -835,7 +835,7 @@ def emitReplayStep (observer? : Option ReplayObserver) (index : Nat) (declaratio
 
 def replaySqliteCore (manifest : Manifest) (layerPath : System.FilePath)
     (audit : MPC.Adapters.Export.Audit) (declarations : List Declaration)
-    (observer? : Option ReplayObserver) :
+    (observer? : Option ReplayObserver) (persistPath? : Option System.FilePath := none) :
     IO (Result SqliteReplayResult) := do
   match ← loadSqliteLayer layerPath with
   | .error err => pure (.error err)
@@ -848,6 +848,7 @@ def replaySqliteCore (manifest : Manifest) (layerPath : System.FilePath)
           let mut env := layer.env
           let mut reused := 0
           let mut checked := 0
+          let mut persistedDeclarations := layer.declarations
           let mut cumulativeMs := 0
           let mut index := 0
           for declaration in declarations do
@@ -881,7 +882,20 @@ def replaySqliteCore (manifest : Manifest) (layerPath : System.FilePath)
                         cumulativeMs ← emitReplayStep observer? index declaration .rejected startMs? cumulativeMs
                         return .error err
                     | .ok true =>
-                        newContentToNames := newContentToNames.insert key (declarationAnchorNames declaration)
+                        let names := declarationAnchorNames declaration
+                        match persistPath? with
+                        | some persistPath =>
+                            let contentToNames :=
+                              ({} : Std.HashMap String (List Name)).insert key names
+                            match ←
+                                appendSqliteLayer persistPath env.length persistedDeclarations 0 []
+                                  contentToNames with
+                            | .error err =>
+                                cumulativeMs ← emitReplayStep observer? index declaration .rejected startMs? cumulativeMs
+                                return .error err
+                            | .ok () => pure ()
+                        | none => pure ()
+                        newContentToNames := newContentToNames.insert key names
                         reused := reused + 1
                         cumulativeMs ← emitReplayStep observer? index declaration .reused startMs? cumulativeMs
                     | .ok false =>
@@ -894,8 +908,21 @@ def replaySqliteCore (manifest : Manifest) (layerPath : System.FilePath)
                                 return .error err
                             | .ok entries =>
                                 let names := entries.map fun info => info.name
+                                match persistPath? with
+                                | some persistPath =>
+                                    let contentToNames :=
+                                      ({} : Std.HashMap String (List Name)).insert key names
+                                    match ←
+                                        appendSqliteLayer persistPath before.length
+                                          persistedDeclarations 1 entries.reverse contentToNames with
+                                    | .error err =>
+                                        cumulativeMs ← emitReplayStep observer? index declaration .rejected startMs? cumulativeMs
+                                        return .error err
+                                    | .ok () =>
+                                        persistedDeclarations := persistedDeclarations + 1
+                                | none =>
+                                    newEntries := newEntries ++ entries.reverse
                                 env := nextEnv
-                                newEntries := newEntries ++ entries.reverse
                                 newContentToNames := newContentToNames.insert key names
                                 checked := checked + 1
                                 cumulativeMs ← emitReplayStep observer? index declaration .checked startMs? cumulativeMs
@@ -929,18 +956,10 @@ def cacheSqliteWithObserver (manifest : Manifest) (layerPath : System.FilePath)
   match ← ensureSqliteLayer layerPath with
   | .error err => pure (.error err)
   | .ok () =>
-      match ← loadSqliteLayer layerPath with
+      match ← replaySqliteCore manifest layerPath audit declarations observer? (some layerPath) with
       | .error err => pure (.error err)
-      | .ok layer =>
-          match ← replaySqliteCore manifest layerPath audit declarations observer? with
-          | .error err => pure (.error err)
-          | .ok result =>
-              match ←
-                  appendSqliteLayer layerPath layer.env.length layer.declarations result.checked
-                    result.newEntries result.newContentToNames with
-              | .error err => pure (.error err)
-              | .ok () =>
-                  pure (.ok { env := result.env, reused := result.reused, checked := result.checked })
+      | .ok result =>
+          pure (.ok { env := result.env, reused := result.reused, checked := result.checked })
 
 def cacheSqlite (manifest : Manifest) (layerPath : System.FilePath)
     (audit : MPC.Adapters.Export.Audit) (declarations : List Declaration) :
