@@ -41,6 +41,8 @@ SQLite cache files now use the v3 on-demand format.  A v3 cache stores declarati
 
 Older v2 cache files used rendered declarations as content keys and loaded the whole cached environment before replay.  Convert a v2 cache with `.lake/build/bin/mpc-migrate-layer <source-v2.db> <target-v3.db>`, or use a fresh cache path.  The checker refuses a v2 file passed to `--cache-layer`, because the v2 format can dominate memory and disk usage before any MPC rule runs.
 
+`tools/mpc-mathlib-probe.sh` writes checker stdout to `<label>.output`.  When `MPC_PROBE_STATS=1`, it writes the full telemetry stream to `<label>.stats.jsonl`, writes checker stderr to `<label>.stats.err`, and prints only the final checker outcome.  This keeps long mathlib probes inspectable without flooding the terminal.
+
 When comparing runs, compare the same artifact and the same declaration prefix.  The most useful columns are declaration index, declaration name, status, elapsed milliseconds, cumulative milliseconds, expression node count, and transparent-definition head-application count.  A useful optimization note records both the winning and rejected hypotheses, because several cheap optimizations in this file measured inside run-to-run noise.
 
 ## Baseline

@@ -38,6 +38,8 @@ roots_file="$probe_dir/$label.roots"
 artifact="$probe_dir/$label.ndjson"
 export_log="$probe_dir/$label.export.log"
 output="$probe_dir/$label.output"
+stats="$probe_dir/$label.stats.jsonl"
+stats_err="$probe_dir/$label.stats.err"
 checker="$repo_root/.lake/build/bin/mpc-check-export"
 checker_args=()
 
@@ -64,7 +66,7 @@ echo "mpc-mathlib-probe: artifact=$artifact"
 
 (cd "$repo_root" && lake build mpc-check-export)
 (cd "$mathlib_dir" && lake build "$module")
-rm -f "$artifact" "$export_log"
+rm -f "$artifact" "$export_log" "$output" "$stats" "$stats_err"
 
 set +e
 (cd "$mathlib_dir" && lake env "$lean4export_bin" "$module" -- "${roots[@]}") > "$artifact" 2> "$export_log"
@@ -93,9 +95,18 @@ if [[ "$artifact_lines" -le "1" ]]; then
 fi
 
 set +e
-"$checker" "${checker_args[@]}" "$artifact" > "$output" 2>&1
-code="$?"
+if [[ "${MPC_PROBE_STATS:-0}" == "1" ]]; then
+  "$checker" "${checker_args[@]}" "$artifact" > "$stats" 2> "$stats_err"
+  code="$?"
+  tail -3 "$stats" > "$output"
+else
+  "$checker" "${checker_args[@]}" "$artifact" > "$output" 2>&1
+  code="$?"
+fi
 set -e
 
 cat "$output"
+if [[ "${MPC_PROBE_STATS:-0}" == "1" && -s "$stats_err" ]]; then
+  cat "$stats_err" >&2
+fi
 exit "$code"
