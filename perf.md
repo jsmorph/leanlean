@@ -154,6 +154,30 @@ The selected declaration has 196,906 expression nodes, 98,428 application nodes,
 
 Two cheap traversal changes were tested and not kept.  Comparing application spines directly inside structural conversion did not advance past declaration 2615, and adding an exact-structural `BEq` fast path before alpha equivalence also did not advance past the declaration.  The result keeps the classification as proof-checking throughput over a large generated arithmetic certificate.
 
+## Mathlib Measure Rat Proof
+
+The measure-theory probe used `Mathlib.MeasureTheory.Constructions.BorelSpace.Metric`, root `Measurable.dist`, with the shared mathlib SQLite cache.  The exported artifact has 834,810 NDJSON rows and a 43 MB file size.  The first cached stats run failed before reaching the hard declaration because requested-content lookup built one SQLite temporary table containing every target declaration key, which exhausted SQLite temporary storage.
+
+```bash
+timeout 300s .lake/build/bin/mpc-check-export \
+  --stats-jsonl \
+  --cache-layer .tmp/mathlib-probes/mathlib-cache.db \
+  .tmp/mathlib-probes/measure-metric-dist.ndjson \
+  > .tmp/mathlib-probes/measure-metric-dist.stats.jsonl \
+  2> .tmp/mathlib-probes/measure-metric-dist.stats.err
+
+env MPC_MATHLIB_DIR=/tmp/mathlib4-v4290-probe \
+  MPC_LEAN4EXPORT=/tmp/lean4export/.lake/build/bin/lean4export \
+  MPC_PROBE_LABEL=rat-addcommgroup-proof1 \
+  MPC_CACHE_DB=.tmp/mathlib-probes/mathlib-cache.db \
+  MPC_PROBE_STATS=1 \
+  tools/mpc-mathlib-probe.sh Mathlib.Data.Rat.Lemmas Rat.addCommGroup._proof_1
+```
+
+After the cache lookup changed to bounded direct key queries, the `Measurable.dist` stats run reached declaration index 3277, `Rat.addCommGroup._proof_1`, before the time budget expired.  The isolated rational root reproduces the same wall at index 1826 after replaying the prefix through `Rat.one_mul`.  A static declaration scan reports 95 type nodes and 2,575 value nodes for the theorem, so the cost is not explained by raw term size alone.
+
+Two diagnostics failed to move the boundary.  Disabling the equality-rec endpoint fallback did not advance the isolated proof, so the prior equality-rec fix is not the cause of this wall.  Direct reduction of projection constants also did not advance the isolated proof, though that reducer is still a projection-package correction for exported structure accessors.  The remaining question needs dynamic counters for `defEq`, `whnf`, equality transport, proof irrelevance, and transparent unfolding if this rational proof becomes the next performance target.
+
 ## Conversion Fast Paths
 
 The useful optimization was a top-level alpha-equivalence check at the start of `defEq`.  If two terms are already equal up to binder names and universe equality, conversion now returns before weak-head reduction, structural recursion, eta, or proof irrelevance.  This preserves the conversion relation and removes repeated normalization of subterms that are already identical in exported proof terms.
