@@ -3,7 +3,7 @@ import MPC.Adapters.Layer
 namespace MigrateLayer
 
 def usage : String :=
-  "usage: mpc-migrate-layer <source-v2.db> <target-v3.db>"
+  "usage: mpc-migrate-layer <source-v2.db> <target-v4.db>"
 
 def filePath (path : String) : IO System.FilePath :=
   pure (System.FilePath.mk path)

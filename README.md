@@ -33,7 +33,7 @@ The repository now contains only MPC code and the files needed to build, drive, 
 | Export fixtures | `MPCFixtures` contains the arithmetic GCD/parity example, nested-indexed inductive examples, a mutual even/odd example, and the Omega stress module. |
 | Export self-check | `tools/mpc-export-self-check.sh` covers every non-adapter MPC module with source-facing roots and uses `MPC_CACHE_DB` for persistent checked-layer reuse. |
 | Performance work | `perf.md` records the current profile data, major optimizations, and remaining proof-heavy replay costs. |
-| Known caveat | A stale cache DB can reject because the same Lean name may have different exported content after source changes; run with `MPC_CACHE_DB=` for a cold self-check.  SQLite v2 cache files must be migrated with `mpc-migrate-layer` or replaced with a fresh `.db` path. |
+| Known caveat | A stale cache DB can reject because the same Lean name may have different exported content after source changes; run with `MPC_CACHE_DB=` for a cold self-check.  SQLite v2 cache files must be migrated with `mpc-migrate-layer` or replaced with a fresh `.db` path, and v3 cache files should be replaced. |
 
 ## Running
 
@@ -41,4 +41,4 @@ Run the native test suite with `lake exe mpctest`.  Build the export checker wit
 
 The current tool scripts are `tools/mpc-export-tests.sh`, `tools/mpc-export-gcd.sh`, `tools/mpc-export-self-check.sh`, and `tools/mpc-omega-stress.sh`.  The export scripts require a matching `lean4export` binary; set `MPC_LEAN4EXPORT` when it is not on `PATH`.  The export self-check script writes a SQLite checked-layer cache to `.tmp/mpc-self-check-cache.db` by default, uses `MPC_CACHE_DB` when supplied, and disables cache use when `MPC_CACHE_DB` is set to the empty string.
 
-Build the cache migrator with `lake build mpc-migrate-layer`, then run `.lake/build/bin/mpc-migrate-layer <source-v2.db> <target-v3.db>` to convert an old bulk SQLite cache into the on-demand format.  The migrator does not recheck declarations; it rewrites accepted cache groups from the old `env` and `content` tables into declaration groups.  `mpc-check-export --cache-layer` refuses v2 files so that large probes do not fall back to the old bulk-cache behavior.
+Build the cache migrator with `lake build mpc-migrate-layer`, then run `.lake/build/bin/mpc-migrate-layer <source-v2.db> <target-v4.db>` to convert an old bulk SQLite cache into the current on-demand format.  The migrator does not recheck declarations; it rewrites accepted cache groups from the old `env` and `content` tables into digest-indexed declaration groups.  `mpc-check-export --cache-layer` refuses v2 and v3 files so that large probes do not fall back to older cache behavior.

@@ -1,4 +1,5 @@
 import MPC.Adapters.Export
+import MPC.Adapters.SHA256
 import Std.Data.HashMap
 
 namespace MPC.Adapters.Layer
@@ -97,13 +98,31 @@ def sqliteFormatVersion : Nat :=
   2
 
 def sqliteOnDemandFormatVersion : Nat :=
-  3
+  4
+
+def declarationDigestEncoding : String :=
+  "repr-v1"
+
+def declarationContentKeyPrefix : String :=
+  s!"sha256-{declarationDigestEncoding}:"
 
 def manifestName : String :=
   "LeanCore429"
 
+def declarationDigestFromPayload (payload : String) : String :=
+  MPC.Adapters.SHA256.hashString payload
+
+def declarationDigest (declaration : Declaration) : String :=
+  declarationDigestFromPayload (toString (repr declaration))
+
 def declarationContentKey (declaration : Declaration) : String :=
-  toString (repr declaration)
+  declarationContentKeyPrefix ++ declarationDigest declaration
+
+def declarationDigestFromContentKey (key : String) : String :=
+  if key.startsWith declarationContentKeyPrefix then
+    (key.drop declarationContentKeyPrefix.length).toString
+  else
+    declarationDigestFromPayload key
 
 def addedNames (before after : Env) : Result (List Name) := do
   if before.length <= after.length then
@@ -379,7 +398,8 @@ def sqliteOnDemandCreateScript : String :=
   sqliteScriptHeader ++
   "BEGIN;\n" ++
   "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);\n" ++
-  "CREATE TABLE declarations(id INTEGER PRIMARY KEY AUTOINCREMENT, anchor TEXT NOT NULL, kind TEXT NOT NULL, entry_count INTEGER NOT NULL);\n" ++
+  "CREATE TABLE declarations(id INTEGER PRIMARY KEY AUTOINCREMENT, digest TEXT NOT NULL UNIQUE, anchor TEXT NOT NULL, kind TEXT NOT NULL, entry_count INTEGER NOT NULL);\n" ++
+  "CREATE INDEX declarations_digest_idx ON declarations(digest);\n" ++
   "CREATE INDEX declarations_anchor_idx ON declarations(anchor);\n" ++
   "CREATE TABLE entries(decl_id INTEGER NOT NULL, entry_pos INTEGER NOT NULL, name TEXT NOT NULL, json TEXT NOT NULL, PRIMARY KEY(decl_id, entry_pos));\n" ++
   "CREATE INDEX entries_name_idx ON entries(name);\n"
@@ -387,19 +407,23 @@ def sqliteOnDemandCreateScript : String :=
 def sqliteOnDemandFinishScript (declarations : Nat) : String :=
   sqliteInsertMeta "formatVersion" (toString sqliteOnDemandFormatVersion) ++
   sqliteInsertMeta "manifest" manifestName ++
+  sqliteInsertMeta "digestAlgorithm" "sha256" ++
+  sqliteInsertMeta "digestEncoding" declarationDigestEncoding ++
   sqliteInsertMeta "declarations" (toString declarations) ++
   "COMMIT;\n"
 
-def sqliteInsertOnDemandDeclarationHeader (anchor kind : String) (entryCount : Nat) :
-    String :=
-  s!"INSERT INTO declarations(anchor,kind,entry_count) VALUES({sqlQuote anchor},{sqlQuote kind},{entryCount});\n"
+def sqliteInsertOnDemandDeclarationHeader (digest anchor kind : String)
+    (entryCount : Nat) : String :=
+  s!"INSERT INTO declarations(digest,anchor,kind,entry_count) VALUES({sqlQuote digest},{sqlQuote anchor},{sqlQuote kind},{entryCount});\n"
+
+def cacheEntryForStorage (info : ConstantInfo) : ConstantInfo :=
+  match info.kind with
+  | .theorem => { info with value? := none }
+  | _ => info
 
 def sqliteInsertOnDemandEntry (entryPos : Nat) (info : ConstantInfo) : String :=
-  s!"INSERT INTO entries(decl_id,entry_pos,name,json) VALUES((SELECT id FROM declarations ORDER BY id DESC LIMIT 1),{entryPos},{sqlQuote info.name},{sqlQuote (Lean.toJson info).compress});\n"
-
-def sqliteInsertOnDemandEntryJson (entryPos : Nat) (info : ConstantInfo) (json : String) :
-    String :=
-  s!"INSERT INTO entries(decl_id,entry_pos,name,json) VALUES((SELECT id FROM declarations ORDER BY id DESC LIMIT 1),{entryPos},{sqlQuote info.name},{sqlQuote json});\n"
+  let stored := cacheEntryForStorage info
+  s!"INSERT INTO entries(decl_id,entry_pos,name,json) VALUES((SELECT id FROM declarations ORDER BY id DESC LIMIT 1),{entryPos},{sqlQuote stored.name},{sqlQuote (Lean.toJson stored).compress});\n"
 
 def declarationPrimaryAnchor : Declaration → Name
   | .axiom name ..
@@ -465,6 +489,7 @@ def saveSqliteFromState (manifest : Manifest) (path : System.FilePath)
               | .ok entries =>
                   input.putStr
                     (sqliteInsertOnDemandDeclarationHeader
+                      (declarationDigest declaration)
                       (declarationPrimaryAnchor declaration)
                       (cachedDeclarationKind declaration)
                       entries.length)
@@ -597,17 +622,27 @@ def checkSqliteOnDemandMeta (path : System.FilePath) : IO (Result Nat) := do
       match ← sqliteMeta path "manifest" with
       | .error err => pure (.error err)
       | .ok manifest =>
-          match ← sqliteMeta path "declarations" with
+          match ← sqliteMeta path "digestAlgorithm" with
           | .error err => pure (.error err)
-          | .ok declarationsText =>
-              let metaResult : Result Nat := do
-                let version ← parseSqliteNat "format version" versionText
-                if version != sqliteOnDemandFormatVersion then
-                  fail s!"unsupported SQLite layer format version: {version}"
-                if manifest != manifestName then
-                  fail s!"unsupported layer manifest: {manifest}"
-                parseSqliteNat "declaration count" declarationsText
-              pure metaResult
+          | .ok digestAlgorithm =>
+              match ← sqliteMeta path "digestEncoding" with
+              | .error err => pure (.error err)
+              | .ok digestEncoding =>
+                  match ← sqliteMeta path "declarations" with
+                  | .error err => pure (.error err)
+                  | .ok declarationsText =>
+                      let metaResult : Result Nat := do
+                        let version ← parseSqliteNat "format version" versionText
+                        if version != sqliteOnDemandFormatVersion then
+                          fail s!"unsupported SQLite layer format version: {version}"
+                        if manifest != manifestName then
+                          fail s!"unsupported layer manifest: {manifest}"
+                        if digestAlgorithm != "sha256" then
+                          fail s!"unsupported layer digest algorithm: {digestAlgorithm}"
+                        if digestEncoding != declarationDigestEncoding then
+                          fail s!"unsupported layer digest encoding: {digestEncoding}"
+                        parseSqliteNat "declaration count" declarationsText
+                      pure metaResult
 
 def ensureSqliteLayer (path : System.FilePath) : IO (Result Unit) := do
   if ← System.FilePath.pathExists path then
@@ -646,6 +681,8 @@ def ensureSqliteOnDemandLayer (path : System.FilePath) : IO (Result Unit) := do
           | .ok _ => pure (.ok ())
         else if version == sqliteFormatVersion then
           pure (.error { message := s!"SQLite layer {path} uses v2 bulk-cache format; migrate it with mpc-migrate-layer or use a new .db path" })
+        else if version == 3 then
+          pure (.error { message := s!"SQLite layer {path} uses v3 anchor-cache format; use a new .db path" })
         else
           pure (.error { message := s!"unsupported SQLite layer format version: {version}" })
   else
@@ -974,11 +1011,57 @@ def indexedInductiveRequiredNames (spec : IndexedInductiveSpec) : List Name :=
 def blockRequiredNames (block : InductiveBlockSpec) : List Name :=
   block.specs.flatMap fun spec => simpleInductiveRequiredNames spec
 
+def constantInfoMatchesCachedAtomicDeclaration (info : ConstantInfo) : Declaration → Bool
+  | .theorem name levelParams type value =>
+      info.name == name &&
+        info.levelParams == levelParams &&
+        info.type.alphaEq type &&
+        (info.value?.isNone || optionExprAlphaEq info.value? (some value)) &&
+        info.kind == .theorem
+  | declaration =>
+      constantInfoMatchesAtomicDeclaration info declaration
+
 def entriesMatchDeclaration (entries : List ConstantInfo) (declaration : Declaration) : Bool :=
   match declaration with
   | .axiom .. | .definition .. | .opaque .. | .theorem .. =>
       match entries with
       | [info] => constantInfoMatchesAtomicDeclaration info declaration
+      | _ => false
+  | .inductive spec =>
+      let requiredNames := simpleInductiveRequiredNames spec
+      match entriesFind? entries spec.name with
+      | some info =>
+          constantInfoMatchesSimpleInductive info spec &&
+            entriesContainNames entries requiredNames &&
+            requiredNames.length < entries.length
+      | none => false
+  | .indexedInductive spec =>
+      let requiredNames := indexedInductiveRequiredNames spec
+      match entriesFind? entries spec.name with
+      | some info =>
+          constantInfoMatchesIndexedInductive info spec &&
+            entriesContainNames entries requiredNames &&
+            requiredNames.length < entries.length
+      | none => false
+  | .inductiveBlock block =>
+      let requiredNames := blockRequiredNames block
+      entriesContainNames entries requiredNames &&
+        requiredNames.length < entries.length &&
+        block.specs.all fun spec =>
+          match entriesFind? entries spec.name with
+          | some info =>
+              constantInfoMatchesSimpleInductive info
+                { spec with levelParams := block.levelParams }
+          | none => false
+  | .equalityPrimitives => entriesMatchEqualityPrimitives entries
+  | .quotientPrimitives => entriesMatchQuotientPrimitives entries
+
+def entriesMatchCachedDeclaration (entries : List ConstantInfo)
+    (declaration : Declaration) : Bool :=
+  match declaration with
+  | .axiom .. | .definition .. | .opaque .. | .theorem .. =>
+      match entries with
+      | [info] => constantInfoMatchesCachedAtomicDeclaration info declaration
       | _ => false
   | .inductive spec =>
       let requiredNames := simpleInductiveRequiredNames spec
@@ -1017,6 +1100,33 @@ def addEntriesToEnv (env : Env) (entries : List ConstantInfo) : Result Env := do
     else
       env ← Env.add env info
   pure env
+
+def existingEntryMatchesCachedEntry (existing cached : ConstantInfo) : Bool :=
+  existing.name == cached.name &&
+    existing.levelParams == cached.levelParams &&
+    existing.type.alphaEq cached.type &&
+    match cached.kind with
+    | .theorem =>
+        existing.kind == .theorem
+    | _ =>
+        existing.kind == cached.kind &&
+          optionExprAlphaEq existing.value? cached.value?
+
+def cachedEntriesPresence (env : Env) (entries : List ConstantInfo) : Result Bool := do
+  let mut sawPresent := false
+  let mut sawMissing := false
+  for info in entries do
+    match env.find? info.name with
+    | none => sawMissing := true
+    | some existing =>
+        if existingEntryMatchesCachedEntry existing info then
+          sawPresent := true
+        else
+          fail s!"on-demand cache entry conflicts with current environment: {info.name}"
+  if sawPresent && sawMissing then
+    fail "on-demand cache group partially overlaps the current environment"
+  else
+    pure sawPresent
 
 def CheckedLayer.reusable? (layer : CheckedLayer) (env : Env)
     (declaration : Declaration) : Result Bool := do
@@ -1078,18 +1188,16 @@ def sqliteRequestedContent (path : System.FilePath) (declarations : List Declara
           contentMatches := contentMatches.insert pair.1 pair.2
   pure (.ok contentMatches)
 
-def sqliteOnDemandCandidateIds (path : System.FilePath) (anchor : Name) :
-    IO (Result (List Nat)) := do
-  match ← sqliteQuery path
-      s!"SELECT id FROM declarations WHERE anchor = {sqlQuote anchor} ORDER BY id DESC;" with
+def sqliteOnDemandDeclarationIdByDigest (path : System.FilePath) (digest : String) :
+    IO (Result (Option Nat)) := do
+  match ← sqliteQuery path s!"SELECT id FROM declarations WHERE digest = {sqlQuote digest};" with
   | .error err => pure (.error err)
-  | .ok rows =>
-      let mut ids : List Nat := []
-      for row in rows do
-        match parseSqliteNat "declaration id" row with
-        | .error err => return .error err
-        | .ok id => ids := id :: ids
-      pure (.ok ids.reverse)
+  | .ok [] => pure (.ok none)
+  | .ok [row] =>
+      match parseSqliteNat "declaration id" row with
+      | .error err => pure (.error err)
+      | .ok id => pure (.ok (some id))
+  | .ok _ => pure (.error { message := "on-demand declarations table has duplicate digest rows" })
 
 def sqliteOnDemandLoadEntries (path : System.FilePath) (declarationId : Nat) :
     IO (Result (List ConstantInfo)) := do
@@ -1105,25 +1213,20 @@ def sqliteOnDemandLoadEntries (path : System.FilePath) (declarationId : Nat) :
   | .error err => pure (.error err)
   | .ok entries => pure (.ok entries.reverse)
 
-partial def sqliteOnDemandFindMatchingEntries (path : System.FilePath)
-    (declaration : Declaration) (candidateIds : List Nat) :
+def sqliteOnDemandLookup (path : System.FilePath) (declaration : Declaration) :
     IO (Result (Option (List ConstantInfo))) := do
-  match candidateIds with
-  | [] => pure (.ok none)
-  | id :: rest =>
+  let digest := declarationDigest declaration
+  match ← sqliteOnDemandDeclarationIdByDigest path digest with
+  | .error err => pure (.error err)
+  | .ok (some id) => do
       match ← sqliteOnDemandLoadEntries path id with
       | .error err => pure (.error err)
       | .ok entries =>
-          if entriesMatchDeclaration entries declaration then
+          if entriesMatchCachedDeclaration entries declaration then
             pure (.ok (some entries))
           else
-            sqliteOnDemandFindMatchingEntries path declaration rest
-
-def sqliteOnDemandLookup (path : System.FilePath) (declaration : Declaration) :
-    IO (Result (Option (List ConstantInfo))) := do
-  match ← sqliteOnDemandCandidateIds path (declarationPrimaryAnchor declaration) with
-  | .error err => pure (.error err)
-  | .ok ids => sqliteOnDemandFindMatchingEntries path declaration ids
+            pure (.error { message := s!"on-demand cache digest row does not match declaration {MPC.Adapters.Export.declarationNameLabel declaration}" })
+  | .ok none => pure (.ok none)
 
 def appendSqliteOnDemandDeclaration (path : System.FilePath)
     (declaration : Declaration) (entries : List ConstantInfo) : IO (Result Unit) := do
@@ -1132,6 +1235,7 @@ def appendSqliteOnDemandDeclaration (path : System.FilePath)
     input.putStr "BEGIN;\n"
     input.putStr
       (sqliteInsertOnDemandDeclarationHeader
+        (declarationDigest declaration)
         (declarationPrimaryAnchor declaration) (cachedDeclarationKind declaration)
         entries.length)
     let mut entryPos := 0
@@ -1175,16 +1279,19 @@ def sqliteV2EnvEntriesByName (path : System.FilePath) :
   | .error err => pure (.error err)
   | .ok entries => pure (.ok entries)
 
-def sqliteV2ContentNames (path : System.FilePath) : IO (Result (List (List Name))) := do
+def sqliteV2ContentRows (path : System.FilePath) : IO (Result (List (String × List Name))) := do
   match ← sqlite3FoldRows #["-readonly", path.toString]
       (fun input => do
         input.putStr sqliteSelectHeader
-        input.putStr "SELECT names FROM content ORDER BY key;\n")
-      ([] : List (List Name))
+        input.putStr "SELECT key, names FROM content ORDER BY key;\n")
+      ([] : List (String × List Name))
       (fun rows row => do
-        match parseNamesJson "content names" row with
+        match splitSqlitePair row with
         | .error err => pure (.error err)
-        | .ok names => pure (.ok (names :: rows))) with
+        | .ok (key, namesJson) =>
+            match parseNamesJson "content names" namesJson with
+            | .error err => pure (.error err)
+            | .ok names => pure (.ok ((key, names) :: rows))) with
   | .error err => pure (.error err)
   | .ok rows => pure (.ok rows.reverse)
 
@@ -1248,25 +1355,23 @@ def migrateSqliteToOnDemand (sourcePath targetPath : System.FilePath) :
                 match ← sqliteV2EnvEntriesByName sourcePath with
                 | .error err => pure (.error err)
                 | .ok entriesByName =>
-                    match ← sqliteV2ContentNames sourcePath with
+                    match ← sqliteV2ContentRows sourcePath with
                     | .error err => pure (.error err)
                     | .ok contentRows =>
                         let tempPath := sqliteTempPath targetPath
                         let result ← sqlite3RunWriter #[tempPath.toString] fun input => do
                           input.putStr sqliteOnDemandCreateScript
                           let mut declarations := 0
-                          for names in contentRows do
+                          for (key, names) in contentRows do
                             match migrateSqliteContentGroup entriesByName names with
                             | .error err => return .error err
                             | .ok (anchor, kind, entries) =>
                                 input.putStr
-                                  (sqliteInsertOnDemandDeclarationHeader anchor kind
-                                    entries.length)
+                                  (sqliteInsertOnDemandDeclarationHeader
+                                    (declarationDigestFromContentKey key) anchor kind entries.length)
                                 let mut entryPos := 0
                                 for entry in entries do
-                                  input.putStr
-                                    (sqliteInsertOnDemandEntryJson entryPos entry.info
-                                      entry.json)
+                                  input.putStr (sqliteInsertOnDemandEntry entryPos entry.info)
                                   entryPos := entryPos + 1
                                 declarations := declarations + 1
                           input.putStr (sqliteOnDemandFinishScript declarations)
@@ -1316,30 +1421,30 @@ def replaySqliteOnDemandStep (manifest : Manifest) (layerPath : System.FilePath)
     IO (Result SqliteOnDemandReplayState) := do
   let startMs? ← emitReplayStart observer? state.index declaration state.cumulativeMs
   let key := declarationContentKey declaration
-  match checkExistingDeclarationReuse state.env declaration with
+  match ← sqliteOnDemandLookup layerPath declaration with
   | .error err =>
       let _ ←
         emitReplayStep observer? state.index declaration .rejected startMs?
           state.cumulativeMs
       pure (.error err)
-  | .ok true =>
-      let cumulativeMs ←
-        emitReplayStep observer? state.index declaration .reused startMs?
-          state.cumulativeMs
-      pure (.ok {
-        state with
-        reused := state.reused + 1,
-        cumulativeMs,
-        index := state.index + 1
-      })
-  | .ok false =>
-      match ← sqliteOnDemandLookup layerPath declaration with
+  | .ok (some entries) =>
+      match cachedEntriesPresence state.env entries with
       | .error err =>
           let _ ←
             emitReplayStep observer? state.index declaration .rejected startMs?
               state.cumulativeMs
           pure (.error err)
-      | .ok (some entries) =>
+      | .ok true =>
+          let cumulativeMs ←
+            emitReplayStep observer? state.index declaration .reused startMs?
+              state.cumulativeMs
+          pure (.ok {
+            state with
+            reused := state.reused + 1,
+            cumulativeMs,
+            index := state.index + 1
+          })
+      | .ok false =>
           match addEntriesToEnv state.env entries with
           | .error err =>
               let _ ←
@@ -1357,7 +1462,24 @@ def replaySqliteOnDemandStep (manifest : Manifest) (layerPath : System.FilePath)
                 cumulativeMs,
                 index := state.index + 1
               })
-      | .ok none =>
+  | .ok none =>
+      match checkExistingDeclarationReuse state.env declaration with
+      | .error err =>
+          let _ ←
+            emitReplayStep observer? state.index declaration .rejected startMs?
+              state.cumulativeMs
+          pure (.error err)
+      | .ok true =>
+          let cumulativeMs ←
+            emitReplayStep observer? state.index declaration .reused startMs?
+              state.cumulativeMs
+          pure (.ok {
+            state with
+            reused := state.reused + 1,
+            cumulativeMs,
+            index := state.index + 1
+          })
+      | .ok false =>
           let before := state.env
           match addDecl manifest state.env declaration with
           | .ok env =>

@@ -58,7 +58,9 @@ The script and NDJSON adapters have different input syntax, but they share the s
 
 Checked layers are adapter-side reuse.  A layer stores accepted environment entries and declaration-content keys so a later replay can skip a declaration whose name and lowered content match a checked entry.  Reuse is valid only when the cached declaration is alpha-equivalent to the target declaration, or when a content key proves that the lowered declaration has already been checked.
 
-SQLite cache mode uses the same principle while keeping the content table on disk.  `--cache-layer` mutates a SQLite DB, checks misses, runs the generated-record audit, and commits new rows only after the target artifact accepts.  A stale cache can reject when the same Lean name appears with different lowered content after source changes; this is an adapter-level conflict, and `MPC_CACHE_DB=` gives a cold self-check run.
+SQLite cache mode stores declaration groups on disk under a SHA-256 digest of the lowered declaration rendering.  The DB records the digest encoding, currently `repr-v1`, so a later encoding change can reject or migrate the file explicitly.  The cache erases theorem proof bodies from stored environment entries because theorem constants do not unfold during MPC conversion; the digest still covers the full theorem declaration that was checked before storage.
+
+`--cache-layer` mutates a SQLite DB, checks misses, appends each checked declaration after it succeeds, and runs the generated-record audit at the end of replay.  A stale cache can reject when the same Lean name appears with different lowered content after source changes; this is an adapter-level conflict, and `MPC_CACHE_DB=` gives a cold self-check run.  Current cache files use the v4 digest format.  The checker refuses v2 bulk-cache files and v3 anchor-cache files in mutable cache mode.
 
 ## Drivers and Tests
 

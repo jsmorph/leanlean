@@ -228,7 +228,7 @@ Generated constructor and recursor records are audit data.  MPC generates those 
 
 Unsafe declarations, partial declarations, source-recursion metadata, equation-compiler metadata, environment extensions, imported-module bases, and trusted assumptions belong to adapter policy.  The policy may reject, skip, or assume external data only under a named checker mode.  MPC sees only checked environments and canonical declarations.
 
-The SQLite checked-declaration cache is outside MPC.  A cache may store checked environments and declaration-content keys, then reuse them before calling MPC on cache misses.  Cache reuse is valid only when it reconstructs the same MPC environment entries and never changes typing, conversion, declaration admission, or generated-record audit rules.
+The SQLite checked-declaration cache is outside MPC.  A cache may store checked environments and declaration-content keys, then reuse them before calling MPC on cache misses.  Cache reuse is valid only when it reconstructs the same MPC environment entries and never changes typing, conversion, declaration admission, or generated-record audit rules.  The current SQLite format uses SHA-256 declaration digests and may erase theorem proof bodies from stored environment entries, because theorem constants are opaque to conversion and the digest covers the checked theorem declaration.
 
 ## Conformance Obligations
 

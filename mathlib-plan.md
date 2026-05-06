@@ -10,7 +10,7 @@ This plan targets selected roots rather than bulk mathlib checking.  Bulk checki
 
 The MPC repository keeps mathlib outside its Lake dependencies for this work.  A probe uses an existing external mathlib checkout built with the Lean version compatible with this repository and the installed `lean4export` binary.  The MPC side remains the checker executable, optional cache DB, profile output, and a small driver script if repeated manual commands become error-prone.
 
-Generated artifacts and profiling output stay out of git.  Use `.tmp/mathlib-probes` or a caller-provided directory for NDJSON, root files, timing JSONL, and cache DBs.  The persistent cache remains an adapter-side optimization: useful for repeated probes, but not part of the checker claim.
+Generated artifacts and profiling output stay out of git.  Use `.tmp/mathlib-probes` or a caller-provided directory for NDJSON, root files, timing JSONL, and cache DBs.  The persistent cache remains an adapter-side optimization: useful for repeated probes, but not part of the checker claim.  Current probes should use a fresh v4 cache DB or a v2 cache migrated with `mpc-migrate-layer`; v3 cache files belong to the earlier anchor-cache format and mutable cache mode refuses them.
 
 ## Method
 

@@ -2482,6 +2482,14 @@ def checkAdapters : IO Unit := do
   expectError "NDJSON missing generated declaration"
     (MPC.Adapters.NDJSON.checkString MPC.Configs.Poc badNdjsonAuditInput)
 
+def checkSHA256 : IO Unit := do
+  expect "SHA-256 empty string"
+    (MPC.Adapters.SHA256.hashString "" ==
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+  expect "SHA-256 abc"
+    (MPC.Adapters.SHA256.hashString "abc" ==
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+
 def alphaLayerTheoremType (name : Name) : Expr :=
   pi name natType (.const "P" [])
 
@@ -2550,10 +2558,38 @@ def checkSqliteOnDemandLayerReuse : IO Unit :=
       (← MPC.Adapters.Layer.sqliteLayerFormatVersion path)
     expect "SQLite on-demand layer format version"
       (version == MPC.Adapters.Layer.sqliteOnDemandFormatVersion)
-    let summary2 ← expectOkLabel "SQLite on-demand layer second replay"
-      (← MPC.Adapters.Layer.cacheSqlite MPC.Configs.Poc path {} (baseDeclarations ++ [second]))
-    expect "SQLite on-demand second replay reused count" (summary2.reused == declarations.length)
+    let summary2 ← expectOkLabel "SQLite on-demand layer exact second replay"
+      (← MPC.Adapters.Layer.cacheSqlite MPC.Configs.Poc path {} declarations)
+    expect "SQLite on-demand exact second replay reused count"
+      (summary2.reused == declarations.length)
     expect "SQLite on-demand second replay checked count" (summary2.checked == 0)
+    let summary3 ← expectOkLabel "SQLite on-demand layer alpha replay"
+      (← MPC.Adapters.Layer.cacheSqlite MPC.Configs.Poc path {} (baseDeclarations ++ [second]))
+    expect "SQLite on-demand alpha replay reused count"
+      (summary3.reused == baseDeclarations.length)
+    expect "SQLite on-demand alpha replay checked count" (summary3.checked == 1)
+
+def checkSqliteLayerMigration : IO Unit :=
+  IO.FS.withTempDir fun dir => do
+    let source := dir / "layer-v2.db"
+    let target := dir / "layer-v4.db"
+    let theoremDecl :=
+      .theorem "sqliteMigratedTheorem" []
+        (alphaLayerTheoremType "x")
+        (alphaLayerTheoremValue "x")
+    let declarations := baseDeclarations ++ [theoremDecl]
+    let layer ← expectOkLabel "SQLite v2 migration source build"
+      (MPC.Adapters.Layer.build MPC.Configs.Poc { declarations, audit := {} })
+    expectOkLabel "SQLite v2 migration source save"
+      (← MPC.Adapters.Layer.saveSqliteFromLayer source layer)
+    let summary ← expectOkLabel "SQLite v2 migration"
+      (← MPC.Adapters.Layer.migrateSqliteToOnDemand source target)
+    expect "SQLite v2 migration declaration count" (summary.declarations == declarations.length)
+    let replaySummary ← expectOkLabel "SQLite v2 migrated replay"
+      (← MPC.Adapters.Layer.replaySqlite MPC.Configs.Poc target {} declarations)
+    expect "SQLite v2 migrated replay reused count"
+      (replaySummary.reused == declarations.length)
+    expect "SQLite v2 migrated replay checked count" (replaySummary.checked == 0)
 
 def checkExportNameEncoding : IO Unit := do
   let singleComponent := Lean.Name.str Lean.Name.anonymous "a.b"
@@ -2583,7 +2619,9 @@ def main : IO Unit := do
   checkFunctionEta
   checkQuotients
   checkAdapters
+  checkSHA256
   checkExportNameEncoding
   checkLayerAlphaReuse
   checkLayerInductiveAlphaReuse
   checkSqliteOnDemandLayerReuse
+  checkSqliteLayerMigration
