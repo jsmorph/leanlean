@@ -16,6 +16,7 @@ mkdir -p "$artifact_dir"
 lake build \
   MPC.Name \
   MPC.Basic \
+  MPC.Error \
   MPC.Level \
   MPC.Expr \
   MPC.Context \
@@ -36,6 +37,16 @@ lake build \
   MPC.Normalize \
   MPC.Check \
   MPC.Replay \
+  MPC.Configs.Poc \
+  MPC.Configs.EqualityPoc \
+  MPC.Configs.QuotPoc \
+  MPC.Configs.ProjectionPoc \
+  MPC.Configs.PrimitiveNatPoc \
+  MPC.Configs.FunctionEtaPoc \
+  MPC.Configs.InductivePropPoc \
+  MPC.Configs.IndexedPoc \
+  MPC.Configs.IndexedPropPoc \
+  MPC.Configs.IndexedPropLargeElimPoc \
   MPC.Configs.LeanCore429 \
   mpc-check-export \
   leanlean-export-roots
@@ -101,6 +112,7 @@ run_mpc_export_self_check() {
 
 run_mpc_export_self_check "mpc-name" "MPC.Name"
 run_mpc_export_self_check "mpc-basic" "MPC.Basic"
+run_mpc_export_self_check "mpc-error" "MPC.Error"
 run_mpc_export_self_check "mpc-level" "MPC.Level"
 run_mpc_export_self_check "mpc-expr" "MPC.Expr"
 run_mpc_export_self_check "mpc-context" "MPC.Context"
@@ -121,4 +133,14 @@ run_mpc_export_self_check "mpc-packages-inductive-prop" "MPC.Packages.Inductive.
 run_mpc_export_self_check "mpc-normalize" "MPC.Normalize" "layer"
 run_mpc_export_self_check "mpc-check" "MPC.Check" "layer"
 run_mpc_export_self_check "mpc-replay" "MPC.Replay" "layer"
+run_mpc_export_self_check "mpc-configs-poc" "MPC.Configs.Poc" "layer"
+run_mpc_export_self_check "mpc-configs-equality-poc" "MPC.Configs.EqualityPoc" "layer"
+run_mpc_export_self_check "mpc-configs-quot-poc" "MPC.Configs.QuotPoc" "layer"
+run_mpc_export_self_check "mpc-configs-projection-poc" "MPC.Configs.ProjectionPoc" "layer"
+run_mpc_export_self_check "mpc-configs-primitive-nat-poc" "MPC.Configs.PrimitiveNatPoc" "layer"
+run_mpc_export_self_check "mpc-configs-function-eta-poc" "MPC.Configs.FunctionEtaPoc" "layer"
+run_mpc_export_self_check "mpc-configs-inductive-prop-poc" "MPC.Configs.InductivePropPoc" "layer"
+run_mpc_export_self_check "mpc-configs-indexed-poc" "MPC.Configs.IndexedPoc" "layer"
+run_mpc_export_self_check "mpc-configs-indexed-prop-poc" "MPC.Configs.IndexedPropPoc" "layer"
+run_mpc_export_self_check "mpc-configs-indexed-prop-large-elim-poc" "MPC.Configs.IndexedPropLargeElimPoc" "layer"
 run_mpc_export_self_check "mpc-configs-lean-core-429" "MPC.Configs.LeanCore429" "layer"
