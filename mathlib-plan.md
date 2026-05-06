@@ -16,6 +16,8 @@ Generated artifacts and profiling output stay out of git.  Use `.tmp/mathlib-pro
 
 Each probe starts from one module and one or more explicit roots.  The driver builds the target module in the mathlib checkout, runs `lean4export` against that module and root list, then runs the produced NDJSON through `.lake/build/bin/mpc-check-export`.  The driver records the module, roots, mathlib revision, Lean version, export command, checker command, cache mode, declaration count, environment size, elapsed time, and final status.
 
+The driver treats an export with no declaration rows as a root-selection or exporter failure.  `lean4export` can print a panic for an unknown root while still leaving a valid metadata-only NDJSON file, so the probe harness rejects that case before invoking MPC.  A zero-declaration checker result never counts as acceptance for an explicit mathlib root.
+
 The first probe uses a scratch module in the mathlib checkout rather than a theorem chosen from the whole library.  That scratch module can import a small mathlib module and define one theorem whose proof shape we control.  This keeps the first artifact tied to mathlib's dependency closure while avoiding uncertainty about public theorem names.
 
 After the scratch probe, use real mathlib roots in a ladder.  Start with early declarations that stress ordinary data, structures, projections, and simple theorem proofs.  Then add roots that stress quotients, finite types, indexed families, tactic-produced arithmetic proofs, and algebraic structures.  The ladder stops at the first unexplained failure long enough to classify it before adding more targets.

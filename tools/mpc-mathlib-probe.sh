@@ -36,6 +36,7 @@ label="$(printf '%s' "$label" | tr -c 'A-Za-z0-9_.-' '_')"
 
 roots_file="$probe_dir/$label.roots"
 artifact="$probe_dir/$label.ndjson"
+export_log="$probe_dir/$label.export.log"
 output="$probe_dir/$label.output"
 checker="$repo_root/.lake/build/bin/mpc-check-export"
 checker_args=()
@@ -63,7 +64,33 @@ echo "mpc-mathlib-probe: artifact=$artifact"
 
 (cd "$repo_root" && lake build mpc-check-export)
 (cd "$mathlib_dir" && lake build "$module")
-(cd "$mathlib_dir" && lake env "$lean4export_bin" "$module" -- "${roots[@]}") > "$artifact"
+rm -f "$artifact" "$export_log"
+
+set +e
+(cd "$mathlib_dir" && lake env "$lean4export_bin" "$module" -- "${roots[@]}") > "$artifact" 2> "$export_log"
+export_code="$?"
+set -e
+
+if [[ "$export_code" != "0" || ! -s "$artifact" ]]; then
+  if [[ -s "$export_log" ]]; then
+    cat "$export_log" >&2
+  fi
+  if [[ "$export_code" == "0" ]]; then
+    echo "error: lean4export produced an empty artifact" >&2
+  else
+    echo "error: lean4export failed with exit code $export_code" >&2
+  fi
+  exit 1
+fi
+
+artifact_lines="$(wc -l < "$artifact")"
+if [[ "$artifact_lines" -le "1" ]]; then
+  if [[ -s "$export_log" ]]; then
+    cat "$export_log" >&2
+  fi
+  echo "error: lean4export produced no declaration rows for the requested roots" >&2
+  exit 1
+fi
 
 set +e
 "$checker" "${checker_args[@]}" "$artifact" > "$output" 2>&1
