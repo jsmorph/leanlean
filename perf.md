@@ -237,6 +237,32 @@ timeout 300s .lake/build/bin/mpc-check-export \
 
 The run reused 5,174 declaration entries, checked none, produced environment size 5,753, and emitted no stderr.  The final declaration row was `CategoryTheory.Abelian.image_ι_comp_eq_zero`, and the measured replay cumulative time in the JSONL stream was 194,059 ms.  This classifies the old abelian failure as an adapter memory problem in the cached path, not a checker rule gap.
 
+The v4 digest cache removes rendered declaration text from SQLite keys.  A fresh v4 run checked the same abelian artifact from an empty cache:
+
+```bash
+timeout 1800s .lake/build/bin/mpc-check-export \
+  --cache-layer .tmp/mathlib-probes/mathlib-cache-v4.db \
+  --stats-jsonl \
+  .tmp/mathlib-probes/category-abelian-image-zero.ndjson \
+  > .tmp/mathlib-probes/category-abelian-image-zero-v4-cold.stats.jsonl \
+  2> .tmp/mathlib-probes/category-abelian-image-zero-v4-cold.stats.err
+```
+
+The run accepted after checking 5,174 declaration entries, produced environment size 5,753, emitted no stderr, and left a 29 MB cache DB.  The cumulative declaration-check time was 1,143,884 ms, while the final telemetry timestamp was 1,944,269 ms.  The gap between those numbers belongs to adapter-side artifact processing, lowering, cache lookup, and SQLite writes, so later cache work should measure replay time and command time separately.
+
+A timed warm replay then reused the whole artifact:
+
+```bash
+bash -c 'TIMEFORMAT="elapsed %R"; time .lake/build/bin/mpc-check-export \
+  --cache-layer .tmp/mathlib-probes/mathlib-cache-v4.db \
+  .tmp/mathlib-probes/category-abelian-image-zero.ndjson \
+  > .tmp/mathlib-probes/category-abelian-image-zero-v4-warm-timed.out \
+  2> .tmp/mathlib-probes/category-abelian-image-zero-v4-warm-timed.checker.err' \
+  2> .tmp/mathlib-probes/category-abelian-image-zero-v4-warm-timed.time.err
+```
+
+That warm run reused 5,174 declaration entries, checked none, produced environment size 5,753, emitted no checker stderr, and took 135.290 seconds.  The result validates digest reuse and also shows that warm-cache mathlib probes still pay a front-end cost over large NDJSON artifacts.  That cost is outside MPC rule checking, but it matters for development iteration.
+
 ## Conversion Fast Paths
 
 The useful optimization was a top-level alpha-equivalence check at the start of `defEq`.  If two terms are already equal up to binder names and universe equality, conversion now returns before weak-head reduction, structural recursion, eta, or proof irrelevance.  This preserves the conversion relation and removes repeated normalization of subterms that are already identical in exported proof terms.
