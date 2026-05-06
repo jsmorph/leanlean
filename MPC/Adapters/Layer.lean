@@ -209,8 +209,10 @@ def sqlite3RunWriter (args : Array String)
     let callbackResult : Result α ← try
       writeScript stdin
     catch err =>
-      child.kill
-      pure (.error { message := s!"could not write sqlite3 script: {err}" })
+      try child.kill catch _ => pure ()
+      let stderr := (match stderrTask.get with | .ok text => text | .error _ => "").trimAscii
+      let detail := if stderr.isEmpty then "" else s!"; sqlite3 stderr: {stderr}"
+      pure (.error { message := s!"could not write sqlite3 script: {err}{detail}" })
     match callbackResult with
     | .error err =>
         try
@@ -276,8 +278,10 @@ def sqlite3FoldRows (args : Array String)
       stdin.flush
       pure (Except.ok ())
     catch err =>
-      child.kill
-      pure (Except.error { message := s!"could not write sqlite3 query: {err}" })
+      try child.kill catch _ => pure ()
+      let stderr := (match stderrTask.get with | .ok text => text | .error _ => "").trimAscii
+      let detail := if stderr.isEmpty then "" else s!"; sqlite3 stderr: {stderr}"
+      pure (Except.error { message := s!"could not write sqlite3 query: {err}{detail}" })
     match writeResult with
     | Except.error err =>
         let _ ← child.wait
@@ -823,23 +827,49 @@ def parseContentMatchRow (row : String) : Result (Nat × List Name) := do
   let names ← parseNamesJson "requested content names" namesJson
   pure (index, names)
 
-def sqliteRequestedContent (path : System.FilePath) (declarations : List Declaration) :
+def sqliteRequestedContentChunk (path : System.FilePath) (requests : Array (Nat × String)) :
     IO (Result (Std.HashMap Nat (List Name))) := do
   let init : Std.HashMap Nat (List Name) := {}
   let write : IO.FS.Handle → IO Unit := fun input => do
     input.putStr sqliteSelectHeader
-    input.putStr "CREATE TEMP TABLE requested(pos INTEGER PRIMARY KEY, key TEXT NOT NULL);\n"
-    let mut pos := 0
-    for declaration in declarations do
-      input.putStr s!"INSERT INTO requested(pos,key) VALUES({pos},{sqlQuote (declarationContentKey declaration)});\n"
-      pos := pos + 1
-    input.putStr "SELECT requested.pos, content.names FROM requested JOIN content ON content.key = requested.key ORDER BY requested.pos;\n"
+    for request in requests do
+      input.putStr s!"SELECT {request.1}, names FROM content WHERE key = {sqlQuote request.2};\n"
   let step : Std.HashMap Nat (List Name) → String → IO (Result (Std.HashMap Nat (List Name))) :=
     fun acc row => do
       match parseContentMatchRow row with
       | .error err => pure (.error err)
       | .ok (index, names) => pure (.ok (acc.insert index names))
   sqlite3FoldRows #["-readonly", path.toString] write init step
+
+def sqliteRequestedContent (path : System.FilePath) (declarations : List Declaration) :
+    IO (Result (Std.HashMap Nat (List Name))) := do
+  let maxChunkChars := 4000000
+  let maxChunkRows := 128
+  let mut contentMatches : Std.HashMap Nat (List Name) := {}
+  let mut chunk : Array (Nat × String) := #[]
+  let mut chunkChars := 0
+  let mut pos := 0
+  for declaration in declarations do
+    let key := declarationContentKey declaration
+    let keyChars := key.length
+    if !chunk.isEmpty && (chunk.size >= maxChunkRows || chunkChars + keyChars > maxChunkChars) then
+      match ← sqliteRequestedContentChunk path chunk with
+      | .error err => return .error err
+      | .ok chunkMatches =>
+          for pair in chunkMatches.toList do
+            contentMatches := contentMatches.insert pair.1 pair.2
+          chunk := #[]
+          chunkChars := 0
+    chunk := chunk.push (pos, key)
+    chunkChars := chunkChars + keyChars
+    pos := pos + 1
+  if !chunk.isEmpty then
+    match ← sqliteRequestedContentChunk path chunk with
+    | .error err => return .error err
+    | .ok chunkMatches =>
+        for pair in chunkMatches.toList do
+          contentMatches := contentMatches.insert pair.1 pair.2
+  pure (.ok contentMatches)
 
 def emitReplayStep (observer? : Option ReplayObserver) (index : Nat) (declaration : Declaration)
     (status : ReplayStepStatus) (startMs? : Option Nat) (cumulativeMs : Nat) : IO Nat := do
