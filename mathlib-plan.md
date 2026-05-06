@@ -47,7 +47,7 @@ Diagnostic continuation does not establish acceptance.  If a run needs temporary
 
 ## First Work Items
 
-1. Add a small external-driver script only after one manual probe works.  The script takes `MPC_MATHLIB_DIR`, `MPC_LEAN4EXPORT`, a module name, and a root file or root list.  It writes all generated data under `.tmp/mathlib-probes` by default.
+1. Add a small external-driver script only after one manual probe works.  The script takes `MPC_MATHLIB_DIR`, `MPC_LEAN4EXPORT`, a module name, and a root list.  It writes all generated data under `.tmp/mathlib-probes` by default.
 
 2. Run one scratch probe with a small import and a controlled theorem.  Record the exact module, root, artifact size, declaration count, status, and first failure if it rejects.  If the closure is already too large to classify, reduce the import before changing MPC.
 
@@ -60,3 +60,24 @@ Diagnostic continuation does not establish acceptance.  If a run needs temporary
 Do not add mathlib to this repository's `lakefile.toml`.  Do not add new primitive reductions because a mathlib proof is slow or rejected unless the rule has Lean-version source evidence, a written specification, declaration-shape checks, and focused tests.  Do not convert generated or tactic-produced declarations into assumptions to claim acceptance.
 
 Do not chase many mathlib failures at once.  One classified failure is more useful than a long list of unclassified rejects.  The probe series should keep returning to the MPC rule-package boundary: what rule did the checker need, where should that rule live, and what test demonstrates the rule without importing mathlib into the trusted development path.
+
+## First Probe
+
+The first probe used a temporary external checkout at mathlib tag `v4.29.0`, with only its `lean-toolchain` changed to `leanprover/lean4:v4.29.1` so the produced artifact matched the local `lean4export` binary and MPC's Lean 4.29.1 source baseline.  Mathlib `HEAD` targeted Lean 4.30.0-rc2 when this probe ran, so the pinned release tag avoided using a newer Lean artifact format or kernel implementation.  `lake build Mathlib.Data.Nat.Basic` succeeded under Lean 4.29.1 after the pinned package directories from `lake-manifest.json` were populated.
+
+The scratch module `Mathlib.MPCProbe.Scratch` imported `Mathlib.Data.Nat.Basic` and defined `MPCProbe.MathlibScratch.addZeroProbe`, a theorem whose body is `Nat.add_zero n`.  Exporting that root with `/tmp/lean4export/.lake/build/bin/lean4export` produced `.tmp/mathlib-probes/scratch-add-zero.ndjson`, with 639 NDJSON rows and a 36 KB artifact.  Cold MPC replay with `mpc-check-export --stats-jsonl` accepted the artifact: 23 declaration entries checked, producing environment size 39.
+
+This is an accepted Tier 0 result.  It verifies the external checkout, module build, export command, checker invocation, and scratch-root workflow.  It does not yet test a broad mathlib dependency closure, generated helper classes, quotient-heavy proofs, tactic-produced arithmetic, or performance limits.
+
+## Current Probe Results
+
+| Label | Module | Root | Result | Notes |
+| --- | --- | --- | --- | --- |
+| Scratch add-zero | `Mathlib.MPCProbe.Scratch` | `MPCProbe.MathlibScratch.addZeroProbe` | Accepted | 639 NDJSON rows, 36 KB artifact, 23 checked declarations, environment size 39. |
+| Nat successor injective | `Mathlib.Data.Nat.Basic` | `Nat.succ_injective` | Accepted | 9 checked declarations, environment size 15. |
+| Nat nontrivial instance | `Mathlib.Data.Nat.Basic` | `Nat.instNontrivial` | Accepted | 15 checked declarations, environment size 28. |
+| Nat linear-order instance | `Mathlib.Data.Nat.Basic` | `Nat.instLinearOrder` | Accepted | 332 checked declarations, environment size 457. |
+| Nat set induction | `Mathlib.Data.Nat.Basic` | `Nat.set_induction` | Accepted | 140 checked declarations, environment size 184. |
+| Quot congruence on constructors | `Mathlib.Logic.Equiv.Defs` | `Quot.congr_mk` | Rejected: side-condition gap | Rejected at declaration index 337, `Quot.congr_mk`, after checking `Quot.congr`.  Conversion leaves a `Quot.lift` application stuck against `Quot.mk`, so the next checker question is the quotient-lift reduction shape used by mathlib's `Quot.congr` and `Quot.map`. |
+
+The quotient failure is the first serious rule-package target from mathlib.  It reached MPC replay, checked the declaration prefix, and failed in conversion rather than in export parsing, generated-record audit, or resource exhaustion.  The next implementation task should inspect the exported `Quot.congr_mk` term and decide whether the quotient package needs a broader `Quot.lift` redex recognizer, a more precise side condition, or another source-backed quotient reduction rule.
