@@ -56,6 +56,7 @@ structure SqliteOnDemandReplayState where
   index : Nat := 0
 
 inductive ReplayStepStatus where
+  | started
   | reused
   | checked
   | rejected
@@ -67,6 +68,7 @@ structure ReplayStep where
   status : ReplayStepStatus
   elapsedMs : Nat
   cumulativeMs : Nat
+  timestampMs : Nat
 
 abbrev ReplayObserver :=
   ReplayStep → IO Unit
@@ -1281,6 +1283,22 @@ def migrateSqliteToOnDemand (sourcePath targetPath : System.FilePath) :
                             catch err =>
                               pure (.error { message := s!"could not move SQLite layer {tempPath} to {targetPath}: {err}" })
 
+def emitReplayStart (observer? : Option ReplayObserver) (index : Nat)
+    (declaration : Declaration) (cumulativeMs : Nat) : IO (Option Nat) := do
+  match observer? with
+  | some observer =>
+      let startMs ← IO.monoMsNow
+      observer {
+        index,
+        declaration,
+        status := .started,
+        elapsedMs := 0,
+        cumulativeMs,
+        timestampMs := startMs
+      }
+      pure (some startMs)
+  | none => pure none
+
 def emitReplayStep (observer? : Option ReplayObserver) (index : Nat) (declaration : Declaration)
     (status : ReplayStepStatus) (startMs? : Option Nat) (cumulativeMs : Nat) : IO Nat := do
   match observer?, startMs? with
@@ -1288,7 +1306,7 @@ def emitReplayStep (observer? : Option ReplayObserver) (index : Nat) (declaratio
       let stopMs ← IO.monoMsNow
       let elapsedMs := stopMs - startMs
       let cumulativeMs := cumulativeMs + elapsedMs
-      observer { index, declaration, status, elapsedMs, cumulativeMs }
+      observer { index, declaration, status, elapsedMs, cumulativeMs, timestampMs := stopMs }
       pure cumulativeMs
   | _, _ => pure cumulativeMs
 
@@ -1296,10 +1314,7 @@ def replaySqliteOnDemandStep (manifest : Manifest) (layerPath : System.FilePath)
     (observer? : Option ReplayObserver) (persist : Bool)
     (state : SqliteOnDemandReplayState) (declaration : Declaration) :
     IO (Result SqliteOnDemandReplayState) := do
-  let startMs? ←
-    match observer? with
-    | some _ => some <$> IO.monoMsNow
-    | none => pure none
+  let startMs? ← emitReplayStart observer? state.index declaration state.cumulativeMs
   let key := declarationContentKey declaration
   match checkExistingDeclarationReuse state.env declaration with
   | .error err =>
@@ -1437,10 +1452,7 @@ def replaySqliteCore (manifest : Manifest) (layerPath : System.FilePath)
           let mut cumulativeMs := 0
           let mut index := 0
           for declaration in declarations do
-            let startMs? ←
-              match observer? with
-              | some _ => some <$> IO.monoMsNow
-              | none => pure none
+            let startMs? ← emitReplayStart observer? index declaration cumulativeMs
             let key := declarationContentKey declaration
             match newContentToNames.get? key with
             | some names =>

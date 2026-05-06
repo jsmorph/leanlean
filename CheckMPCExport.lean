@@ -177,11 +177,13 @@ def printOutcome (status : String) (path : System.FilePath) (message : String) :
     IO.println s!"message: {message}"
 
 inductive ReplayStatus where
+  | started
   | checked
   | reused
   | rejected
 
 def ReplayStatus.label : ReplayStatus → String
+  | .started => "started"
   | .checked => "checked"
   | .reused => "reused"
   | .rejected => "rejected"
@@ -455,6 +457,7 @@ structure DeclarationTelemetry where
   elapsedMs : Nat
   cumulativeMs : Nat
   status : ReplayStatus
+  timestampMs? : Option Nat := none
   profile? : Option DeclarationProfile := none
 
 def DeclarationTelemetry.toJson (entry : DeclarationTelemetry) : Lean.Json :=
@@ -468,13 +471,21 @@ def DeclarationTelemetry.toJson (entry : DeclarationTelemetry) : Lean.Json :=
     ("cumulative_ms", jsonNat entry.cumulativeMs)
   ]
   let fields :=
+    match entry.timestampMs? with
+    | some timestampMs => fields ++ [("timestamp_ms", jsonNat timestampMs)]
+    | none => fields
+  let fields :=
     match entry.profile? with
     | some profile => fields ++ profile.toJsonFields
     | none => fields
   Lean.Json.mkObj fields
 
 def DeclarationTelemetry.text (entry : DeclarationTelemetry) : String :=
-  s!"stats: index={entry.index} status={entry.status.label} elapsed_ms={entry.elapsedMs} cumulative_ms={entry.cumulativeMs} kind={entry.kind} name={entry.name}"
+  let timestamp :=
+    match entry.timestampMs? with
+    | some timestampMs => s!" timestamp_ms={timestampMs}"
+    | none => ""
+  s!"stats: index={entry.index} status={entry.status.label}{timestamp} elapsed_ms={entry.elapsedMs} cumulative_ms={entry.cumulativeMs} kind={entry.kind} name={entry.name}"
 
 def emitDeclarationTelemetry
     (format : TelemetryFormat)
@@ -487,6 +498,23 @@ def emitDeclarationTelemetry
   | .profileJsonl => IO.println entry.toJson.compress
   if format != .off then
     (← IO.getStdout).flush
+
+def emitDeclarationStart
+    (format : TelemetryFormat)
+    (index cumulativeMs : Nat)
+    (kind name : String) :
+    IO Nat := do
+  let startMs ← IO.monoMsNow
+  emitDeclarationTelemetry format {
+    index,
+    kind,
+    name,
+    elapsedMs := 0,
+    cumulativeMs,
+    status := .started,
+    timestampMs? := some startMs
+  }
+  pure startMs
 
 partial def replayLoop
     (manifest : Manifest)
@@ -509,6 +537,7 @@ partial def replayLoop
       else
         let kind := MPC.Adapters.Export.declarationKindLabel declaration
         let name := MPC.Adapters.Export.declarationNameLabel declaration
+        let startMs ← emitDeclarationStart options.telemetry index cumulativeMs kind name
         let profile? :=
           if options.telemetry == .profileJsonl then
             some (profileDeclaration env declaration)
@@ -517,7 +546,6 @@ partial def replayLoop
         if options.trace then
           IO.println s!"replay: {index} {kind} {name}"
           (← IO.getStdout).flush
-        let startMs ← IO.monoMsNow
         match addDecl manifest env declaration with
         | .ok env =>
             let stopMs ← IO.monoMsNow
@@ -530,6 +558,7 @@ partial def replayLoop
               elapsedMs,
               cumulativeMs,
               status := .checked,
+              timestampMs? := some stopMs,
               profile? := profile?
             }
             replayLoop manifest options (index + 1) cumulativeMs env rest
@@ -544,6 +573,7 @@ partial def replayLoop
               elapsedMs,
               cumulativeMs,
               status := .rejected,
+              timestampMs? := some stopMs,
               profile? := profile?
             }
             pure (.error { message := s!"while replaying {kind} {name}: {err.message}" })
@@ -629,6 +659,7 @@ def layerReplayObserver? (format : TelemetryFormat) :
       some fun step => do
         let status :=
           match step.status with
+          | .started => ReplayStatus.started
           | .reused => ReplayStatus.reused
           | .checked => ReplayStatus.checked
           | .rejected => ReplayStatus.rejected
@@ -639,6 +670,7 @@ def layerReplayObserver? (format : TelemetryFormat) :
           elapsedMs := step.elapsedMs,
           cumulativeMs := step.cumulativeMs,
           status,
+          timestampMs? := some step.timestampMs,
           profile? := none
         }
 

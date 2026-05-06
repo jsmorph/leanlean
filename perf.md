@@ -15,7 +15,7 @@ Use `MPC_LEAN4EXPORT` when `lean4export` is not on `PATH`.  The generated artifa
 | Run the export self-check cold | `env MPC_LEAN4EXPORT=/path/to/lean4export MPC_CACHE_DB= tools/mpc-export-self-check.sh` |
 | Run the Omega stress profiler | `env MPC_LEAN4EXPORT=/path/to/lean4export MPC_STRESS_TIMEOUT=120 tools/mpc-omega-stress.sh` |
 
-Use `--stats-jsonl` for per-declaration timing without structural counters.  Use `--profile-jsonl` when the question needs expression-size counters, head-application counters, or constant-kind counters beside timing.  Use `--profile-declaration <n>` when declaration `n` takes too long to finish and the prefix before it can still replay, because this mode replays the prefix and emits counters for the selected declaration without checking that declaration.
+Use `--stats-jsonl` for per-declaration timing without structural counters.  Each declaration emits a `started` row before replay begins and then a `checked`, `reused`, or `rejected` row after replay finishes.  The rows include a monotonic `timestamp_ms`; when a run stalls or times out, the last `started` row identifies the declaration being processed.  Use `--profile-jsonl` when the question needs expression-size counters, head-application counters, or constant-kind counters beside timing.  Use `--profile-declaration <n>` when declaration `n` takes too long to finish and the prefix before it can still replay, because this mode replays the prefix and emits counters for the selected declaration without checking that declaration.
 
 ```bash
 .lake/build/bin/mpc-check-export \
