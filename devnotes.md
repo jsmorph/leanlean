@@ -469,6 +469,8 @@ The corrected category-theory root `CategoryTheory.Functor.map_comp_assoc` accep
 
 `CategoryTheory.isIso_of_fully_faithful` accepts as the next category-theory probe.  The target exercises fully faithful functor data, isomorphism reflection, and the ordinary instance declarations around `IsIso`, while reusing most of the category cache from the earlier functor probe.  MPC reused 322 declaration entries, checked 16 new entries, and produced environment size 9,842.
 
+`CategoryTheory.Adjunction.comp_unit_app` accepts as an adjunction-composition probe.  The target checks the unit component for a composed adjunction, including natural transformation, whiskering, unitor, and associator declarations.  MPC reused 455 declaration entries, checked 83 new entries, and produced environment size 11,237.
+
 `CategoryTheory.Limits.pullback.map_comp` accepts as the first finite-limits category probe.  Building `Mathlib.CategoryTheory.Limits.Shapes.Pullback.HasPullback` added comma categories, Yoneda, adjunctions, cone infrastructure, and pullback constructions to the external checkout.  MPC reused 373 declaration entries, checked 114 new entries, and produced environment size 10,159.
 
 `CategoryTheory.Limits.pushout.map_comp` accepts as the colimit-side companion in the same module.  The run reused the pullback build and most of the category cache, then checked 73 new declarations for the pushout side.  MPC produced environment size 11,045, giving binary pullback and pushout map-composition coverage without exposing a new checker rule.
