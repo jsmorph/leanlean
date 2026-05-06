@@ -1,0 +1,62 @@
+# Mathlib Probe Plan
+
+## Purpose
+
+Mathlib gives MPC a gap-finding corpus without becoming a dependency of the MPC repository.  The near-term goal is to export selected mathlib roots, run them through the existing `mpc-check-export` path, and classify the first real checker boundary exposed by each artifact.  A probe succeeds when it tells us whether the next problem is a missing rule package, a rule-package side condition, proof-term performance, generated-declaration audit behavior, or artifact translation.
+
+This plan targets selected roots rather than bulk mathlib checking.  Bulk checking would mix dependency management, artifact size, proof-term performance, and checker soundness into one result that would be hard to interpret.  Targeted probes give better engineering evidence because each selected root has a reason, an expected stress area, and a recorded outcome.
+
+## Boundary
+
+The MPC repository keeps mathlib outside its Lake dependencies for this work.  A probe uses an existing external mathlib checkout built with the Lean version compatible with this repository and the installed `lean4export` binary.  The MPC side remains the checker executable, optional cache DB, profile output, and a small driver script if repeated manual commands become error-prone.
+
+Generated artifacts and profiling output stay out of git.  Use `.tmp/mathlib-probes` or a caller-provided directory for NDJSON, root files, timing JSONL, and cache DBs.  The persistent cache remains an adapter-side optimization: useful for repeated probes, but not part of the checker claim.
+
+## Method
+
+Each probe starts from one module and one or more explicit roots.  The driver builds the target module in the mathlib checkout, runs `lean4export` against that module and root list, then runs the produced NDJSON through `.lake/build/bin/mpc-check-export`.  The driver records the module, roots, mathlib revision, Lean version, export command, checker command, cache mode, declaration count, environment size, elapsed time, and final status.
+
+The first probe uses a scratch module in the mathlib checkout rather than a theorem chosen from the whole library.  That scratch module can import a small mathlib module and define one theorem whose proof shape we control.  This keeps the first artifact tied to mathlib's dependency closure while avoiding uncertainty about public theorem names.
+
+After the scratch probe, use real mathlib roots in a ladder.  Start with early declarations that stress ordinary data, structures, projections, and simple theorem proofs.  Then add roots that stress quotients, finite types, indexed families, tactic-produced arithmetic proofs, and algebraic structures.  The ladder stops at the first unexplained failure long enough to classify it before adding more targets.
+
+## Target Ladder
+
+| Tier | Target shape | Stress area |
+| --- | --- | --- |
+| 0 | Scratch theorem over `Nat`, `List`, or `Subtype` after importing a small mathlib module. | Tooling, closure size, ordinary definitions, theorem proofs, and basic projection behavior. |
+| 1 | Small real theorem over `Nat`, `List`, `Fin`, or `Option`. | Proof irrelevance, recursive definitions, equation-compiler output, and primitive Nat reductions. |
+| 2 | Small theorem involving structures, subtypes, or sets. | Projection typing, structure eta, Prop projection restrictions, and large elimination boundaries. |
+| 3 | Small theorem involving quotients, finite sets, or equivalence relations. | Low-level quotient primitives, equality transport, and proof-heavy conversion. |
+| 4 | Tactic-produced arithmetic theorem using `omega`, `linarith`, `ring`, or heavy `simp`. | Generated proof terms, conversion performance, primitive arithmetic gaps, and resource classification. |
+
+The names in this table are shapes, not commitments to particular mathlib declarations.  Exact module and root names come from the local mathlib checkout before each run.  A selected root needs a short note explaining why it belongs in the ladder and what result would count as informative.
+
+## Result Classes
+
+| Result | Meaning |
+| --- | --- |
+| Accepted | MPC checked the exported artifact under `LeanCore429`, including generated-record audits. |
+| Rejected: rule gap | Replay reached a canonical declaration whose typing, conversion, reduction, or admission needs a rule package MPC lacks. |
+| Rejected: side-condition gap | MPC has the relevant package, but the implemented rule is too narrow or too strict for the exported declaration. |
+| Rejected: performance | The checker does not reach a semantic rejection in a useful time budget, or it hits a host resource limit. |
+| Unsupported artifact | Export parsing or lowering fails before MPC receives a canonical declaration script. |
+| Audit mismatch | MPC checks the declaration script, but a redundant generated record disagrees with generated MPC metadata. |
+
+Diagnostic continuation does not establish acceptance.  If a run needs temporary assumptions, skipped declarations, or disabled audits to classify the next boundary, record that mode as diagnostic.  The ordinary acceptance claim remains the unmodified `mpc-check-export` result for the produced artifact.
+
+## First Work Items
+
+1. Add a small external-driver script only after one manual probe works.  The script takes `MPC_MATHLIB_DIR`, `MPC_LEAN4EXPORT`, a module name, and a root file or root list.  It writes all generated data under `.tmp/mathlib-probes` by default.
+
+2. Run one scratch probe with a small import and a controlled theorem.  Record the exact module, root, artifact size, declaration count, status, and first failure if it rejects.  If the closure is already too large to classify, reduce the import before changing MPC.
+
+3. Run two or three real-root probes from the lower tiers.  Prefer roots whose theorem statements and proofs can be inspected quickly in the mathlib checkout.  Stop when a failure identifies a serious rule-package question.
+
+4. For the first slow declaration, use `--stats-jsonl`, `--profile-jsonl`, and `--profile-declaration` as appropriate.  The goal is classification, not broad optimization.  Performance work should enter `perf.md` only after a repeated run identifies a stable cost.
+
+## Non-Goals
+
+Do not add mathlib to this repository's `lakefile.toml`.  Do not add new primitive reductions because a mathlib proof is slow or rejected unless the rule has Lean-version source evidence, a written specification, declaration-shape checks, and focused tests.  Do not convert generated or tactic-produced declarations into assumptions to claim acceptance.
+
+Do not chase many mathlib failures at once.  One classified failure is more useful than a long list of unclassified rejects.  The probe series should keep returning to the MPC rule-package boundary: what rule did the checker need, where should that rule live, and what test demonstrates the rule without importing mathlib into the trusted development path.
