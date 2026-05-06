@@ -19,6 +19,7 @@ structure Config where
   checkedLayerPath? : Option System.FilePath := none
   saveLayerPath? : Option System.FilePath := none
   loadLayerPath? : Option System.FilePath := none
+  cacheLayerPath? : Option System.FilePath := none
   limit? : Option Nat := none
   profileDeclaration? : Option Nat := none
   replayOptions : ReplayOptions := {}
@@ -30,6 +31,7 @@ def usage : String :=
   "       mpc-check-export --checked-layer <base.ndjson> <export.ndjson>\n" ++
   "       mpc-check-export --save-layer <layer.json|layer.sqlite> <export.ndjson>\n" ++
   "       mpc-check-export --load-layer <layer.json|layer.sqlite> <export.ndjson>\n" ++
+  "       mpc-check-export --cache-layer <layer.db> <export.ndjson>\n" ++
   "       mpc-check-export [--limit <n>] [--trace] [--stats|--stats-jsonl|--profile-jsonl] [--diagnostic-assume-generated] <export.ndjson>\n" ++
   "       mpc-check-export --profile-declaration <n> <export.ndjson>\n" ++
   "       mpc-check-export [--assume-generated] <export.ndjson>  (alias for diagnostic mode)\n" ++
@@ -45,24 +47,26 @@ def configFromPath
     (checkedLayerPath? : Option System.FilePath)
     (saveLayerPath? : Option System.FilePath)
     (loadLayerPath? : Option System.FilePath)
+    (cacheLayerPath? : Option System.FilePath)
     (limit? : Option Nat)
     (profileDeclaration? : Option Nat)
     (replayOptions : ReplayOptions)
     (diagnosticAssumeGenerated : Bool)
     (path : String) :
     Except String Config := do
-  pure { inputPath := (← filePath path), checkedLayerPath?, saveLayerPath?, loadLayerPath?, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated }
+  pure { inputPath := (← filePath path), checkedLayerPath?, saveLayerPath?, loadLayerPath?, cacheLayerPath?, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated }
 
 def configFromEnv
     (checkedLayerPath? : Option System.FilePath)
     (saveLayerPath? : Option System.FilePath)
     (loadLayerPath? : Option System.FilePath)
+    (cacheLayerPath? : Option System.FilePath)
     (limit? : Option Nat)
     (profileDeclaration? : Option Nat)
     (replayOptions : ReplayOptions)
     (diagnosticAssumeGenerated : Bool) : IO (Except String Config) := do
   match ← IO.getEnv "IN" with
-  | some path => pure (configFromPath checkedLayerPath? saveLayerPath? loadLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated path)
+  | some path => pure (configFromPath checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated path)
   | none => pure (.error "missing input path")
 
 def setInputPath (input? : Option String) (path : String) : Except String (Option String) := do
@@ -92,72 +96,79 @@ partial def parseArgsLoop
     (checkedLayerPath? : Option System.FilePath)
     (saveLayerPath? : Option System.FilePath)
     (loadLayerPath? : Option System.FilePath)
+    (cacheLayerPath? : Option System.FilePath)
     (limit? : Option Nat)
     (profileDeclaration? : Option Nat)
     (replayOptions : ReplayOptions)
     (diagnosticAssumeGenerated : Bool) :
-    List String → Except String (Option String × Option System.FilePath × Option System.FilePath × Option System.FilePath × Option Nat × Option Nat × ReplayOptions × Bool)
-  | [] => pure (input?, checkedLayerPath?, saveLayerPath?, loadLayerPath?, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated)
+    List String → Except String (Option String × Option System.FilePath × Option System.FilePath × Option System.FilePath × Option System.FilePath × Option Nat × Option Nat × ReplayOptions × Bool)
+  | [] => pure (input?, checkedLayerPath?, saveLayerPath?, loadLayerPath?, cacheLayerPath?, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated)
   | "--input" :: path :: rest => do
-      parseArgsLoop (← setInputPath input? path) checkedLayerPath? saveLayerPath? loadLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
+      parseArgsLoop (← setInputPath input? path) checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
   | "--input" :: [] => .error "missing value after --input"
   | "--checked-layer" :: path :: rest => do
       if checkedLayerPath?.isSome then
         .error "multiple checked layers"
       else
-        parseArgsLoop input? (some (← filePath path)) saveLayerPath? loadLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
+        parseArgsLoop input? (some (← filePath path)) saveLayerPath? loadLayerPath? cacheLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
   | "--checked-layer" :: [] => .error "missing value after --checked-layer"
   | "--save-layer" :: path :: rest => do
       if saveLayerPath?.isSome then
         .error "multiple save layer paths"
       else
-        parseArgsLoop input? checkedLayerPath? (some (← filePath path)) loadLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
+        parseArgsLoop input? checkedLayerPath? (some (← filePath path)) loadLayerPath? cacheLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
   | "--save-layer" :: [] => .error "missing value after --save-layer"
   | "--load-layer" :: path :: rest => do
       if loadLayerPath?.isSome then
         .error "multiple load layer paths"
       else
-        parseArgsLoop input? checkedLayerPath? saveLayerPath? (some (← filePath path)) limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
+        parseArgsLoop input? checkedLayerPath? saveLayerPath? (some (← filePath path)) cacheLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
   | "--load-layer" :: [] => .error "missing value after --load-layer"
+  | "--cache-layer" :: path :: rest => do
+      if cacheLayerPath?.isSome then
+        .error "multiple cache layer paths"
+      else
+        parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? (some (← filePath path)) limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
+  | "--cache-layer" :: [] => .error "missing value after --cache-layer"
   | "--limit" :: value :: rest => do
       if limit?.isSome then
         .error "multiple limits"
       else
-        parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? (some (← parseNatArgument "limit" value)) profileDeclaration? replayOptions diagnosticAssumeGenerated rest
+        parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? (some (← parseNatArgument "limit" value)) profileDeclaration? replayOptions diagnosticAssumeGenerated rest
   | "--limit" :: [] => .error "missing value after --limit"
   | "--profile-declaration" :: value :: rest => do
       if profileDeclaration?.isSome then
         .error "multiple profile declaration indexes"
       else
-        parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? limit? (some (← parseNatArgument "profile declaration index" value)) replayOptions diagnosticAssumeGenerated rest
+        parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? limit? (some (← parseNatArgument "profile declaration index" value)) replayOptions diagnosticAssumeGenerated rest
   | "--profile-declaration" :: [] => .error "missing value after --profile-declaration"
   | "--trace" :: rest =>
-      parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? limit? profileDeclaration? { replayOptions with trace := true } diagnosticAssumeGenerated rest
+      parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? limit? profileDeclaration? { replayOptions with trace := true } diagnosticAssumeGenerated rest
   | "--stats" :: rest => do
-      parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? limit? profileDeclaration? (← setTelemetryFormat replayOptions .text) diagnosticAssumeGenerated rest
+      parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? limit? profileDeclaration? (← setTelemetryFormat replayOptions .text) diagnosticAssumeGenerated rest
   | "--stats-jsonl" :: rest => do
-      parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? limit? profileDeclaration? (← setTelemetryFormat replayOptions .jsonl) diagnosticAssumeGenerated rest
+      parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? limit? profileDeclaration? (← setTelemetryFormat replayOptions .jsonl) diagnosticAssumeGenerated rest
   | "--profile-jsonl" :: rest => do
-      parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? limit? profileDeclaration? (← setTelemetryFormat replayOptions .profileJsonl) diagnosticAssumeGenerated rest
+      parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? limit? profileDeclaration? (← setTelemetryFormat replayOptions .profileJsonl) diagnosticAssumeGenerated rest
   | "--diagnostic-assume-generated" :: rest =>
-      parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? limit? profileDeclaration? replayOptions true rest
+      parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? limit? profileDeclaration? replayOptions true rest
   | "--assume-generated" :: rest =>
-      parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? limit? profileDeclaration? replayOptions true rest
+      parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? limit? profileDeclaration? replayOptions true rest
   | "--help" :: _ => .error usage
   | arg :: rest =>
       if arg.startsWith "-" then
         .error s!"unknown argument: {arg}"
       else do
-        parseArgsLoop (← setInputPath input? arg) checkedLayerPath? saveLayerPath? loadLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
+        parseArgsLoop (← setInputPath input? arg) checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated rest
 
 def parseArgs : List String → IO (Except String Config)
   | args => do
-      match parseArgsLoop none none none none none none {} false args with
+      match parseArgsLoop none none none none none none none {} false args with
       | .error err => pure (.error err)
-      | .ok (some path, checkedLayerPath?, saveLayerPath?, loadLayerPath?, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated) =>
-          pure (configFromPath checkedLayerPath? saveLayerPath? loadLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated path)
-      | .ok (none, checkedLayerPath?, saveLayerPath?, loadLayerPath?, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated) =>
-          configFromEnv checkedLayerPath? saveLayerPath? loadLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated
+      | .ok (some path, checkedLayerPath?, saveLayerPath?, loadLayerPath?, cacheLayerPath?, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated) =>
+          pure (configFromPath checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated path)
+      | .ok (none, checkedLayerPath?, saveLayerPath?, loadLayerPath?, cacheLayerPath?, limit?, profileDeclaration?, replayOptions, diagnosticAssumeGenerated) =>
+          configFromEnv checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? limit? profileDeclaration? replayOptions diagnosticAssumeGenerated
 
 def printOutcome (status : String) (path : System.FilePath) (message : String) : IO Unit := do
   IO.println status
@@ -627,8 +638,8 @@ def replayWithCheckedLayer (config : Config) (state : MPC.Adapters.Export.ParseS
     (layerPath : System.FilePath) : IO (Result LayerReplayResult) := do
   if config.profileDeclaration?.isSome then
     pure (.error { message := "--checked-layer cannot be combined with --profile-declaration" })
-  else if config.saveLayerPath?.isSome || config.loadLayerPath?.isSome then
-    pure (.error { message := "--checked-layer cannot be combined with --save-layer or --load-layer" })
+  else if config.saveLayerPath?.isSome || config.loadLayerPath?.isSome || config.cacheLayerPath?.isSome then
+    pure (.error { message := "--checked-layer cannot be combined with --save-layer, --load-layer, or --cache-layer" })
   else if config.replayOptions.telemetry != .off then
     pure (.error { message := "--checked-layer cannot be combined with telemetry output" })
   else if config.replayOptions.trace then
@@ -645,8 +656,8 @@ def replayWithSavedLayer (config : Config) (state : MPC.Adapters.Export.ParseSta
     (layerPath : System.FilePath) : IO (Result LayerReplayResult) := do
   if config.profileDeclaration?.isSome then
     pure (.error { message := "--load-layer cannot be combined with --profile-declaration" })
-  else if config.checkedLayerPath?.isSome || config.saveLayerPath?.isSome then
-    pure (.error { message := "--load-layer cannot be combined with --checked-layer or --save-layer" })
+  else if config.checkedLayerPath?.isSome || config.saveLayerPath?.isSome || config.cacheLayerPath?.isSome then
+    pure (.error { message := "--load-layer cannot be combined with --checked-layer, --save-layer, or --cache-layer" })
   else if config.replayOptions.telemetry == .profileJsonl then
     pure (.error { message := "--load-layer cannot be combined with --profile-jsonl" })
   else if config.replayOptions.telemetry != .off && !MPC.Adapters.Layer.sqlitePath layerPath then
@@ -691,10 +702,53 @@ def replayWithSavedLayer (config : Config) (state : MPC.Adapters.Export.ParseSta
       | .error err => pure (.error { message := s!"while loading layer {layerPath}: {err.message}" })
       | .ok layer => pure (replayWithLayer config state layer)
 
+def replayWithCacheLayer (config : Config) (state : MPC.Adapters.Export.ParseState)
+    (layerPath : System.FilePath) : IO (Result LayerReplayResult) := do
+  if config.profileDeclaration?.isSome then
+    pure (.error { message := "--cache-layer cannot be combined with --profile-declaration" })
+  else if config.checkedLayerPath?.isSome || config.saveLayerPath?.isSome || config.loadLayerPath?.isSome then
+    pure (.error { message := "--cache-layer cannot be combined with --checked-layer, --save-layer, or --load-layer" })
+  else if config.limit?.isSome then
+    pure (.error { message := "--cache-layer cannot be combined with --limit" })
+  else if !MPC.Adapters.Layer.sqlitePath layerPath then
+    pure (.error { message := "--cache-layer requires a SQLite layer path" })
+  else if config.replayOptions.telemetry == .profileJsonl then
+    pure (.error { message := "--cache-layer cannot be combined with --profile-jsonl" })
+  else if config.replayOptions.trace then
+    pure (.error { message := "--cache-layer cannot be combined with --trace" })
+  else if config.diagnosticAssumeGenerated then
+    pure (.error { message := "--cache-layer cannot be combined with diagnostic generated assumptions" })
+  else
+    let declarations := prepareDeclarations config state
+    let observer? : Option MPC.Adapters.Layer.ReplayObserver :=
+      match config.replayOptions.telemetry with
+      | .off => none
+      | .text | .jsonl =>
+          some fun step => do
+            let status :=
+              match step.status with
+              | .reused => ReplayStatus.reused
+              | .checked => ReplayStatus.checked
+              | .rejected => ReplayStatus.rejected
+            emitDeclarationTelemetry config.replayOptions.telemetry {
+              index := step.index,
+              kind := MPC.Adapters.Export.declarationKindLabel step.declaration,
+              name := MPC.Adapters.Export.declarationNameLabel step.declaration,
+              elapsedMs := step.elapsedMs,
+              cumulativeMs := step.cumulativeMs,
+              status,
+              profile? := none
+            }
+      | .profileJsonl => none
+    match ← MPC.Adapters.Layer.cacheSqliteWithObserver MPC.Configs.LeanCore429 layerPath state.audit declarations observer? with
+    | .error err => pure (.error { message := s!"while using cache layer {layerPath}: {err.message}" })
+    | .ok summary =>
+        pure (.ok { env := summary.env, reused := summary.reused, checked := summary.checked })
+
 def saveLayerConfig (config : Config) (state : MPC.Adapters.Export.ParseState)
     (layerPath : System.FilePath) : IO (Result MPC.Adapters.Layer.SaveSummary) := do
-  if config.checkedLayerPath?.isSome || config.loadLayerPath?.isSome then
-    pure (.error { message := "--save-layer cannot be combined with --checked-layer or --load-layer" })
+  if config.checkedLayerPath?.isSome || config.loadLayerPath?.isSome || config.cacheLayerPath?.isSome then
+    pure (.error { message := "--save-layer cannot be combined with --checked-layer, --load-layer, or --cache-layer" })
   else if config.limit?.isSome then
     pure (.error { message := "--save-layer cannot be combined with --limit" })
   else if config.profileDeclaration?.isSome then
@@ -771,6 +825,17 @@ def run (args : List String) : IO UInt32 := do
                     | none => ""
                   printOutcome "layer-accepted" config.inputPath
                     s!"reused {result.reused} declaration entries; checked {prefixText}{result.checked} declaration entries; target declarations {checkedTotal}; environment size {result.env.length}"
+                  return 0
+              | .error err => do
+                  printOutcome "rejected" config.inputPath err.message
+                  return 1
+          | none => pure ()
+          match config.cacheLayerPath? with
+          | some layerPath =>
+              match ← replayWithCacheLayer config state layerPath with
+              | .ok result => do
+                  printOutcome "cache-accepted" config.inputPath
+                    s!"reused {result.reused} declaration entries; checked {result.checked} declaration entries; target declarations {state.declarations.length}; environment size {result.env.length}; cache layer {layerPath}"
                   return 0
               | .error err => do
                   printOutcome "rejected" config.inputPath err.message

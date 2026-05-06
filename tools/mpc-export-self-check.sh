@@ -3,8 +3,8 @@ set -euo pipefail
 
 lean4export_bin="${LEANLEAN_LEAN4EXPORT:-lean4export}"
 artifact_dir="${LEANLEAN_MPC_EXPORT_SELF_CHECK_DIR:-.lake/build/mpc-export-self-check}"
-default_layer_db=".tmp/mpc-env.layer-v2-without-rowid.db"
-layer_db="${LEANLEAN_MPC_LAYER_DB-$default_layer_db}"
+default_cache_db=".tmp/mpc-self-check-cache.db"
+cache_db="${LEANLEAN_MPC_CACHE_DB-${LEANLEAN_MPC_LAYER_DB-$default_cache_db}}"
 
 if ! command -v "$lean4export_bin" >/dev/null 2>&1; then
   echo "error: lean4export not found; set LEANLEAN_LEAN4EXPORT" >&2
@@ -39,17 +39,16 @@ lake build \
 checker=".lake/build/bin/mpc-check-export"
 root_lister=".lake/build/bin/leanlean-export-roots"
 lean_path="$(pwd)/.lake/build/lib/lean"
-layer_args=()
+cache_args=()
 
-if [[ -n "$layer_db" && -f "$layer_db" ]]; then
-  layer_args=(--load-layer "$layer_db")
-  echo "mpc-export-self-check: layer=$layer_db"
+if [[ -n "$cache_db" ]]; then
+  cache_args=(--cache-layer "$cache_db")
+  echo "mpc-export-self-check: cache=$cache_db"
 fi
 
 run_mpc_export_self_check() {
   local label="$1"
   local module="$2"
-  local replay_mode="${3:-cold}"
   local roots_file="$artifact_dir/$label.roots"
   local artifact="$artifact_dir/$label.ndjson"
   local checker_args=()
@@ -58,9 +57,9 @@ run_mpc_export_self_check() {
   local output
   local code
 
-  if [[ "$replay_mode" == "layer" && "${#layer_args[@]}" != "0" ]]; then
-    checker_args=("${layer_args[@]}")
-    expected_status="layer-accepted"
+  if [[ "${#cache_args[@]}" != "0" ]]; then
+    checker_args=("${cache_args[@]}")
+    expected_status="cache-accepted"
     expected_message_fragment="message: reused"
   fi
 

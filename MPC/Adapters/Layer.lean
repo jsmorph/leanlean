@@ -39,6 +39,13 @@ structure ReplaySummary where
   reused : Nat := 0
   checked : Nat := 0
 
+structure SqliteReplayResult where
+  env : Env
+  reused : Nat := 0
+  checked : Nat := 0
+  newEntries : List ConstantInfo := []
+  newContentToNames : Std.HashMap String (List Name) := {}
+
 inductive ReplayStepStatus where
   | reused
   | checked
@@ -329,8 +336,14 @@ def sqliteInsertEnv (pos : Nat) (info : ConstantInfo) : String :=
 def sqliteInsertContent (key : String) (names : List Name) : String :=
   s!"INSERT INTO content(key,names) VALUES({sqlQuote key},{sqlQuote (Lean.toJson names).compress});\n"
 
+def sqliteInsertContentIgnore (key : String) (names : List Name) : String :=
+  s!"INSERT OR IGNORE INTO content(key,names) VALUES({sqlQuote key},{sqlQuote (Lean.toJson names).compress});\n"
+
 def sqliteInsertMeta (key value : String) : String :=
   s!"INSERT INTO meta(key,value) VALUES({sqlQuote key},{sqlQuote value});\n"
+
+def sqliteUpdateMeta (key value : String) : String :=
+  s!"UPDATE meta SET value = {sqlQuote value} WHERE key = {sqlQuote key};\n"
 
 def sqliteFinishScript (declarations : Nat) : String :=
   sqliteInsertMeta "formatVersion" (toString sqliteFormatVersion) ++
@@ -407,6 +420,43 @@ def saveSqliteFromState (manifest : Manifest) (path : System.FilePath)
 def saveSqlite (path : System.FilePath) (layer : CheckedLayer) : IO (Result Unit) := do
   saveSqliteFromLayer path layer
 
+def createEmptySqliteLayer (path : System.FilePath) : IO (Result Unit) := do
+  match ← checkSavePath path with
+  | .error err => pure (.error err)
+  | .ok () =>
+      let tempPath := sqliteTempPath path
+      let result ← sqlite3RunWriter #[tempPath.toString] fun input => do
+        input.putStr sqliteCreateScript
+        input.putStr (sqliteFinishScript 0)
+        pure (.ok ())
+      match result with
+      | .error err => pure (.error err)
+      | .ok () =>
+          try
+            IO.FS.rename tempPath path
+            pure (.ok ())
+          catch err =>
+            pure (.error { message := s!"could not move SQLite layer {tempPath} to {path}: {err}" })
+
+def appendSqliteLayer (path : System.FilePath) (startEnvPos declarations checked : Nat)
+    (entries : List ConstantInfo) (contentToNames : Std.HashMap String (List Name)) :
+    IO (Result Unit) := do
+  let result ← sqlite3RunWriter #[path.toString] fun input => do
+    input.putStr sqliteScriptHeader
+    input.putStr "BEGIN;\n"
+    let mut pos := startEnvPos
+    for info in entries do
+      input.putStr (sqliteInsertEnv pos info)
+      pos := pos + 1
+    for pair in contentToNames.toList do
+      input.putStr (sqliteInsertContentIgnore pair.1 pair.2)
+    input.putStr (sqliteUpdateMeta "declarations" (toString (declarations + checked)))
+    input.putStr "COMMIT;\n"
+    pure (.ok ())
+  match result with
+  | .error err => pure (.error err)
+  | .ok () => pure (.ok ())
+
 def sqliteRows (stdout : String) : List String :=
   (stdout.splitOn "\n").filter fun line => line != ""
 
@@ -462,6 +512,14 @@ def checkSqliteMeta (path : System.FilePath) : IO (Result Nat) := do
                   fail s!"unsupported layer manifest: {manifest}"
                 parseSqliteNat "declaration count" declarationsText
               pure metaResult
+
+def ensureSqliteLayer (path : System.FilePath) : IO (Result Unit) := do
+  if ← System.FilePath.pathExists path then
+    match ← checkSqliteMeta path with
+    | .error err => pure (.error err)
+    | .ok _ => pure (.ok ())
+  else
+    createEmptySqliteLayer path
 
 def loadSqliteLayer (path : System.FilePath) : IO (Result SqliteLayer) := do
   match ← checkSqliteMeta path with
@@ -775,10 +833,10 @@ def emitReplayStep (observer? : Option ReplayObserver) (index : Nat) (declaratio
       pure cumulativeMs
   | _, _ => pure cumulativeMs
 
-def replaySqliteWithObserver (manifest : Manifest) (layerPath : System.FilePath)
+def replaySqliteCore (manifest : Manifest) (layerPath : System.FilePath)
     (audit : MPC.Adapters.Export.Audit) (declarations : List Declaration)
     (observer? : Option ReplayObserver) :
-    IO (Result ReplaySummary) := do
+    IO (Result SqliteReplayResult) := do
   match ← loadSqliteLayer layerPath with
   | .error err => pure (.error err)
   | .ok layer =>
@@ -786,6 +844,7 @@ def replaySqliteWithObserver (manifest : Manifest) (layerPath : System.FilePath)
       | .error err => pure (.error err)
       | .ok cachedContent =>
           let mut newContentToNames : Std.HashMap String (List Name) := {}
+          let mut newEntries : List ConstantInfo := []
           let mut env := layer.env
           let mut reused := 0
           let mut checked := 0
@@ -829,12 +888,14 @@ def replaySqliteWithObserver (manifest : Manifest) (layerPath : System.FilePath)
                         let before := env
                         match addDecl manifest env declaration with
                         | .ok nextEnv =>
-                            match addedNames before nextEnv with
+                            match addedEntries before nextEnv with
                             | .error err =>
                                 cumulativeMs ← emitReplayStep observer? index declaration .rejected startMs? cumulativeMs
                                 return .error err
-                            | .ok names =>
+                            | .ok entries =>
+                                let names := entries.map fun info => info.name
                                 env := nextEnv
+                                newEntries := newEntries ++ entries.reverse
                                 newContentToNames := newContentToNames.insert key names
                                 checked := checked + 1
                                 cumulativeMs ← emitReplayStep observer? index declaration .checked startMs? cumulativeMs
@@ -846,12 +907,45 @@ def replaySqliteWithObserver (manifest : Manifest) (layerPath : System.FilePath)
             index := index + 1
           match MPC.Adapters.Export.auditGenerated env audit with
           | .error err => pure (.error err)
-          | .ok () => pure (.ok { env, reused, checked })
+          | .ok () => pure (.ok { env, reused, checked, newEntries, newContentToNames })
+
+def replaySqliteWithObserver (manifest : Manifest) (layerPath : System.FilePath)
+    (audit : MPC.Adapters.Export.Audit) (declarations : List Declaration)
+    (observer? : Option ReplayObserver) :
+    IO (Result ReplaySummary) := do
+  match ← replaySqliteCore manifest layerPath audit declarations observer? with
+  | .error err => pure (.error err)
+  | .ok result => pure (.ok { env := result.env, reused := result.reused, checked := result.checked })
 
 def replaySqlite (manifest : Manifest) (layerPath : System.FilePath)
     (audit : MPC.Adapters.Export.Audit) (declarations : List Declaration) :
     IO (Result ReplaySummary) := do
   replaySqliteWithObserver manifest layerPath audit declarations none
+
+def cacheSqliteWithObserver (manifest : Manifest) (layerPath : System.FilePath)
+    (audit : MPC.Adapters.Export.Audit) (declarations : List Declaration)
+    (observer? : Option ReplayObserver) :
+    IO (Result ReplaySummary) := do
+  match ← ensureSqliteLayer layerPath with
+  | .error err => pure (.error err)
+  | .ok () =>
+      match ← loadSqliteLayer layerPath with
+      | .error err => pure (.error err)
+      | .ok layer =>
+          match ← replaySqliteCore manifest layerPath audit declarations observer? with
+          | .error err => pure (.error err)
+          | .ok result =>
+              match ←
+                  appendSqliteLayer layerPath layer.env.length layer.declarations result.checked
+                    result.newEntries result.newContentToNames with
+              | .error err => pure (.error err)
+              | .ok () =>
+                  pure (.ok { env := result.env, reused := result.reused, checked := result.checked })
+
+def cacheSqlite (manifest : Manifest) (layerPath : System.FilePath)
+    (audit : MPC.Adapters.Export.Audit) (declarations : List Declaration) :
+    IO (Result ReplaySummary) := do
+  cacheSqliteWithObserver manifest layerPath audit declarations none
 
 def build (manifest : Manifest) (state : MPC.Adapters.Export.ParseState) :
     Result CheckedLayer := do
