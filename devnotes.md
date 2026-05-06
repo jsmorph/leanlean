@@ -31,6 +31,12 @@ The first implementation target is a small data fragment.  It includes closed un
 | Local Lean 4.29.1 source, `Lean/Elab/MutualInductive.lean` | Reviewed for inductive universe bounds.  Lean's elaborator checks constructor arguments after the shared inductive parameters against the resulting universe, and it does not impose that bound on the shared parameter binders themselves. |
 | Local Lean 4.29.1 source, `Init/Prelude.lean` | Reviewed for kernel-overridden primitive computation and reducible elaborator annotations.  The source marks `Nat.add`, `Nat.mul`, `Nat.pow`, `Nat.sub`, `Nat.beq`, and `Nat.ble` with extern attributes tied to Lean's primitive natural-number implementation, and it records that the kernel and compiler override the logical model for primitive natural-number operations.  It also defines `optParam`, `outParam`, and `semiOutParam` as reducible identity wrappers, and the same source contains additional override candidates that remain outside the admitted fragment until specified. |
 
+## Mathlib Probe Notes
+
+| Date | Probe | Result | Note |
+| --- | --- | --- | --- |
+| 2026-05-05 | `Mathlib.Logic.Equiv.Defs`, root `Quot.congr_mk` | Accepted | The first run rejected during conversion after checking `Quot.congr`.  Inspection of the exported `Quot.congr_mk` theorem showed that `rfl` needed `Quot.congr` and `Quot.map` to reduce through a partial `Quot.lift`.  The root cause was WHNF spine handling: reducing a function position could expose an applied head, but the checker did not reprocess the rebuilt application spine. |
+
 ## Small Plan
 
 - [x] Define the minimal scope for the first specification.
@@ -433,4 +439,4 @@ The root plan files have been removed.  They recorded completed package slices a
 
 The first mathlib probe path now works.  A temporary external mathlib checkout at tag `v4.29.0`, run under the local Lean 4.29.1 toolchain, built `Mathlib.Data.Nat.Basic` and a scratch module `Mathlib.MPCProbe.Scratch`.  Exporting `MPCProbe.MathlibScratch.addZeroProbe` with the local Lean 4.29.1 `lean4export` binary produced a 639-row, 36 KB artifact; cold `mpc-check-export --stats-jsonl` accepted it with 23 checked declaration entries and environment size 39.  `tools/mpc-mathlib-probe.sh` captures the reusable external-driver path without adding mathlib to this repository's Lake dependencies.
 
-The first real mathlib roots give a useful boundary.  `Nat.succ_injective`, `Nat.instNontrivial`, `Nat.instLinearOrder`, and `Nat.set_induction` accept through the external probe path, with `Nat.instLinearOrder` checking 332 declaration entries and producing environment size 457.  The first failure is `Quot.congr_mk` from `Mathlib.Logic.Equiv.Defs`: MPC rejects at declaration index 337 after checking `Quot.congr`, because conversion leaves a `Quot.lift` application stuck against `Quot.mk`.  This classifies the next rule-package question as quotient reduction shape or side-condition work, not a mathlib setup problem.
+The first real mathlib roots give a useful boundary.  `Nat.succ_injective`, `Nat.instNontrivial`, `Nat.instLinearOrder`, and `Nat.set_induction` accept through the external probe path, with `Nat.instLinearOrder` checking 332 declaration entries and producing environment size 457.  `Quot.congr_mk` from `Mathlib.Logic.Equiv.Defs` first rejected at declaration index 337 after checking `Quot.congr`, because conversion left a `Quot.lift` application stuck against `Quot.mk`; after the WHNF spine fix, the same root accepts with 338 checked declaration entries and environment size 459.

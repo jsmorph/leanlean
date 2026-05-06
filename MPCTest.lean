@@ -1086,6 +1086,42 @@ def hLamType : Expr :=
 def quotientAlphaRelationDeclarations : List Declaration :=
   quotientDeclarations ++ [.axiom "hLam" [] hLamType]
 
+def hAliasType : Expr :=
+  pi "x" alphaType
+    (pi "y" alphaType
+      (pi "rel" (appN (.const "rAlias" []) [.bvar 1, .bvar 0])
+        (eqBeta (.app (.const "f" []) (.bvar 2)) (.app (.const "f" []) (.bvar 1)))))
+
+def quotientTransparentRelationDeclarations : List Declaration :=
+  quotientDeclarations ++
+    [
+      .definition "rAlias" [] relType (.const "r" []),
+      .axiom "hAlias" [] hAliasType
+    ]
+
+def quotTypeA : Expr :=
+  appN (.const "Quot" [.succ .zero]) [alphaType, .const "r" []]
+
+def quotLiftFnType : Expr :=
+  pi "q" quotTypeA betaType
+
+def quotLiftFnValue : Expr :=
+  appN
+    (.const "Quot.lift" [.succ .zero, .succ .zero])
+    [
+      alphaType,
+      .const "r" [],
+      betaType,
+      .const "f" [],
+      .const "h" []
+    ]
+
+def quotientLiftHeadDefinitionDeclarations : List Declaration :=
+  quotientDeclarations ++
+    [
+      .definition "liftFn" [] quotLiftFnType quotLiftFnValue
+    ]
+
 def quotMkA : Expr :=
   appN (.const "Quot.mk" [.succ .zero]) [alphaType, .const "r" [], .const "a" []]
 
@@ -1115,6 +1151,21 @@ def quotLiftAlphaRenamedRelation : Expr :=
       .const "hLam" [],
       quotMkRelLamA
     ]
+
+def quotLiftTransparentRelation : Expr :=
+  appN
+    (.const "Quot.lift" [.succ .zero, .succ .zero])
+    [
+      alphaType,
+      .const "rAlias" [],
+      betaType,
+      .const "f" [],
+      .const "hAlias" [],
+      quotMkA
+    ]
+
+def quotLiftViaDefinition : Expr :=
+  .app (.const "liftFn" []) quotMkA
 
 def eqReflA : Expr :=
   appN (.const "Eq.refl" [.succ .zero]) [alphaType, .const "a" []]
@@ -2199,6 +2250,22 @@ def checkQuotients : IO Unit := do
     (normalize MPC.Configs.QuotPoc alphaRelationEnv [] quotLiftAlphaRenamedRelation)
   expectExprEq "quotient alpha relation value"
     alphaRelationReduced (.app (.const "f" []) (.const "a" []))
+  let transparentRelationEnv ← expectOkLabel "quotient transparent relation replay"
+    (replay MPC.Configs.QuotPoc emptyEnv
+      (baseDeclarations ++ [.equalityPrimitives, .quotientPrimitives] ++
+        quotientTransparentRelationDeclarations))
+  let transparentRelationReduced ← expectOkLabel "quotient transparent relation reduction"
+    (normalize MPC.Configs.QuotPoc transparentRelationEnv [] quotLiftTransparentRelation)
+  expectExprEq "quotient transparent relation value"
+    transparentRelationReduced (.app (.const "f" []) (.const "a" []))
+  let liftHeadEnv ← expectOkLabel "quotient lifted head replay"
+    (replay MPC.Configs.QuotPoc emptyEnv
+      (baseDeclarations ++ [.equalityPrimitives, .quotientPrimitives] ++
+        quotientLiftHeadDefinitionDeclarations))
+  let liftHeadReduced ← expectOkLabel "quotient lifted head reduction"
+    (normalize MPC.Configs.QuotPoc liftHeadEnv [] quotLiftViaDefinition)
+  expectExprEq "quotient lifted head value"
+    liftHeadReduced (.app (.const "f" []) (.const "a" []))
 
 def scriptInput : String :=
   "axiom Nat Type0\n" ++

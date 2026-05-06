@@ -15,10 +15,6 @@ partial def reduceQuotLift? (manifest : Manifest) (env : Env) (levelParams : Lev
     if args.length < required then
       pure none
     else
-      let some typeArg := listGet? args 0
-        | pure none
-      let some relationArg := listGet? args 1
-        | pure none
       let some fnArg := listGet? args 3
         | pure none
       let some quotientArg := listGet? args 5
@@ -30,16 +26,9 @@ partial def reduceQuotLift? (manifest : Manifest) (env : Env) (levelParams : Lev
       | Expr.const mkName _ =>
           match env.find? mkName with
           | some { kind := .quotientMk, .. } =>
-              let some mkTypeArg := listGet? quotientArgs 0
-                | pure none
-              let some mkRelationArg := listGet? quotientArgs 1
-                | pure none
               let some valueArg := listGet? quotientArgs 2
                 | pure none
-              if mkTypeArg.alphaEq typeArg && mkRelationArg.alphaEq relationArg then
-                pure (some (Expr.mkApps (.app fnArg valueArg) trailing))
-              else
-                pure none
+              pure (some (Expr.mkApps (.app fnArg valueArg) trailing))
           | _ => pure none
       | _ => pure none
 
@@ -150,6 +139,8 @@ partial def whnf (manifest : Manifest) (env : Env) (levelParams : LevelContext)
               | first :: rest =>
                   whnf manifest env levelParams (Expr.mkApps (Expr.instantiate1 body first) rest)
               | [] => pure head
+          | .app _ _ =>
+              whnf manifest env levelParams (Expr.mkApps head args)
           | _ => pure (Expr.mkApps head args)
   | .const name levels =>
       match env.find? name with

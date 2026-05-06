@@ -98,7 +98,7 @@ Natural literals have type `Nat` when the literal package is enabled and the env
 
 ## Conversion and Reduction
 
-Weak-head normalization performs beta, zeta, delta for transparent definitions, projection reduction, inductive recursor reduction, equality-rec reduction, quotient-lift reduction, and selected primitive reductions.  Opaque constants and theorem constants do not unfold.  A recursor or primitive redex reduces only when the selected package is enabled and the environment metadata has the required shape.
+Weak-head normalization performs beta, zeta, delta for transparent definitions, projection reduction, inductive recursor reduction, equality-rec reduction, quotient-lift reduction, and selected primitive reductions.  Opaque constants and theorem constants do not unfold.  A recursor or primitive redex reduces only when the selected package is enabled and the environment metadata has the required shape.  After reducing a function position, weak-head normalization reprocesses the rebuilt application spine, because delta reduction may expose a partially applied eliminator or primitive whose remaining arguments were outside the unfolded head.
 
 Definitional equality starts with alpha-equivalence.  If that fails, it compares weak-head normal forms structurally and recurses through full conversion on subterms.  If structural comparison fails, conversion may try structure eta, proof irrelevance, and function eta when their packages allow those rules.
 
@@ -155,7 +155,7 @@ The quotient package requires `Prop` and the equality primitives.  It adds `Quot
 
 `Quot.{u} alpha r` forms a type in `Sort u` when `alpha : Sort u` and `r : alpha -> alpha -> Prop`.  `Quot.mk` injects a representative into the quotient, and `Quot.sound` proves equality of quotient elements whose representatives are related.  `Quot.ind` eliminates quotients into propositions.
 
-`Quot.lift` eliminates a quotient into a non-dependent target.  The reduction rule maps `Quot.lift alpha r beta f resp (Quot.mk alpha r a)` to `f a` when the carrier and relation arguments match by alpha-equivalence.  The rule preserves trailing applications after the reduced result.
+`Quot.lift` eliminates a quotient into a non-dependent target.  The reduction rule maps `Quot.lift alpha r beta f resp (Quot.mk r' a)` to `f a` when the major premise weak-head reduces to a `Quot.mk` application.  For a well-typed redex, carrier and relation agreement follows from the type of the major premise; the reducer therefore follows Lean's primitive quotient reduction rather than imposing a separate syntactic relation comparison.  The rule preserves trailing applications after the reduced result.
 
 ### Literals
 
