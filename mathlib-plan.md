@@ -79,5 +79,6 @@ This is an accepted Tier 0 result.  It verifies the external checkout, module bu
 | Nat linear-order instance | `Mathlib.Data.Nat.Basic` | `Nat.instLinearOrder` | Accepted | 332 checked declarations, environment size 457. |
 | Nat set induction | `Mathlib.Data.Nat.Basic` | `Nat.set_induction` | Accepted | 140 checked declarations, environment size 184. |
 | Quot congruence on constructors | `Mathlib.Logic.Equiv.Defs` | `Quot.congr_mk` | Accepted | 338 checked declarations, environment size 459.  The first run exposed a WHNF spine-reprocessing bug: delta reduction of `Quot.congr` and `Quot.map` exposed a partially applied `Quot.lift`, while the quotient argument remained outside the unfolded head. |
+| SetLike extensionality | `Mathlib.Data.SetLike.Basic` | `SetLike.ext` | Accepted | 23 checked declarations, environment size 36.  This is the first structure/set probe after the quotient fix. |
 
 The quotient probe reached MPC replay, checked the declaration prefix, and then exposed a WHNF bug in conversion.  Inspecting the exported `Quot.congr_mk` term showed that Lean's ordinary `rfl` proof depends on `Quot.congr` and `Quot.map` reducing through a partial `Quot.lift`.  The fixed run accepts the root, so the next probe can move past the low-level quotient constructor case.
