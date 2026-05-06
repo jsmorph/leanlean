@@ -210,6 +210,10 @@ timeout 300s .lake/build/bin/mpc-check-export \
 
 The hard declaration is `LinearEquiv.noConfusion`, a generated definition with 699 type nodes and 8,297 value nodes.  A head-count scan is dominated by `Semiring.toNonAssocSemiring`, `HEq`, `LinearEquiv`, `RingHomInvPair`, `RingHom`, `Module`, `Eq.ndrec`, and `eq_of_heq`.  This differs from the ordinary proof-term walls because the hard object is derived structure support; a shortcut would be a derived declaration checker or audit layer, not an MPC conversion rule.
 
+## Mathlib Abelian Resource Boundary
+
+The `CategoryTheory.Abelian.image_ι_comp_eq_zero` probe used `Mathlib.CategoryTheory.Abelian.Basic` with the shared mathlib SQLite cache.  The corrected root built successfully and exported `.tmp/mathlib-probes/category-abelian-image-zero.ndjson`, a 27 MB artifact, but `mpc-check-export` was killed with exit code 137 before it wrote checker output or declaration stats.  The output file was empty after the kill, the cache DB was 2.8 GB, the workspace filesystem had 4.0 GB free, and `/tmp` had 812 MB free, so the observed failure is a host-resource boundary rather than a disk-full event or an MPC semantic rejection.  Kernel logs were unavailable in the sandbox, so this run does not identify the exact host limit.
+
 ## Conversion Fast Paths
 
 The useful optimization was a top-level alpha-equivalence check at the start of `defEq`.  If two terms are already equal up to binder names and universe equality, conversion now returns before weak-head reduction, structural recursion, eta, or proof irrelevance.  This preserves the conversion relation and removes repeated normalization of subterms that are already identical in exported proof terms.
