@@ -78,12 +78,36 @@ def eqNdRecType : Expr :=
     ]
     (.app (.bvar 3) (.bvar 1))
 
+def bindLambda (binders : List Binder) (body : Expr) : Expr :=
+  binders.foldr (fun binder body => .lam binder.name binder.type body) body
+
+def eqNdRecAsRecMotive : Expr :=
+  .lam "b" (.bvar 5)
+    (.lam "h" (eqApp u (.bvar 6) (.bvar 5) (.bvar 0))
+      (.app (.bvar 5) (.bvar 1)))
+
+def eqNdRecValue : Expr :=
+  bindLambda
+    [
+      alphaBinder,
+      { name := "a", type := .bvar 0 },
+      { name := "motive", type := eqNdRecMotiveType },
+      { name := "minor", type := eqNdRecMinorType },
+      { name := "b", type := .bvar 3 },
+      { name := "h", type := eqRecProofType }
+    ]
+    (Expr.mkApps
+      (.const "Eq.rec" [v, u])
+      [.bvar 5, .bvar 4, eqNdRecAsRecMotive, .bvar 2, .bvar 1, .bvar 0])
+
+def eqNdRecDefinition : Declaration :=
+  .definition "Eq.ndrec" ["v", "u"] eqNdRecType eqNdRecValue
+
 def primitiveInfos : List ConstantInfo :=
   [
     { name := "Eq", levelParams := ["u"], type := eqType, kind := .equalityType },
     { name := "Eq.refl", levelParams := ["u"], type := eqReflType, kind := .equalityRefl },
-    { name := "Eq.rec", levelParams := ["v", "u"], type := eqRecType, kind := .equalityRec },
-    { name := "Eq.ndrec", levelParams := ["v", "u"], type := eqNdRecType, kind := .equalityNdRec }
+    { name := "Eq.rec", levelParams := ["v", "u"], type := eqRecType, kind := .equalityRec }
   ]
 
 -- Keep the equality-kind check out of Lean's sparse matcher representation.
@@ -92,7 +116,6 @@ def sameEqualityPrimitiveKind : ConstantKind → ConstantKind → Bool
   | .equalityType, .equalityType => true
   | .equalityRefl, .equalityRefl => true
   | .equalityRec, .equalityRec => true
-  | .equalityNdRec, .equalityNdRec => true
   | _, _ => false
 
 def hasPrimitiveInfo (env : Env) (info : ConstantInfo) : Bool :=

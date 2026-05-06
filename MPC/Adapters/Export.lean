@@ -313,23 +313,17 @@ def parseQuotientPrimitive (state : State) (json : Lean.Json) : Result (State ×
   else
     pure (withQuotientPrimitives state)
 
-def equalityPrimitiveDefinition (name : Name) : Bool :=
-  name == "Eq.ndrec"
-
 def parseDefinition (state : State) (json : Lean.Json) : Result (List Declaration) := do
   let name ← localNameAt state (← natField json "name")
   requireSafeDefinition name (← field json "safety")
-  if state.sawEqualityPrimitives && equalityPrimitiveDefinition name then
-    pure []
-  else
-    pure
-      [
-        .definition
-          name
-          (← levelParamList state (← field json "levelParams"))
-          (← exprAt state (← natField json "type"))
-          (← exprAt state (← natField json "value"))
-      ]
+  pure
+    [
+      .definition
+        name
+        (← levelParamList state (← field json "levelParams"))
+        (← exprAt state (← natField json "type"))
+        (← exprAt state (← natField json "value"))
+    ]
 
 def parseTheorem (state : State) (json : Lean.Json) : Result Declaration := do
   pure
@@ -658,7 +652,6 @@ def auditGenerated (env : Env) (audit : Audit) : Result Unit := do
     | some { kind := .indexedRecursor .., .. } => pure ()
     | some { kind := .nestedRecursor .., .. } => pure ()
     | some { kind := .equalityRec, .. } => pure ()
-    | some { kind := .equalityNdRec, .. } => pure ()
     | some _ => fail s!"generated recursor audit found non-recursor: {name}"
     | none => fail s!"generated recursor audit found unknown name: {name}"
 

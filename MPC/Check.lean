@@ -119,7 +119,7 @@ partial def structuralDefEq (manifest : Manifest) (env : Env) (levelParams : Lev
       if left.defEq right then pure () else fail "sort levels differ"
   | .const leftName leftLevels, .const rightName rightLevels =>
       if leftName != rightName || leftLevels.length != rightLevels.length then
-        fail "constants differ"
+        fail s!"constants differ: {leftName}{repr leftLevels} and {rightName}{repr rightLevels}"
       else
         for pair in leftLevels.zip rightLevels do
           if pair.1.defEq pair.2 then pure () else fail "constant levels differ"

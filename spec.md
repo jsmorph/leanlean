@@ -67,7 +67,7 @@ Declaration scripts are ordered MPC inputs.  The checker processes them by repea
 | Simple inductive | type former, parameters, result universe, constructors | Adds the type former, constructors, and recursor family. |
 | Indexed inductive | type former, parameters, indices, result universe, constructors with target indices | Adds the indexed type former, constructors, and indexed recursor. |
 | Mutual inductive block | shared universe parameters and simple inductive members | Adds all type formers atomically, then constructors and one recursor per member. |
-| Equality primitives | no additional data | Adds `Eq`, `Eq.refl`, `Eq.rec`, and `Eq.ndrec`. |
+| Equality primitives | no additional data | Adds `Eq`, `Eq.refl`, and `Eq.rec`. |
 | Quotient primitives | no additional data | Adds `Quot`, `Quot.mk`, `Quot.lift`, `Quot.ind`, and `Quot.sound`. |
 
 Projection functions are ordinary definitions whose bodies end in core projection expressions.  MPC does not need a special projection-declaration entry.  Structure metadata from Lean artifacts belongs to an adapter or audit layer unless a later MPC package gives that metadata a typing role.
@@ -143,11 +143,11 @@ Large-elimination eligibility requires every constructor field to satisfy one of
 
 ### Equality Primitives
 
-The equality package adds four primitive constants.  `Eq.{u} (alpha : Sort u) (left right : alpha) : Prop` is the equality type.  `Eq.refl.{u} (alpha : Sort u) (value : alpha) : Eq alpha value value` is reflexivity.
+The equality package adds three primitive constants.  `Eq.{u} (alpha : Sort u) (left right : alpha) : Prop` is the equality type.  `Eq.refl.{u} (alpha : Sort u) (value : alpha) : Eq alpha value value` is reflexivity.
 
-`Eq.rec.{v,u}` is the dependent equality eliminator.  Its motive has type `(b : alpha) -> Eq alpha a b -> Sort v`, its minor premise has type `motive a (Eq.refl alpha a)`, and the result at endpoint `b` and proof `h` has type `motive b h`.  `Eq.ndrec.{v,u}` is the non-dependent proof-argument variant whose motive has type `alpha -> Sort v`.
+`Eq.rec.{v,u}` is the dependent equality eliminator.  Its motive has type `(b : alpha) -> Eq alpha a b -> Sort v`, its minor premise has type `motive a (Eq.refl alpha a)`, and the result at endpoint `b` and proof `h` has type `motive b h`.  Lean defines `Eq.ndrec.{v,u}` as a transparent abbreviation over `Eq.rec`, with motive type `alpha -> Sort v`; MPC checks it as an ordinary definition when an export contains it.
 
-Equality-rec reduction applies to `Eq.rec` and `Eq.ndrec`.  A redex with proof reducing to `Eq.refl` reduces to the minor premise at the reflexive endpoint.  A redex whose endpoints reduce to alpha-equivalent expressions also reduces to the minor premise, which captures the K-style reflexive endpoint case used by exported Lean proofs.
+Equality-rec reduction applies to the primitive `Eq.rec`.  A redex with proof reducing to `Eq.refl` reduces to the minor premise at the reflexive endpoint.  A redex whose endpoints reduce to alpha-equivalent expressions also reduces to the minor premise, which captures the K-style reflexive endpoint case used by exported Lean proofs.  `Eq.ndrec` participates in the same conversion behavior by ordinary delta unfolding.
 
 ### Quotient Primitives
 

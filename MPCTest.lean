@@ -2019,6 +2019,7 @@ def checkEquality : IO Unit := do
     (replay MPC.Configs.EqualityPoc emptyEnv
       (baseDeclarations ++
         [.equalityPrimitives] ++
+        [MPC.Packages.Equality.eqNdRecDefinition] ++
         equalityDeclarations ++
         [.axiom "aEqA" [] (eqAlpha (.const "a" []) (.const "a" []))]))
   expectEnvContains "equality primitives" env "Eq.rec"

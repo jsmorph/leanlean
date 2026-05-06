@@ -37,7 +37,7 @@ A rule package is a static part of the checker theory, not a runtime plugin.  A 
 | Declaration admission | Axioms, transparent definitions, opaque definitions, theorem declarations, and checked environment growth. |
 | Literals | Raw natural literals, neutral string literals, Nat constructor-spine comparison, and literal typing requirements. |
 | `Prop` | `Sort 0`, theorem admission, proposition-valued functions, proof irrelevance, and Prop-inductive prerequisites. |
-| Equality | Primitive `Eq`, `Eq.refl`, `Eq.rec`, `Eq.ndrec`, and reflexive equality-rec reduction. |
+| Equality | Primitive `Eq`, `Eq.refl`, `Eq.rec`, checked transparent `Eq.ndrec`, and reflexive equality-rec reduction. |
 | Quotients | Low-level `Quot`, `Quot.mk`, `Quot.lift`, `Quot.ind`, `Quot.sound`, and quotient-lift reduction. |
 | Projections | Core projection expressions, projection typing, projection reduction, Prop projection restriction, and structure eta for the supported fragment. |
 | Primitive Nat reductions | Lean 4.29-backed reductions for the admitted Nat primitive table after declaration-shape checks. |

@@ -125,10 +125,16 @@ def toLayerFile (layer : CheckedLayer) : LayerFile :=
     content := contentEntries layer
   }
 
+def legacyEqualityNdRecPrimitive (info : ConstantInfo) : Bool :=
+  info.name == "Eq.ndrec" && info.kind == .equalityNdRec
+
 def envFromEntries (entries : List ConstantInfo) : Result Env := do
   let mut env := emptyEnv
   for info in entries.reverse do
-    env ← Env.add env info
+    if legacyEqualityNdRecPrimitive info then
+      pure ()
+    else
+      env ← Env.add env info
   pure env
 
 def fromLayerFile (file : LayerFile) : Result CheckedLayer := do
@@ -493,6 +499,7 @@ structure SqliteLayer where
   path : System.FilePath
   env : Env
   declarations : Nat
+  envRows : Nat
 
 def checkSqliteMeta (path : System.FilePath) : IO (Result Nat) := do
   match ← sqliteMeta path "formatVersion" with
@@ -529,13 +536,20 @@ def loadSqliteLayer (path : System.FilePath) : IO (Result SqliteLayer) := do
           (fun input => do
             input.putStr sqliteSelectHeader
             input.putStr "SELECT json FROM env ORDER BY pos;\n")
-          emptyEnv
-          (fun env row => do
+          (emptyEnv, 0)
+          (fun state row => do
+            let (env, rows) := state
             match (parseJsonRow "environment entry" row : Result ConstantInfo) with
             | .error err => pure (.error err)
-            | .ok info => pure (Env.add env info)) with
+            | .ok info =>
+                if legacyEqualityNdRecPrimitive info then
+                  pure (.ok (env, rows + 1))
+                else
+                  match Env.add env info with
+                  | .error err => pure (.error err)
+                  | .ok env => pure (.ok (env, rows + 1))) with
       | .error err => pure (.error err)
-      | .ok env => pure (.ok { path, env, declarations })
+      | .ok (env, envRows) => pure (.ok { path, env, declarations, envRows })
 
 def splitSqlitePair (row : String) : Result (String × String) :=
   match row.splitOn "|" with
@@ -592,7 +606,7 @@ def load (path : System.FilePath) : IO (Result CheckedLayer) := do
     loadJson path
 
 def equalityPrimitiveNames : List Name :=
-  ["Eq", "Eq.refl", "Eq.rec", "Eq.ndrec"]
+  ["Eq", "Eq.refl", "Eq.rec"]
 
 def quotientPrimitiveNames : List Name :=
   ["Quot", "Quot.mk", "Quot.lift", "Quot.ind", "Quot.sound"]
@@ -614,6 +628,11 @@ def checkCachedNames (env : Env) (names : List Name) : Result Unit := do
       pure ()
     else
       fail s!"checked layer is missing cached constant {name}"
+
+def cachedAnchorNames (declaration : Declaration) (names : List Name) : List Name :=
+  match declaration with
+  | .equalityPrimitives => equalityPrimitiveNames
+  | _ => names
 
 def checkNoAnchorConflict (env : Env) (declaration : Declaration) : Result Unit := do
   for name in declarationAnchorNames declaration do
@@ -793,7 +812,7 @@ def CheckedLayer.reusable? (layer : CheckedLayer) (env : Env)
   let key := declarationContentKey declaration
   match layer.contentToNames.get? key with
   | some names =>
-      checkCachedNames env names
+      checkCachedNames env (cachedAnchorNames declaration names)
       pure true
   | none =>
       checkExistingDeclarationReuse env declaration
@@ -846,6 +865,7 @@ def replaySqliteCore (manifest : Manifest) (layerPath : System.FilePath)
           let mut newContentToNames : Std.HashMap String (List Name) := {}
           let mut newEntries : List ConstantInfo := []
           let mut env := layer.env
+          let mut persistedEnvRows := layer.envRows
           let mut reused := 0
           let mut checked := 0
           let mut persistedDeclarations := layer.declarations
@@ -869,7 +889,7 @@ def replaySqliteCore (manifest : Manifest) (layerPath : System.FilePath)
             | none =>
                 match cachedContent.get? index with
                 | some names =>
-                    match checkCachedNames env names with
+                    match checkCachedNames env (cachedAnchorNames declaration names) with
                     | .error err =>
                         cumulativeMs ← emitReplayStep observer? index declaration .rejected startMs? cumulativeMs
                         return .error err
@@ -888,7 +908,7 @@ def replaySqliteCore (manifest : Manifest) (layerPath : System.FilePath)
                             let contentToNames :=
                               ({} : Std.HashMap String (List Name)).insert key names
                             match ←
-                                appendSqliteLayer persistPath env.length persistedDeclarations 0 []
+                                appendSqliteLayer persistPath persistedEnvRows persistedDeclarations 0 []
                                   contentToNames with
                             | .error err =>
                                 cumulativeMs ← emitReplayStep observer? index declaration .rejected startMs? cumulativeMs
@@ -913,13 +933,14 @@ def replaySqliteCore (manifest : Manifest) (layerPath : System.FilePath)
                                     let contentToNames :=
                                       ({} : Std.HashMap String (List Name)).insert key names
                                     match ←
-                                        appendSqliteLayer persistPath before.length
+                                        appendSqliteLayer persistPath persistedEnvRows
                                           persistedDeclarations 1 entries.reverse contentToNames with
                                     | .error err =>
                                         cumulativeMs ← emitReplayStep observer? index declaration .rejected startMs? cumulativeMs
                                         return .error err
                                     | .ok () =>
                                         persistedDeclarations := persistedDeclarations + 1
+                                        persistedEnvRows := persistedEnvRows + entries.length
                                 | none =>
                                     newEntries := newEntries ++ entries.reverse
                                 env := nextEnv

@@ -129,10 +129,6 @@ partial def whnf (manifest : Manifest) (env : Env) (levelParams : LevelContext)
                   match ← reduceEqRec? manifest env levelParams args with
                   | some reduced => whnf manifest env levelParams reduced
                   | none => pure (Expr.mkApps head args)
-              | some { kind := .equalityNdRec, .. } =>
-                  match ← reduceEqRec? manifest env levelParams args with
-                  | some reduced => whnf manifest env levelParams reduced
-                  | none => pure (Expr.mkApps head args)
               | _ => pure (Expr.mkApps head args)
           | .lam _ _ body =>
               match args with
