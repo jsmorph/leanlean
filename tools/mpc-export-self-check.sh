@@ -35,6 +35,8 @@ lake build \
   MPC.Packages.Inductive.Prop \
   MPC.Normalize \
   MPC.Check \
+  MPC.Replay \
+  MPC.Configs.LeanCore429 \
   mpc-check-export \
   leanlean-export-roots
 
@@ -118,3 +120,5 @@ run_mpc_export_self_check "mpc-packages-inductive-reduction" "MPC.Packages.Induc
 run_mpc_export_self_check "mpc-packages-inductive-prop" "MPC.Packages.Inductive.Prop" "layer"
 run_mpc_export_self_check "mpc-normalize" "MPC.Normalize" "layer"
 run_mpc_export_self_check "mpc-check" "MPC.Check" "layer"
+run_mpc_export_self_check "mpc-replay" "MPC.Replay" "layer"
+run_mpc_export_self_check "mpc-configs-lean-core-429" "MPC.Configs.LeanCore429" "layer"
