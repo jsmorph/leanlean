@@ -13,6 +13,11 @@ structure ParseState where
   audit : Audit := {}
   deriving BEq, Repr, Inhabited
 
+structure ParseEvent where
+  declarations : List Declaration := []
+  audit : Audit := {}
+  deriving BEq, Repr, Inhabited
+
 structure State where
   names : Array Lean.Name := #[Lean.Name.anonymous]
   levels : Array Level := #[.zero]
@@ -555,36 +560,43 @@ def mergeAudit (left right : Audit) : Audit :=
     recursors := left.recursors ++ right.recursors
   }
 
-def parseEntry (lineNumber : Nat) (state : State) (json : Lean.Json) : Result State := do
+def parseEntryEvent (lineNumber : Nat) (state : State) (json : Lean.Json) :
+    Result (State × ParseEvent) := do
   let parseError {α : Type} (err : Error) : Result α :=
     .error { message := s!"line {lineNumber}: {err.message}" }
   if (field? json "meta").isSome then
-    pure state
+    pure (state, {})
   else if (field? json "in").isSome then
     match parseNameEntry state json with
-    | .ok state => pure state
+    | .ok state => pure (state, {})
     | .error err => parseError err
   else if (field? json "il").isSome then
     match parseLevelEntry state json with
-    | .ok state => pure state
+    | .ok state => pure (state, {})
     | .error err => parseError err
   else if (field? json "ie").isSome then
     match parseExprEntry state json with
-    | .ok state => pure state
+    | .ok state => pure (state, {})
     | .error err => parseError err
   else
     match parseDeclaration state json with
     | .ok (state, declarations, audit) =>
-        pure
-          {
-            state with
-            declarationsRev :=
-              declarations.foldl
-                (fun entries declaration => declaration :: entries)
-                state.declarationsRev
-            audit := mergeAudit state.audit audit
-          }
+        pure (state, { declarations, audit })
     | .error err => parseError err
+
+def applyParseEvent (state : State) (event : ParseEvent) : State :=
+  {
+    state with
+    declarationsRev :=
+      event.declarations.foldl
+        (fun entries declaration => declaration :: entries)
+        state.declarationsRev
+    audit := mergeAudit state.audit event.audit
+  }
+
+def parseEntry (lineNumber : Nat) (state : State) (json : Lean.Json) : Result State := do
+  let (state, event) ← parseEntryEvent lineNumber state json
+  pure (applyParseEvent state event)
 
 def parseLine (lineNumber : Nat) (state : State) (line : String) : Result State := do
   let trimmed := line.trimAscii.toString
@@ -593,6 +605,16 @@ def parseLine (lineNumber : Nat) (state : State) (line : String) : Result State 
   else
     match Lean.Json.parse trimmed with
     | .ok json => parseEntry lineNumber state json
+    | .error err => fail s!"line {lineNumber}: invalid JSON: {err}"
+
+def parseLineEvent (lineNumber : Nat) (state : State) (line : String) :
+    Result (State × ParseEvent) := do
+  let trimmed := line.trimAscii.toString
+  if trimmed.isEmpty then
+    pure (state, {})
+  else
+    match Lean.Json.parse trimmed with
+    | .ok json => parseEntryEvent lineNumber state json
     | .error err => fail s!"line {lineNumber}: invalid JSON: {err}"
 
 partial def parseLinesLoop (lineNumber : Nat) (state : State) : List String → Result State

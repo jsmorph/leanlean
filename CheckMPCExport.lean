@@ -615,6 +615,33 @@ structure LayerReplayResult where
   reused : Nat
   checked : Nat
 
+structure StreamingLayerReplayResult where
+  env : Env
+  reused : Nat
+  checked : Nat
+  target : Nat
+
+def layerReplayObserver? (format : TelemetryFormat) :
+    Option MPC.Adapters.Layer.ReplayObserver :=
+  match format with
+  | .off | .profileJsonl => none
+  | .text | .jsonl =>
+      some fun step => do
+        let status :=
+          match step.status with
+          | .reused => ReplayStatus.reused
+          | .checked => ReplayStatus.checked
+          | .rejected => ReplayStatus.rejected
+        emitDeclarationTelemetry format {
+          index := step.index,
+          kind := MPC.Adapters.Export.declarationKindLabel step.declaration,
+          name := MPC.Adapters.Export.declarationNameLabel step.declaration,
+          elapsedMs := step.elapsedMs,
+          cumulativeMs := step.cumulativeMs,
+          status,
+          profile? := none
+        }
+
 def buildCheckedLayerFromFile (path : System.FilePath) :
     IO (Result MPC.Adapters.Layer.CheckedLayer) := do
   let input ← IO.FS.readFile path
@@ -673,26 +700,7 @@ def replayWithSavedLayer (config : Config) (state : MPC.Adapters.Export.ParseSta
       | some _ => {}
       | none => state.audit
     if MPC.Adapters.Layer.sqlitePath layerPath then
-      let observer? : Option MPC.Adapters.Layer.ReplayObserver :=
-        match config.replayOptions.telemetry with
-        | .off => none
-        | .text | .jsonl =>
-            some fun step => do
-              let status :=
-                match step.status with
-                | .reused => ReplayStatus.reused
-                | .checked => ReplayStatus.checked
-                | .rejected => ReplayStatus.rejected
-              emitDeclarationTelemetry config.replayOptions.telemetry {
-                index := step.index,
-                kind := MPC.Adapters.Export.declarationKindLabel step.declaration,
-                name := MPC.Adapters.Export.declarationNameLabel step.declaration,
-                elapsedMs := step.elapsedMs,
-                cumulativeMs := step.cumulativeMs,
-                status,
-                profile? := none
-              }
-        | .profileJsonl => none
+      let observer? := layerReplayObserver? config.replayOptions.telemetry
       match ← MPC.Adapters.Layer.replaySqliteWithObserver MPC.Configs.LeanCore429 layerPath audit declarations observer? with
       | .error err => pure (.error { message := s!"while loading layer {layerPath}: {err.message}" })
       | .ok summary =>
@@ -702,8 +710,31 @@ def replayWithSavedLayer (config : Config) (state : MPC.Adapters.Export.ParseSta
       | .error err => pure (.error { message := s!"while loading layer {layerPath}: {err.message}" })
       | .ok layer => pure (replayWithLayer config state layer)
 
-def replayWithCacheLayer (config : Config) (state : MPC.Adapters.Export.ParseState)
-    (layerPath : System.FilePath) : IO (Result LayerReplayResult) := do
+partial def streamCacheLayerLoop (layerPath : System.FilePath)
+    (handle : IO.FS.Handle) (observer? : Option MPC.Adapters.Layer.ReplayObserver)
+    (lineNumber : Nat) (parseState : MPC.Adapters.Export.State)
+    (audit : MPC.Adapters.Export.Audit)
+    (replayState : MPC.Adapters.Layer.SqliteOnDemandReplayState) :
+    IO (Result (MPC.Adapters.Export.Audit × MPC.Adapters.Layer.SqliteOnDemandReplayState)) := do
+  let line ← handle.getLine
+  if line == "" then
+    pure (.ok (audit, replayState))
+  else
+    match MPC.Adapters.Export.parseLineEvent lineNumber parseState line with
+    | .error err => pure (.error err)
+    | .ok (parseState, event) =>
+        let mut replayState := replayState
+        for declaration in event.declarations do
+          match ←
+              MPC.Adapters.Layer.replaySqliteOnDemandStep MPC.Configs.LeanCore429
+                layerPath observer? true replayState declaration with
+          | .error err => return .error err
+          | .ok nextState => replayState := nextState
+        streamCacheLayerLoop layerPath handle observer? (lineNumber + 1) parseState
+          (MPC.Adapters.Export.mergeAudit audit event.audit) replayState
+
+def replayWithCacheLayerStreaming (config : Config) (layerPath : System.FilePath) :
+    IO (Result StreamingLayerReplayResult) := do
   if config.profileDeclaration?.isSome then
     pure (.error { message := "--cache-layer cannot be combined with --profile-declaration" })
   else if config.checkedLayerPath?.isSome || config.saveLayerPath?.isSome || config.loadLayerPath?.isSome then
@@ -719,31 +750,23 @@ def replayWithCacheLayer (config : Config) (state : MPC.Adapters.Export.ParseSta
   else if config.diagnosticAssumeGenerated then
     pure (.error { message := "--cache-layer cannot be combined with diagnostic generated assumptions" })
   else
-    let declarations := prepareDeclarations config state
-    let observer? : Option MPC.Adapters.Layer.ReplayObserver :=
-      match config.replayOptions.telemetry with
-      | .off => none
-      | .text | .jsonl =>
-          some fun step => do
-            let status :=
-              match step.status with
-              | .reused => ReplayStatus.reused
-              | .checked => ReplayStatus.checked
-              | .rejected => ReplayStatus.rejected
-            emitDeclarationTelemetry config.replayOptions.telemetry {
-              index := step.index,
-              kind := MPC.Adapters.Export.declarationKindLabel step.declaration,
-              name := MPC.Adapters.Export.declarationNameLabel step.declaration,
-              elapsedMs := step.elapsedMs,
-              cumulativeMs := step.cumulativeMs,
-              status,
-              profile? := none
-            }
-      | .profileJsonl => none
-    match ← MPC.Adapters.Layer.cacheSqliteWithObserver MPC.Configs.LeanCore429 layerPath state.audit declarations observer? with
-    | .error err => pure (.error { message := s!"while using cache layer {layerPath}: {err.message}" })
-    | .ok summary =>
-        pure (.ok { env := summary.env, reused := summary.reused, checked := summary.checked })
+    match ← MPC.Adapters.Layer.ensureSqliteOnDemandLayer layerPath with
+    | .error err => pure (.error err)
+    | .ok () =>
+        let observer? := layerReplayObserver? config.replayOptions.telemetry
+        match ← IO.FS.withFile config.inputPath .read fun handle =>
+            streamCacheLayerLoop layerPath handle observer? 1 {} {} {} with
+        | .error err => pure (.error { message := s!"while using cache layer {layerPath}: {err.message}" })
+        | .ok (audit, replayState) =>
+            match MPC.Adapters.Layer.finishSqliteOnDemandReplay audit replayState with
+            | .error err => pure (.error { message := s!"while using cache layer {layerPath}: {err.message}" })
+            | .ok result =>
+                pure (.ok {
+                  env := result.env,
+                  reused := result.reused,
+                  checked := result.checked,
+                  target := replayState.index
+                })
 
 def saveLayerConfig (config : Config) (state : MPC.Adapters.Export.ParseState)
     (layerPath : System.FilePath) : IO (Result MPC.Adapters.Layer.SaveSummary) := do
@@ -794,6 +817,17 @@ def run (args : List String) : IO UInt32 := do
         IO.eprintln s!"error: {err}"
       return 2
   | .ok config => do
+      match config.cacheLayerPath? with
+      | some layerPath =>
+          match ← replayWithCacheLayerStreaming config layerPath with
+          | .ok result => do
+              printOutcome "cache-accepted" config.inputPath
+                s!"reused {result.reused} declaration entries; checked {result.checked} declaration entries; target declarations {result.target}; environment size {result.env.length}; cache layer {layerPath}"
+              return 0
+          | .error err => do
+              printOutcome "rejected" config.inputPath err.message
+              return 1
+      | none => pure ()
       let input ← IO.FS.readFile config.inputPath
       match MPC.Adapters.Export.parseString input with
       | .error err => do
@@ -825,17 +859,6 @@ def run (args : List String) : IO UInt32 := do
                     | none => ""
                   printOutcome "layer-accepted" config.inputPath
                     s!"reused {result.reused} declaration entries; checked {prefixText}{result.checked} declaration entries; target declarations {checkedTotal}; environment size {result.env.length}"
-                  return 0
-              | .error err => do
-                  printOutcome "rejected" config.inputPath err.message
-                  return 1
-          | none => pure ()
-          match config.cacheLayerPath? with
-          | some layerPath =>
-              match ← replayWithCacheLayer config state layerPath with
-              | .ok result => do
-                  printOutcome "cache-accepted" config.inputPath
-                    s!"reused {result.reused} declaration entries; checked {result.checked} declaration entries; target declarations {state.declarations.length}; environment size {result.env.length}; cache layer {layerPath}"
                   return 0
               | .error err => do
                   printOutcome "rejected" config.inputPath err.message

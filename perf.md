@@ -37,6 +37,10 @@ Use `--stats-jsonl` for per-declaration timing without structural counters.  Use
 
 `--cache-layer`, `--load-layer`, and `--save-layer` measure checked-layer behavior.  `--cache-layer` mutates a SQLite DB and rejects if an existing cached name has different declaration content, which can happen after source changes; use `MPC_CACHE_DB=` for a cold self-check when that distinction is not under test.  Cache modes do not support `--profile-jsonl`, and `--cache-layer` also rejects `--limit`, so cache measurements should use the text outcome or `--stats-jsonl` where supported.
 
+SQLite cache files now use the v3 on-demand format.  A v3 cache stores declaration groups keyed by an anchor name and reads only the candidate groups needed for the declaration being replayed.  `mpc-check-export --cache-layer` also streams the NDJSON input in this mode, so large cached probes do not allocate the full input string, the split line list, or the full lowered declaration list before replay starts.
+
+Older v2 cache files used rendered declarations as content keys and loaded the whole cached environment before replay.  Convert a v2 cache with `.lake/build/bin/mpc-migrate-layer <source-v2.db> <target-v3.db>`, or use a fresh cache path.  The checker refuses a v2 file passed to `--cache-layer`, because the v2 format can dominate memory and disk usage before any MPC rule runs.
+
 When comparing runs, compare the same artifact and the same declaration prefix.  The most useful columns are declaration index, declaration name, status, elapsed milliseconds, cumulative milliseconds, expression node count, and transparent-definition head-application count.  A useful optimization note records both the winning and rejected hypotheses, because several cheap optimizations in this file measured inside run-to-run noise.
 
 ## Baseline
@@ -212,7 +216,22 @@ The hard declaration is `LinearEquiv.noConfusion`, a generated definition with 6
 
 ## Mathlib Abelian Resource Boundary
 
-The `CategoryTheory.Abelian.image_ι_comp_eq_zero` probe used `Mathlib.CategoryTheory.Abelian.Basic` with the shared mathlib SQLite cache.  The corrected root built successfully and exported `.tmp/mathlib-probes/category-abelian-image-zero.ndjson`, a 27 MB artifact, but `mpc-check-export` was killed with exit code 137 before it wrote checker output or declaration stats.  The output file was empty after the kill, the cache DB was 2.8 GB, the workspace filesystem had 4.0 GB free, and `/tmp` had 812 MB free, so the observed failure is a host-resource boundary rather than a disk-full event or an MPC semantic rejection.  Kernel logs were unavailable in the sandbox, so this run does not identify the exact host limit.
+The `CategoryTheory.Abelian.image_ι_comp_eq_zero` probe used `Mathlib.CategoryTheory.Abelian.Basic` with the shared mathlib SQLite cache.  The corrected root built successfully and exported `.tmp/mathlib-probes/category-abelian-image-zero.ndjson`, a 27 MB artifact, but the old v2-cache path was killed with exit code 137 before it wrote checker output or declaration stats.  The old cache file was 2.8 GB, and inspecting it showed 12,566 content rows whose rendered declaration keys occupied 2,620,504,409 bytes, with a largest key of 156,683,766 bytes.
+
+Migrating that cache to v3 moved the cache to declaration groups rather than rendered declaration keys.  The current v3 file after subsequent probes is 518 MB, with 13,152 declaration groups, 14,154 cached constant entries, 527,923,069 bytes of cached JSON, and a largest entry JSON value of 34,465,377 bytes.  The remaining input-side memory problem was then the CLI path that read the whole export file and lowered every declaration before cache replay started.
+
+After `--cache-layer` moved to streaming NDJSON replay, the same abelian artifact accepted through the migrated v3 cache:
+
+```bash
+timeout 300s .lake/build/bin/mpc-check-export \
+  --cache-layer .tmp/mathlib-probes/mathlib-cache-v3.db \
+  --stats-jsonl \
+  .tmp/mathlib-probes/category-abelian-image-zero.ndjson \
+  > .tmp/mathlib-probes/category-abelian-image-zero-v3-stream.stats.jsonl \
+  2> .tmp/mathlib-probes/category-abelian-image-zero-v3-stream.stats.err
+```
+
+The run reused 5,174 declaration entries, checked none, produced environment size 5,753, and emitted no stderr.  The final declaration row was `CategoryTheory.Abelian.image_ι_comp_eq_zero`, and the measured replay cumulative time in the JSONL stream was 194,059 ms.  This classifies the old abelian failure as an adapter memory problem in the cached path, not a checker rule gap.
 
 ## Conversion Fast Paths
 

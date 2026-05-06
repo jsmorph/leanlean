@@ -27,5 +27,9 @@ root = "ExportRoots"
 supportInterpreter = true
 
 [[lean_exe]]
+name = "mpc-migrate-layer"
+root = "MigrateLayer"
+
+[[lean_exe]]
 name = "mpctest"
 root = "MPCTest"

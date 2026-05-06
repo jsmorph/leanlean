@@ -2423,6 +2423,31 @@ def checkLayerInductiveAlphaReuse : IO Unit := do
   expect "checked layer inductive alpha reuse count" (summary.reused == declarations.length)
   expect "checked layer inductive alpha checked count" (summary.checked == 0)
 
+def checkSqliteOnDemandLayerReuse : IO Unit :=
+  IO.FS.withTempDir fun dir => do
+    let path := dir / "layer.db"
+    let first :=
+      .theorem "sqliteLayerTheorem" []
+        (alphaLayerTheoremType "x")
+        (alphaLayerTheoremValue "x")
+    let second :=
+      .theorem "sqliteLayerTheorem" []
+        (alphaLayerTheoremType "y")
+        (alphaLayerTheoremValue "z")
+    let declarations := baseDeclarations ++ [first]
+    let summary1 ← expectOkLabel "SQLite on-demand layer first replay"
+      (← MPC.Adapters.Layer.cacheSqlite MPC.Configs.Poc path {} declarations)
+    expect "SQLite on-demand first replay reused count" (summary1.reused == 0)
+    expect "SQLite on-demand first replay checked count" (summary1.checked == declarations.length)
+    let version ← expectOkLabel "SQLite on-demand layer version"
+      (← MPC.Adapters.Layer.sqliteLayerFormatVersion path)
+    expect "SQLite on-demand layer format version"
+      (version == MPC.Adapters.Layer.sqliteOnDemandFormatVersion)
+    let summary2 ← expectOkLabel "SQLite on-demand layer second replay"
+      (← MPC.Adapters.Layer.cacheSqlite MPC.Configs.Poc path {} (baseDeclarations ++ [second]))
+    expect "SQLite on-demand second replay reused count" (summary2.reused == declarations.length)
+    expect "SQLite on-demand second replay checked count" (summary2.checked == 0)
+
 def checkExportNameEncoding : IO Unit := do
   let singleComponent := Lean.Name.str Lean.Name.anonymous "a.b"
   let dotted := Lean.Name.str (Lean.Name.str Lean.Name.anonymous "a") "b"
@@ -2453,3 +2478,4 @@ def main : IO Unit := do
   checkExportNameEncoding
   checkLayerAlphaReuse
   checkLayerInductiveAlphaReuse
+  checkSqliteOnDemandLayerReuse
