@@ -108,6 +108,30 @@ partial def check (manifest : Manifest) (env : Env) (levelParams : LevelContext)
       let inferred ← infer manifest env levelParams ctx expr
       defEq manifest env levelParams ctx inferred expectedType
 
+partial def reduceEqRecByEndpointDefEq? (manifest : Manifest) (env : Env)
+    (levelParams : LevelContext) (ctx : Context) (expr : Expr) : Result (Option Expr) := do
+  let expr ← whnf manifest env levelParams expr
+  let (head, args) := expr.getAppFnArgs
+  match head with
+  | .const name _ =>
+      match env.find? name with
+      | some { kind := .equalityRec, .. } =>
+          let required := 6
+          if args.length < required then
+            pure none
+          else
+            let some aArg := listGet? args 1
+              | pure none
+            let some minorArg := listGet? args 3
+              | pure none
+            let some bArg := listGet? args 4
+              | pure none
+            match defEq manifest env levelParams ctx aArg bArg with
+            | .ok () => pure (some (Expr.mkApps minorArg (args.drop required)))
+            | .error _ => pure none
+      | _ => pure none
+  | _ => pure none
+
 partial def structuralDefEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (left right : Expr) : Result Unit := do
   let left ← whnf manifest env levelParams left
@@ -254,22 +278,28 @@ partial def defEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     match structuralDefEq manifest env levelParams ctx left right with
     | .ok () => pure ()
     | .error structuralError =>
-        match structureEtaDefEq manifest env levelParams ctx left right with
-        | .ok () => pure ()
-        | .error _ =>
-            match structureEtaDefEq manifest env levelParams ctx right left with
-            | .ok () => pure ()
-            | .error _ =>
-                match proofIrrelevanceDefEq manifest env levelParams ctx left right with
+        match ← reduceEqRecByEndpointDefEq? manifest env levelParams ctx left with
+        | some reducedLeft => defEq manifest env levelParams ctx reducedLeft right
+        | none =>
+            match ← reduceEqRecByEndpointDefEq? manifest env levelParams ctx right with
+            | some reducedRight => defEq manifest env levelParams ctx left reducedRight
+            | none =>
+                match structureEtaDefEq manifest env levelParams ctx left right with
                 | .ok () => pure ()
-                | .error proofError =>
-                    match functionEtaDefEq manifest env levelParams ctx left right with
+                | .error _ =>
+                    match structureEtaDefEq manifest env levelParams ctx right left with
                     | .ok () => pure ()
                     | .error _ =>
-                        match functionEtaDefEq manifest env levelParams ctx right left with
+                        match proofIrrelevanceDefEq manifest env levelParams ctx left right with
                         | .ok () => pure ()
-                        | .error _ =>
-                            fail s!"{structuralError.message}; proof irrelevance fallback failed: {proofError.message}"
+                        | .error proofError =>
+                            match functionEtaDefEq manifest env levelParams ctx left right with
+                            | .ok () => pure ()
+                            | .error _ =>
+                                match functionEtaDefEq manifest env levelParams ctx right left with
+                                | .ok () => pure ()
+                                | .error _ =>
+                                    fail s!"{structuralError.message}; proof irrelevance fallback failed: {proofError.message}"
 
 end
 

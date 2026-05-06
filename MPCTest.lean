@@ -1240,6 +1240,52 @@ def eqSymmValue : Expr :=
             .bvar 0
           ])))
 
+def proofBoxSpec : SimpleInductiveSpec :=
+  {
+    name := "ProofBox"
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "ProofBox.mk"
+          fields :=
+            [
+              { name := "value", type := alphaType },
+              { name := "proof", type := .const "P" [] }
+            ]
+        }
+      ]
+  }
+
+def proofBoxType : Expr :=
+  .const "ProofBox" []
+
+def proofBoxP : Expr :=
+  appN (.const "ProofBox.mk" []) [.const "a" [], .const "p" []]
+
+def proofBoxQ : Expr :=
+  appN (.const "ProofBox.mk" []) [.const "a" [], .const "q" []]
+
+def proofBoxEqType : Expr :=
+  appN (.const "Eq" [.succ .zero]) [proofBoxType, proofBoxP, proofBoxQ]
+
+def proofBoxEqRecMotive : Expr :=
+  .lam "x" proofBoxType
+    (.lam "h" (appN (.const "Eq" [.succ .zero]) [proofBoxType, proofBoxP, .bvar 0])
+      betaType)
+
+def proofBoxEqRecTransport : Expr :=
+  appN
+    (.const "Eq.rec" [.succ .zero, .succ .zero])
+    [
+      proofBoxType,
+      proofBoxP,
+      proofBoxEqRecMotive,
+      .const "b" [],
+      proofBoxQ,
+      .const "proofBoxEq" []
+    ]
+
 def dPairSpec : SimpleInductiveSpec :=
   {
     name := "DPair"
@@ -2038,6 +2084,11 @@ def checkEquality : IO Unit := do
   let kReduced ← expectOkLabel "Eq.rec K reduction"
     (normalize MPC.Configs.EqualityPoc env [] eqRecKTransport)
   expectExprEq "Eq.rec K value" kReduced (.const "predProof" [])
+  let proofBoxEnv ← expectOkLabel "Eq.rec proof endpoint replay"
+    (replay MPC.Configs.EqualityPoc env
+      [.inductive proofBoxSpec, .axiom "proofBoxEq" [] proofBoxEqType])
+  expectOkLabel "Eq.rec proof endpoint K conversion"
+    (defEq MPC.Configs.EqualityPoc proofBoxEnv [] [] proofBoxEqRecTransport (.const "b" []))
   let ndInferred ← expectOkLabel "Eq.ndrec inference"
     (infer MPC.Configs.EqualityPoc env [] [] eqNdRecTransport)
   let ndInferred ← expectOkLabel "Eq.ndrec inferred type normalization"

@@ -147,7 +147,7 @@ The equality package adds three primitive constants.  `Eq.{u} (alpha : Sort u) (
 
 `Eq.rec.{v,u}` is the dependent equality eliminator.  Its motive has type `(b : alpha) -> Eq alpha a b -> Sort v`, its minor premise has type `motive a (Eq.refl alpha a)`, and the result at endpoint `b` and proof `h` has type `motive b h`.  Lean defines `Eq.ndrec.{v,u}` as a transparent abbreviation over `Eq.rec`, with motive type `alpha -> Sort v`; MPC checks it as an ordinary definition when an export contains it.
 
-Equality-rec reduction applies to the primitive `Eq.rec`.  A redex with proof reducing to `Eq.refl` reduces to the minor premise at the reflexive endpoint.  A redex whose endpoints reduce to alpha-equivalent expressions also reduces to the minor premise, which captures the K-style reflexive endpoint case used by exported Lean proofs.  `Eq.ndrec` participates in the same conversion behavior by ordinary delta unfolding.
+Equality-rec reduction applies to the primitive `Eq.rec`.  A redex with proof reducing to `Eq.refl` reduces to the minor premise at the reflexive endpoint.  During conversion, a redex whose endpoints are definitionally equal also reduces to the minor premise, which captures the K-style reflexive endpoint case used by exported Lean proofs.  Endpoint equality uses ordinary MPC conversion, including proof irrelevance for proof fields.  `Eq.ndrec` participates in the same conversion behavior by ordinary delta unfolding.
 
 ### Quotient Primitives
 
