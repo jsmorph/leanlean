@@ -2032,12 +2032,16 @@ def checkProjections : IO Unit := do
   expectExprEq "second projection value" sndReduced (.const "predProof" [])
   let fstEtaType ← expectOkLabel "first structure recursor eta inference"
     (infer MPC.Configs.ProjectionPoc env [] [] dPairRecFstEta)
+  let fstEtaType ← expectOkLabel "first structure recursor eta type normalization"
+    (normalize MPC.Configs.ProjectionPoc env [] fstEtaType)
   expectExprEq "first structure recursor eta type" fstEtaType alphaType
   let fstEtaReduced ← expectOkLabel "first structure recursor eta reduction"
     (normalize MPC.Configs.ProjectionPoc env [] dPairRecFstEta)
   expectExprEq "first structure recursor eta value" fstEtaReduced dPairStuckFst
   let sndEtaType ← expectOkLabel "second structure recursor eta inference"
     (infer MPC.Configs.ProjectionPoc env [] [] dPairRecSndEta)
+  let sndEtaType ← expectOkLabel "second structure recursor eta type normalization"
+    (normalize MPC.Configs.ProjectionPoc env [] sndEtaType)
   expectExprEq "second structure recursor eta type" sndEtaType (.app (.const "Pred" []) dPairStuckFst)
   let sndEtaReduced ← expectOkLabel "second structure recursor eta reduction"
     (normalize MPC.Configs.ProjectionPoc env [] dPairRecSndEta)
@@ -2288,6 +2292,17 @@ def checkLayerInductiveAlphaReuse : IO Unit := do
   expect "checked layer inductive alpha reuse count" (summary.reused == declarations.length)
   expect "checked layer inductive alpha checked count" (summary.checked == 0)
 
+def checkExportNameEncoding : IO Unit := do
+  let singleComponent := Lean.Name.str Lean.Name.anonymous "a.b"
+  let dotted := Lean.Name.str (Lean.Name.str Lean.Name.anonymous "a") "b"
+  let reserved := Lean.Name.str Lean.Name.anonymous "__mpc_name:reserved"
+  expect "export name encoding distinguishes dotted spelling"
+    (MPC.Adapters.Export.localName singleComponent != MPC.Adapters.Export.localName dotted)
+  expect "export name encoding keeps ordinary dotted name"
+    (MPC.Adapters.Export.localName dotted == "a.b")
+  expect "export name encoding protects reserved prefix"
+    ((MPC.Adapters.Export.localName reserved).startsWith MPC.Adapters.Export.encodedNamePrefix)
+
 def main : IO Unit := do
   checkUniverseComparison
   checkBasePackages
@@ -2304,5 +2319,6 @@ def main : IO Unit := do
   checkFunctionEta
   checkQuotients
   checkAdapters
+  checkExportNameEncoding
   checkLayerAlphaReuse
   checkLayerInductiveAlphaReuse

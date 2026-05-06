@@ -1,6 +1,6 @@
 # Lean 4.29.1 Primitive Reduction Inventory
 
-This inventory records source evidence for kernel-overridden computation in Lean 4.29.1.  It is not an admission list.  A constant enters local conversion only after `spec.md` states the rule, the implementation checks the declaration shape, and a generated export test forces the rule through `leanlean-check-export`.
+This inventory records source evidence for kernel-overridden computation in Lean 4.29.1.  It is not an admission list.  A constant enters local conversion only after `spec.md` states the rule, the implementation checks the declaration shape, and a generated export test forces the rule through `mpc-check-export`.
 
 The source paths below refer to the Lean toolchain used by this repository: `~/.elan/toolchains/leanprover--lean4---v4.29.1/src/lean`.  Line numbers are evidence for this toolchain revision, not stable identifiers.  Future Lean upgrades must repeat this inventory against the new source tree.
 

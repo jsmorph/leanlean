@@ -1,4 +1,4 @@
-namespace LeanLeanFaithfulness.ExportNestedIndexed
+namespace MPCFixtures.ExportNestedIndexed
 
 inductive IVec (α : Type) : Nat → Type
   | nil : IVec α 0
@@ -32,4 +32,4 @@ def closedValue : NestedIndexedClosed :=
 def paramValue : NestedIndexedParamClosed Nat :=
   NestedIndexedParamClosed.mk (IVec.nil (α := NestedIndexedParamClosed Nat))
 
-end LeanLeanFaithfulness.ExportNestedIndexed
+end MPCFixtures.ExportNestedIndexed

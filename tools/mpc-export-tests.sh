@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-lean4export_bin="${LEANLEAN_LEAN4EXPORT:-lean4export}"
-artifact_dir="${LEANLEAN_EXPORT_TEST_DIR:-.lake/build/export-tests}"
+lean4export_bin="${MPC_LEAN4EXPORT:-lean4export}"
+artifact_dir="${MPC_EXPORT_TEST_DIR:-.lake/build/export-tests}"
 
 if ! command -v "$lean4export_bin" >/dev/null 2>&1; then
-  echo "error: lean4export not found; set LEANLEAN_LEAN4EXPORT" >&2
+  echo "error: lean4export not found; set MPC_LEAN4EXPORT" >&2
   exit 2
 fi
 
 mkdir -p "$artifact_dir"
 
-lake build Faithfulness.ExportArithmetic Faithfulness.ExportNestedIndexed Faithfulness.ExportMutual mpc-check-export
+lake build MPCFixtures.ExportArithmetic MPCFixtures.ExportNestedIndexed MPCFixtures.ExportMutual mpc-check-export
 
 checker=".lake/build/bin/mpc-check-export"
 lean_path="$(pwd)/.lake/build/lib/lean"
@@ -52,36 +52,36 @@ run_generated() {
 
 run_generated \
   "mpc-gcd-parity-arithmetic" \
-  "Faithfulness.ExportArithmetic" \
-  "LeanLeanFaithfulness.ExportArithmetic.gcd_sum_diff_eq_one" \
+  "MPCFixtures.ExportArithmetic" \
+  "MPCFixtures.ExportArithmetic.gcd_sum_diff_eq_one" \
   "checked 493 declaration entries; environment size 571"
 
 run_generated \
   "mpc-nested-indexed-param" \
-  "Faithfulness.ExportNestedIndexed" \
-  "LeanLeanFaithfulness.ExportNestedIndexed.paramValue" \
+  "MPCFixtures.ExportNestedIndexed" \
+  "MPCFixtures.ExportNestedIndexed.paramValue" \
   "checked 7 declaration entries; environment size 18"
 
 run_generated \
   "mpc-nested-indexed-local" \
-  "Faithfulness.ExportNestedIndexed" \
-  "LeanLeanFaithfulness.ExportNestedIndexed.NestedIndexedParamLocal" \
+  "MPCFixtures.ExportNestedIndexed" \
+  "MPCFixtures.ExportNestedIndexed.NestedIndexedParamLocal" \
   "checked 6 declaration entries; environment size 17"
 
 run_generated \
   "mpc-nested-pairbox" \
-  "Faithfulness.ExportNestedIndexed" \
-  "LeanLeanFaithfulness.ExportNestedIndexed.NestedPairBox" \
+  "MPCFixtures.ExportNestedIndexed" \
+  "MPCFixtures.ExportNestedIndexed.NestedPairBox" \
   "checked 2 declaration entries; environment size 7"
 
 run_generated \
   "mpc-nested-indexed-pairbox" \
-  "Faithfulness.ExportNestedIndexed" \
-  "LeanLeanFaithfulness.ExportNestedIndexed.NestedIndexedPairBox" \
+  "MPCFixtures.ExportNestedIndexed" \
+  "MPCFixtures.ExportNestedIndexed.NestedIndexedPairBox" \
   "checked 6 declaration entries; environment size 16"
 
 run_generated \
   "mpc-mutual-even-odd" \
-  "Faithfulness.ExportMutual" \
-  "LeanLeanFaithfulness.ExportMutual.squashedEvenTwo" \
+  "MPCFixtures.ExportMutual" \
+  "MPCFixtures.ExportMutual.squashedEvenTwo" \
   "checked 5 declaration entries; environment size 11"

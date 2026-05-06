@@ -1,7 +1,7 @@
 import Init.Data.Nat.Lemmas
 import Lean.Elab.Tactic.Omega
 
-namespace LeanLeanFaithfulness.ExportOmega
+namespace MPCFixtures.ExportOmega
 
 theorem nat_linear_bounds
     {a b c d : Nat}
@@ -18,4 +18,4 @@ theorem nat_difference_bounds
     m - n ≤ 4 := by
   omega
 
-end LeanLeanFaithfulness.ExportOmega
+end MPCFixtures.ExportOmega

@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-lean4export_bin="${LEANLEAN_LEAN4EXPORT:-lean4export}"
-artifact_dir="${LEANLEAN_MPC_EXPORT_SELF_CHECK_DIR:-.lake/build/mpc-export-self-check}"
+lean4export_bin="${MPC_LEAN4EXPORT:-lean4export}"
+artifact_dir="${MPC_EXPORT_SELF_CHECK_DIR:-.lake/build/mpc-export-self-check}"
 default_cache_db=".tmp/mpc-self-check-cache.db"
-cache_db="${LEANLEAN_MPC_CACHE_DB-${LEANLEAN_MPC_LAYER_DB-$default_cache_db}}"
+if [[ "${MPC_CACHE_DB+x}" == "x" ]]; then
+  cache_db="$MPC_CACHE_DB"
+else
+  cache_db="${MPC_LAYER_DB:-$default_cache_db}"
+fi
 
 if ! command -v "$lean4export_bin" >/dev/null 2>&1; then
-  echo "error: lean4export not found; set LEANLEAN_LEAN4EXPORT" >&2
+  echo "error: lean4export not found; set MPC_LEAN4EXPORT" >&2
   exit 2
 fi
 
@@ -49,10 +53,10 @@ lake build \
   MPC.Configs.IndexedPropLargeElimPoc \
   MPC.Configs.LeanCore429 \
   mpc-check-export \
-  leanlean-export-roots
+  mpc-export-roots
 
 checker=".lake/build/bin/mpc-check-export"
-root_lister=".lake/build/bin/leanlean-export-roots"
+root_lister=".lake/build/bin/mpc-export-roots"
 lean_path="$(pwd)/.lake/build/lib/lean"
 cache_args=()
 
@@ -117,30 +121,30 @@ run_mpc_export_self_check "mpc-level" "MPC.Level"
 run_mpc_export_self_check "mpc-expr" "MPC.Expr"
 run_mpc_export_self_check "mpc-context" "MPC.Context"
 run_mpc_export_self_check "mpc-manifest" "MPC.Manifest"
-run_mpc_export_self_check "mpc-env" "MPC.Env" "layer"
-run_mpc_export_self_check "mpc-declaration" "MPC.Declaration" "layer"
-run_mpc_export_self_check "mpc-packages-literal" "MPC.Packages.Literal" "layer"
-run_mpc_export_self_check "mpc-packages-equality" "MPC.Packages.Equality" "layer"
-run_mpc_export_self_check "mpc-packages-quotient" "MPC.Packages.Quotient" "layer"
-run_mpc_export_self_check "mpc-packages-projection" "MPC.Packages.Projection" "layer"
-run_mpc_export_self_check "mpc-packages-primitive-nat" "MPC.Packages.PrimitiveNat" "layer"
-run_mpc_export_self_check "mpc-packages-inductive-basic" "MPC.Packages.Inductive.Basic" "layer"
-run_mpc_export_self_check "mpc-packages-inductive-positivity" "MPC.Packages.Inductive.Positivity" "layer"
-run_mpc_export_self_check "mpc-packages-inductive-recursor" "MPC.Packages.Inductive.Recursor" "layer"
-run_mpc_export_self_check "mpc-packages-inductive-admission" "MPC.Packages.Inductive.Admission" "layer"
-run_mpc_export_self_check "mpc-packages-inductive-reduction" "MPC.Packages.Inductive.Reduction" "layer"
-run_mpc_export_self_check "mpc-packages-inductive-prop" "MPC.Packages.Inductive.Prop" "layer"
-run_mpc_export_self_check "mpc-normalize" "MPC.Normalize" "layer"
-run_mpc_export_self_check "mpc-check" "MPC.Check" "layer"
-run_mpc_export_self_check "mpc-replay" "MPC.Replay" "layer"
-run_mpc_export_self_check "mpc-configs-poc" "MPC.Configs.Poc" "layer"
-run_mpc_export_self_check "mpc-configs-equality-poc" "MPC.Configs.EqualityPoc" "layer"
-run_mpc_export_self_check "mpc-configs-quot-poc" "MPC.Configs.QuotPoc" "layer"
-run_mpc_export_self_check "mpc-configs-projection-poc" "MPC.Configs.ProjectionPoc" "layer"
-run_mpc_export_self_check "mpc-configs-primitive-nat-poc" "MPC.Configs.PrimitiveNatPoc" "layer"
-run_mpc_export_self_check "mpc-configs-function-eta-poc" "MPC.Configs.FunctionEtaPoc" "layer"
-run_mpc_export_self_check "mpc-configs-inductive-prop-poc" "MPC.Configs.InductivePropPoc" "layer"
-run_mpc_export_self_check "mpc-configs-indexed-poc" "MPC.Configs.IndexedPoc" "layer"
-run_mpc_export_self_check "mpc-configs-indexed-prop-poc" "MPC.Configs.IndexedPropPoc" "layer"
-run_mpc_export_self_check "mpc-configs-indexed-prop-large-elim-poc" "MPC.Configs.IndexedPropLargeElimPoc" "layer"
-run_mpc_export_self_check "mpc-configs-lean-core-429" "MPC.Configs.LeanCore429" "layer"
+run_mpc_export_self_check "mpc-env" "MPC.Env"
+run_mpc_export_self_check "mpc-declaration" "MPC.Declaration"
+run_mpc_export_self_check "mpc-packages-literal" "MPC.Packages.Literal"
+run_mpc_export_self_check "mpc-packages-equality" "MPC.Packages.Equality"
+run_mpc_export_self_check "mpc-packages-quotient" "MPC.Packages.Quotient"
+run_mpc_export_self_check "mpc-packages-projection" "MPC.Packages.Projection"
+run_mpc_export_self_check "mpc-packages-primitive-nat" "MPC.Packages.PrimitiveNat"
+run_mpc_export_self_check "mpc-packages-inductive-basic" "MPC.Packages.Inductive.Basic"
+run_mpc_export_self_check "mpc-packages-inductive-positivity" "MPC.Packages.Inductive.Positivity"
+run_mpc_export_self_check "mpc-packages-inductive-recursor" "MPC.Packages.Inductive.Recursor"
+run_mpc_export_self_check "mpc-packages-inductive-admission" "MPC.Packages.Inductive.Admission"
+run_mpc_export_self_check "mpc-packages-inductive-reduction" "MPC.Packages.Inductive.Reduction"
+run_mpc_export_self_check "mpc-packages-inductive-prop" "MPC.Packages.Inductive.Prop"
+run_mpc_export_self_check "mpc-normalize" "MPC.Normalize"
+run_mpc_export_self_check "mpc-check" "MPC.Check"
+run_mpc_export_self_check "mpc-replay" "MPC.Replay"
+run_mpc_export_self_check "mpc-configs-poc" "MPC.Configs.Poc"
+run_mpc_export_self_check "mpc-configs-equality-poc" "MPC.Configs.EqualityPoc"
+run_mpc_export_self_check "mpc-configs-quot-poc" "MPC.Configs.QuotPoc"
+run_mpc_export_self_check "mpc-configs-projection-poc" "MPC.Configs.ProjectionPoc"
+run_mpc_export_self_check "mpc-configs-primitive-nat-poc" "MPC.Configs.PrimitiveNatPoc"
+run_mpc_export_self_check "mpc-configs-function-eta-poc" "MPC.Configs.FunctionEtaPoc"
+run_mpc_export_self_check "mpc-configs-inductive-prop-poc" "MPC.Configs.InductivePropPoc"
+run_mpc_export_self_check "mpc-configs-indexed-poc" "MPC.Configs.IndexedPoc"
+run_mpc_export_self_check "mpc-configs-indexed-prop-poc" "MPC.Configs.IndexedPropPoc"
+run_mpc_export_self_check "mpc-configs-indexed-prop-large-elim-poc" "MPC.Configs.IndexedPropLargeElimPoc"
+run_mpc_export_self_check "mpc-configs-lean-core-429" "MPC.Configs.LeanCore429"

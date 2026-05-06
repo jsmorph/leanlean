@@ -1,4 +1,4 @@
-namespace LeanLeanFaithfulness.ExportMutual
+namespace MPCFixtures.ExportMutual
 
 mutual
 inductive MEven : Type
@@ -27,4 +27,4 @@ noncomputable def squashEven (e : MEven) : MEven :=
 noncomputable def squashedEvenTwo : MEven :=
   squashEven evenTwo
 
-end LeanLeanFaithfulness.ExportMutual
+end MPCFixtures.ExportMutual

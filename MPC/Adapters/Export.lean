@@ -93,7 +93,7 @@ def getIndexed {α : Type} (what : String) (array : Array α) (index : Nat) : Re
   | none => fail s!"unknown {what} index: {index}"
 
 def encodedNamePrefix : String :=
-  "__leanlean_name:"
+  "__mpc_name:"
 
 def ordinaryNameComponent (component : String) : Bool :=
   toString (Lean.Name.str Lean.Name.anonymous component) == component

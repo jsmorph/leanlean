@@ -1,4 +1,4 @@
-name = "LeanLean"
+name = "MPC"
 version = "0.1.0"
 defaultTargets = ["mpc-check-export"]
 
@@ -6,51 +6,23 @@ defaultTargets = ["mpc-check-export"]
 name = "MPC"
 
 [[lean_lib]]
-name = "Faithfulness.Accepted"
+name = "MPCFixtures.ExportArithmetic"
 
 [[lean_lib]]
-name = "Faithfulness.ModuleA"
+name = "MPCFixtures.ExportOmega"
 
 [[lean_lib]]
-name = "Faithfulness.ModuleB"
+name = "MPCFixtures.ExportNestedIndexed"
 
 [[lean_lib]]
-name = "Faithfulness.Fragments"
-
-[[lean_lib]]
-name = "Faithfulness.ExportSmoke"
-
-[[lean_lib]]
-name = "Faithfulness.ExportArithmetic"
-
-[[lean_lib]]
-name = "Faithfulness.ExportOmega"
-
-[[lean_lib]]
-name = "Faithfulness.ExportNestedIndexed"
-
-[[lean_lib]]
-name = "Faithfulness.ExportMutual"
-
-[[lean_lib]]
-name = "Faithfulness.UnsupportedModule"
-
-[[lean_lib]]
-name = "Faithfulness.Arena.Bogus1"
-
-[[lean_lib]]
-name = "Faithfulness.Arena.ProjOfProp"
-
-[[lean_exe]]
-name = "leanleanfaith"
-root = "Faithfulness.Runner"
+name = "MPCFixtures.ExportMutual"
 
 [[lean_exe]]
 name = "mpc-check-export"
 root = "CheckMPCExport"
 
 [[lean_exe]]
-name = "leanlean-export-roots"
+name = "mpc-export-roots"
 root = "ExportRoots"
 supportInterpreter = true
 

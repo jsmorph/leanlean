@@ -17,10 +17,10 @@ The profile is concentrated near the end of the artifact.  Declarations 400 thro
 | Index | Elapsed ms | Declaration |
 |---:|---:|---|
 | 479 | 116,057 | `Nat.Coprime.gcd_mul_left_cancel` |
-| 491 | 54,148 | `LeanLeanFaithfulness.ExportArithmetic.gcd_right_two_of_odd` |
+| 491 | 54,148 | `MPCFixtures.ExportArithmetic.gcd_right_two_of_odd` |
 | 465 | 50,155 | `Nat.gcd_one_left` |
 | 474 | 44,715 | `Nat.gcd_mul_left` |
-| 492 | 33,412 | `LeanLeanFaithfulness.ExportArithmetic.gcd_sum_diff_eq_one` |
+| 492 | 33,412 | `MPCFixtures.ExportArithmetic.gcd_sum_diff_eq_one` |
 | 427 | 29,889 | `Nat.gcd_dvd` |
 | 462 | 24,777 | `Nat.gcd_assoc` |
 | 397 | 23,317 | `Nat.gcd_rec` |
@@ -70,7 +70,7 @@ The first profile run used prefix 430, which includes `Nat.gcd_dvd` but stops be
 | 397 | 23,277 | 2,087 | 335 | 0 | `Nat.gcd_rec` |
 | 388 | 17,420 | 5,440 | 406 | 8 | `_private.Init.Data.Nat.Gcd.0.Nat.gcd._unary.eq_def` |
 | 395 | 14,428 | 512 | 60 | 0 | `Nat.gcd_succ` |
-| 334 | 12,191 | 5,950 | 873 | 0 | `LeanLeanFaithfulness.ExportArithmetic.odd_of_opposite_parity` |
+| 334 | 12,191 | 5,950 | 873 | 0 | `MPCFixtures.ExportArithmetic.odd_of_opposite_parity` |
 | 319 | 7,882 | 12,622 | 1,716 | 0 | `Nat.mod_add_div` |
 
 The next instrumentation should be dynamic but still narrow: per-declaration counters for `defEq` calls, `whnf` calls, structural failures, eta attempts and successes, proof-irrelevance attempts and successes, delta unfolds, and recursor reductions.  Those counters should be emitted once per declaration, not as per-call logs.
@@ -93,15 +93,15 @@ Two candidates were tested and not kept.  Removing eager `repr` construction fro
 
 ## Omega Stress Fixture
 
-`Faithfulness.ExportOmega` adds small `omega`-produced proofs, and `tools/mpc-omega-stress.sh` exports `LeanLeanFaithfulness.ExportOmega.nat_linear_bounds` before running `mpc-check-export --profile-jsonl`.  The script writes the artifact to `.lake/build/export-tests/mpc-omega-nat-linear-bounds.ndjson` and the profile to `.tmp/mpc-omega-nat-linear-bounds.profile.jsonl`.  It treats accepted, rejected, unsupported, and timed-out checker runs as reportable stress outcomes, because the fixture is for locating the next boundary rather than defining an acceptance test.
+`MPCFixtures.ExportOmega` adds small `omega`-produced proofs, and `tools/mpc-omega-stress.sh` exports `MPCFixtures.ExportOmega.nat_linear_bounds` before running `mpc-check-export --profile-jsonl`.  The script writes the artifact to `.lake/build/export-tests/mpc-omega-nat-linear-bounds.ndjson` and the profile to `.tmp/mpc-omega-nat-linear-bounds.profile.jsonl`.  It treats accepted, rejected, unsupported, and timed-out checker runs as reportable stress outcomes, because the fixture is for locating the next boundary rather than defining an acceptance test.
 
 The first run did not reach `Lean.Omega` certificate declarations.  It checked through declaration index 1141, took 113,359 ms of measured replay time, and then rejected definition `String.instInhabited` at index 1142 because raw string literals were disabled in the MPC configuration.  LeanCore429 now enables neutral string literals: a raw string literal has type `String`, requires `String` in the environment, and does not reduce to Lean's list or byte-array representation.
 
 With neutral string literals enabled, a traced prefix through declaration index 972 accepts and reaches `Lean.Omega.normalize_sat`.  A longer full stress run rejects at declaration index 1165, the inductive `Lean.Syntax`, because the field `args` is not accepted by the current strict-positivity rule.  The next rule-package question is therefore nested positive occurrences through specified container types in Lean's syntax representation, not an Omega-specific primitive rule.
 
-After adding specified-container positivity for `Array` and `List`, the same stress run checks through the exported theorem.  Declaration index 1243, `LeanLeanFaithfulness.ExportOmega.nat_linear_bounds._proof_1_1`, dominates the run at 123,902 ms, with 19,758 expression nodes and 2,512 transparent-definition head applications.  The checker then rejects during generated-recorder audit because the artifact expects `Lean.Syntax.rec_2`, which the current nested-inductive recursor generation does not produce.
+After adding specified-container positivity for `Array` and `List`, the same stress run checks through the exported theorem.  Declaration index 1243, `MPCFixtures.ExportOmega.nat_linear_bounds._proof_1_1`, dominates the run at 123,902 ms, with 19,758 expression nodes and 2,512 transparent-definition head applications.  The checker then rejects during generated-recorder audit because the artifact expects `Lean.Syntax.rec_2`, which the current nested-inductive recursor generation does not produce.
 
-After adding generated nested recursor families for the specified unary containers, the Omega stress artifact accepts.  The accepted run checked 1245 declarations with environment size 1409, and the total measured replay time was 267,810 ms before nested recursor iota reduction and 248,858 ms after it.  Declaration index 1243 still dominates the profile: `LeanLeanFaithfulness.ExportOmega.nat_linear_bounds._proof_1_1` took 146,463 ms in the first accepted run and 129,394 ms after the iota rule, with the same 19,758 expression nodes and 2,512 transparent-definition head applications.  The nested-recursor counters are zero on that proof row, so the remaining performance issue remains broad conversion through ordinary proof terms rather than generated recursor audit, helper-target generation, or nested-recursive reduction.
+After adding generated nested recursor families for the specified unary containers, the Omega stress artifact accepts.  The accepted run checked 1245 declarations with environment size 1409, and the total measured replay time was 267,810 ms before nested recursor iota reduction and 248,858 ms after it.  Declaration index 1243 still dominates the profile: `MPCFixtures.ExportOmega.nat_linear_bounds._proof_1_1` took 146,463 ms in the first accepted run and 129,394 ms after the iota rule, with the same 19,758 expression nodes and 2,512 transparent-definition head applications.  The nested-recursor counters are zero on that proof row, so the remaining performance issue remains broad conversion through ordinary proof terms rather than generated recursor audit, helper-target generation, or nested-recursive reduction.
 
 ## MPC.Level Self-Check
 

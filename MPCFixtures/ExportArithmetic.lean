@@ -1,7 +1,7 @@
 import Init.Data.Nat.Coprime
 import Init.Data.Nat.Lemmas
 
-namespace LeanLeanFaithfulness.ExportArithmetic
+namespace MPCFixtures.ExportArithmetic
 
 def OppositeParity (m n : Nat) : Prop :=
   m % 2 ≠ n % 2
@@ -94,4 +94,4 @@ theorem gcd_sum_diff_eq_one
       simpa [Nat.mul_comm] using hsumCoprimeN.symm.gcd_mul_left_cancel_right 2
     _ = 1 := gcd_right_two_of_odd hsumOdd
 
-end LeanLeanFaithfulness.ExportArithmetic
+end MPCFixtures.ExportArithmetic

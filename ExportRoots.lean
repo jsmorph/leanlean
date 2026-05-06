@@ -1,6 +1,6 @@
 import Lean
 
-namespace LeanLean.ExportRoots
+namespace MPC.ExportRoots
 
 inductive RootMode where
   | exportable
@@ -14,7 +14,7 @@ structure Config where
   mode : RootMode
 
 def usage : String :=
-  "usage: leanlean-export-roots --module <module> [--source-facing | --self-check | --exportable] [--include-unsafe]"
+  "usage: mpc-export-roots --module <module> [--source-facing | --self-check | --exportable] [--include-unsafe]"
 
 def parseDottedName (label input : String) : Except String Lean.Name := do
   let parts := input.splitOn "."
@@ -90,7 +90,7 @@ def generatedSupportName (name : Lean.Name) : Bool :=
     text.contains ".instRepr" ||
     text.contains ".instInhabited" ||
     text.contains ".instBEq" ||
-    text.startsWith "LeanLean.inst"
+    text.startsWith "MPC.inst"
 
 def leanAuxSupportName (env : Lean.Environment) (name : Lean.Name) : Bool :=
   let text := toString name
@@ -176,7 +176,7 @@ unsafe def run (args : List String) : IO UInt32 := do
               printRoots roots
               return 0
 
-end LeanLean.ExportRoots
+end MPC.ExportRoots
 
 unsafe def main (args : List String) : IO UInt32 :=
-  LeanLean.ExportRoots.run args
+  MPC.ExportRoots.run args

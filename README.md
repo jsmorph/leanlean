@@ -1,5 +1,7 @@
-# LeanLean
+# MPC
 
-This repository contains a specification-first experiment for a Lean-style kernel written in Lean 4.  The current target is a focused kernel fragment with universes, transparent and opaque definitions, theorem declarations, inductive blocks, generated recursors, propositions, equality, low-level quotients, core projections, structure metadata, declaration replay, a Lean declaration and `ConstantInfo` importer, and beta, delta, zeta, iota, projection, quotient, eta, and proof-irrelevance conversion.  The main specification lives in [`spec.md`](spec.md), the development journal lives in [`devnotes.md`](devnotes.md), and the long-range plan lives in [`plan.md`](plan.md).
+This repository contains MPC, a specification-first Lean 4 kernel-checker experiment.  The checker is organized around explicit rule packages selected by manifests.  The main specification is [`spec.md`](spec.md), and the development journal is [`devnotes.md`](devnotes.md).
 
-The regression suite runs with `lake exe leanleantest`.  The demonstration executable runs with `lake exe leanlean`.  The Lean 4 faithfulness corpus runs with `lake exe leanleanfaith`, using `LEANLEAN_LEAN` when a specific compiler binary should be checked.  The real-environment importer smoke test runs with `lake exe leanleanimport`.
+Run the native regression suite with `lake exe mpctest`.  Build the export checker with `lake build mpc-check-export`, then run `.lake/build/bin/mpc-check-export <export.ndjson>`.  The export scripts under `tools/` require a matching `lean4export` binary; set `MPC_LEAN4EXPORT` when it is not on `PATH`.
+
+The current tool scripts are `tools/mpc-export-tests.sh`, `tools/mpc-export-gcd.sh`, `tools/mpc-export-self-check.sh`, and `tools/mpc-omega-stress.sh`.  The export self-check script uses `MPC_CACHE_DB` when supplied, writes a SQLite checked-layer cache to `.tmp/mpc-self-check-cache.db` by default, and disables cache use when `MPC_CACHE_DB` is set to the empty string.  The stress script is a profiling target rather than an acceptance test.
