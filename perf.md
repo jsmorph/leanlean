@@ -193,6 +193,21 @@ After the cache lookup changed to bounded direct key queries, the `Measurable.di
 
 Two diagnostics failed to move the boundary.  Disabling the equality-rec endpoint fallback did not advance the isolated proof, so the prior equality-rec fix is not the cause of this wall.  Direct reduction of projection constants also did not advance the isolated proof, though that reducer is still a projection-package correction for exported structure accessors.  The remaining question needs dynamic counters for `defEq`, `whnf`, equality transport, proof irrelevance, and transparent unfolding if this rational proof becomes the next performance target.
 
+## Mathlib LinearEquiv NoConfusion
+
+The `LinearMap.det_comp` probe used `Mathlib.LinearAlgebra.Determinant` with the shared mathlib SQLite cache.  The exported artifact is 62 MB, and the cached stats run reused the prefix through declaration index 7357 in 13,926 ms.  The 300-second command then timed out while checking declaration index 7358, before reaching `LinearMap.det_comp`.
+
+```bash
+timeout 300s .lake/build/bin/mpc-check-export \
+  --stats-jsonl \
+  --cache-layer .tmp/mathlib-probes/mathlib-cache.db \
+  .tmp/mathlib-probes/linearMap-det-comp.ndjson \
+  > .tmp/mathlib-probes/linearMap-det-comp.stats.jsonl \
+  2> .tmp/mathlib-probes/linearMap-det-comp.stats.err
+```
+
+The hard declaration is `LinearEquiv.noConfusion`, a generated definition with 699 type nodes and 8,297 value nodes.  A head-count scan is dominated by `Semiring.toNonAssocSemiring`, `HEq`, `LinearEquiv`, `RingHomInvPair`, `RingHom`, `Module`, `Eq.ndrec`, and `eq_of_heq`.  This differs from the ordinary proof-term walls because the hard object is derived structure support; a shortcut would be a derived declaration checker or audit layer, not an MPC conversion rule.
+
 ## Conversion Fast Paths
 
 The useful optimization was a top-level alpha-equivalence check at the start of `defEq`.  If two terms are already equal up to binder names and universe equality, conversion now returns before weak-head reduction, structural recursion, eta, or proof irrelevance.  This preserves the conversion relation and removes repeated normalization of subterms that are already identical in exported proof terms.
