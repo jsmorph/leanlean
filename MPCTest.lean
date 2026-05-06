@@ -1383,6 +1383,43 @@ def dPairRecSndEta : Expr :=
       dPairStuckTarget
     ]
 
+def unitLikeSpec : SimpleInductiveSpec :=
+  {
+    name := "UnitLike"
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        { name := "UnitLike.unit" }
+      ]
+  }
+
+def phantomSpec : SimpleInductiveSpec :=
+  {
+    name := "Phantom"
+    resultLevel := .succ .zero
+    params :=
+      [
+        { name := "A", type := type0 }
+      ]
+    constructors :=
+      [
+        { name := "Phantom.mk" }
+      ]
+  }
+
+def unitBoxSpec : SimpleInductiveSpec :=
+  {
+    name := "UnitBox"
+    resultLevel := .succ .zero
+    constructors :=
+      [
+        {
+          name := "UnitBox.mk"
+          fields := [{ name := "as", type := .const "UnitLike" [] }]
+        }
+      ]
+  }
+
 def hAddLikeSpec : SimpleInductiveSpec :=
   {
     name := "HAddLike"
@@ -2100,10 +2137,39 @@ def checkEquality : IO Unit := do
   let _eqSymmEnv ← expectOkLabel "Eq.rec Prop motive replay"
     (replay MPC.Configs.EqualityPoc env [.theorem "Alpha.eqSymm" [] eqSymmType eqSymmValue])
 
+def checkSingletonInductives : IO Unit := do
+  let declarations :=
+    baseDeclarations ++
+      [
+        .inductive unitLikeSpec,
+        .axiom "unitLikeA" [] (.const "UnitLike" []),
+        .axiom "unitLikeB" [] (.const "UnitLike" []),
+        .inductive phantomSpec,
+        .axiom "phantomA" [] (.app (.const "Phantom" []) natType),
+        .axiom "phantomB" [] (.app (.const "Phantom" []) natType),
+        .inductive unitBoxSpec,
+        .axiom "unitBoxA" [] (.const "UnitBox" []),
+        .axiom "unitBoxB" [] (.const "UnitBox" [])
+      ]
+  let env ← expectOkLabel "singleton inductive replay"
+    (replay MPC.Configs.Poc emptyEnv declarations)
+  expectOkLabel "singleton inductive conversion"
+    (defEq MPC.Configs.Poc env [] []
+      (.const "unitLikeA" []) (.const "unitLikeB" []))
+  expectOkLabel "parameterized singleton inductive conversion"
+    (defEq MPC.Configs.Poc env [] []
+      (.const "phantomA" []) (.const "phantomB" []))
+  expectError "singleton conversion does not imply structure eta"
+    (defEq MPC.Configs.Poc env [] []
+      (.const "unitBoxA" []) (.const "unitBoxB" []))
+
 def checkProjections : IO Unit := do
   let declarations :=
     baseDeclarations ++ equalityDeclarations ++
-      [.inductive dPairSpec, .axiom "dPairStuck" [] dPairType]
+      [
+        .inductive dPairSpec,
+        .axiom "dPairStuck" [] dPairType
+      ]
   let baseEnv ← expectOkLabel "projection baseline replay"
     (replay MPC.Configs.Poc emptyEnv declarations)
   expectError "projection disabled"
@@ -2465,6 +2531,7 @@ def main : IO Unit := do
   checkSimpleInductives
   checkMutualInductives
   checkPropInductives
+  checkSingletonInductives
   checkIndexedInductives
   checkIndexedPropInductives
   checkIndexedRecursiveProofFields

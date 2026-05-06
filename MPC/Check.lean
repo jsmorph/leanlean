@@ -199,6 +199,35 @@ partial def proofIrrelevanceDefEq (manifest : Manifest) (env : Env) (levelParams
     let rightType ← infer manifest env levelParams ctx right
     defEq manifest env levelParams ctx leftType rightType
 
+partial def singletonInductiveDefEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (ctx : Context) (left right : Expr) : Result Unit := do
+  if !manifest.supportsSimpleInductives then
+    fail "simple inductives are disabled by the manifest"
+  else
+    let leftType ← whnf manifest env levelParams (← infer manifest env levelParams ctx left)
+    let rightType ← whnf manifest env levelParams (← infer manifest env levelParams ctx right)
+    let (leftHead, leftArgs) := leftType.getAppFnArgs
+    let (rightHead, rightArgs) := rightType.getAppFnArgs
+    match leftHead, rightHead with
+    | .const leftName leftLevels, .const rightName rightLevels =>
+        if leftName != rightName || leftLevels.length != rightLevels.length ||
+            leftArgs.length != rightArgs.length then
+          fail "singleton inductive target types differ"
+        else
+          match env.find? leftName with
+          | some { kind := .inductiveType spec, levelParams := specLevelParams, .. } =>
+              match spec.constructors with
+              | [ctor] =>
+                  if leftLevels.length != specLevelParams.length ||
+                      leftArgs.length != spec.params.length ||
+                      !ctor.fields.isEmpty then
+                    fail "singleton inductive target shape mismatch"
+                  else
+                    defEq manifest env levelParams ctx leftType rightType
+              | _ => fail "singleton inductive target has multiple constructors"
+          | _ => fail "singleton inductive target is not a simple inductive"
+    | _, _ => fail "singleton inductive target types are not constant applications"
+
 partial def functionEtaDefEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (etaExpanded other : Expr) : Result Unit := do
   if !manifest.supportsFunctionEta then
@@ -290,16 +319,19 @@ partial def defEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
                     match structureEtaDefEq manifest env levelParams ctx right left with
                     | .ok () => pure ()
                     | .error _ =>
-                        match proofIrrelevanceDefEq manifest env levelParams ctx left right with
+                        match singletonInductiveDefEq manifest env levelParams ctx left right with
                         | .ok () => pure ()
-                        | .error proofError =>
-                            match functionEtaDefEq manifest env levelParams ctx left right with
+                        | .error _ =>
+                            match proofIrrelevanceDefEq manifest env levelParams ctx left right with
                             | .ok () => pure ()
-                            | .error _ =>
-                                match functionEtaDefEq manifest env levelParams ctx right left with
+                            | .error proofError =>
+                                match functionEtaDefEq manifest env levelParams ctx left right with
                                 | .ok () => pure ()
                                 | .error _ =>
-                                    fail s!"{structuralError.message}; proof irrelevance fallback failed: {proofError.message}"
+                                    match functionEtaDefEq manifest env levelParams ctx right left with
+                                    | .ok () => pure ()
+                                    | .error _ =>
+                                        fail s!"{structuralError.message}; proof irrelevance fallback failed: {proofError.message}"
 
 end
 
