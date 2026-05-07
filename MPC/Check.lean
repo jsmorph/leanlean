@@ -161,9 +161,15 @@ partial def structuralDefEq (manifest : Manifest) (env : Env) (levelParams : Lev
       else
         structuralDefEq manifest env levelParams ctx left
           (← MPC.Packages.Literal.natConstructorSpine env value)
-  | .app leftFn leftArg, .app rightFn rightArg =>
-      defEq manifest env levelParams ctx leftFn rightFn
-      defEq manifest env levelParams ctx leftArg rightArg
+  | .app .., .app .. =>
+      let (leftHead, leftArgs) := left.getAppFnArgs
+      let (rightHead, rightArgs) := right.getAppFnArgs
+      if leftArgs.length != rightArgs.length then
+        fail "application arities differ"
+      else
+        defEq manifest env levelParams ctx leftHead rightHead
+        for pair in leftArgs.zip rightArgs do
+          defEq manifest env levelParams ctx pair.1 pair.2
   | .lam _ leftType leftBody, .lam _ rightType rightBody =>
       defEq manifest env levelParams ctx leftType rightType
       defEq manifest env levelParams (ctx.extend "_" leftType) leftBody rightBody
@@ -179,7 +185,7 @@ partial def structuralDefEq (manifest : Manifest) (env : Env) (levelParams : Lev
         defEq manifest env levelParams ctx leftTarget rightTarget
       else
         fail "projections differ"
-  | _, _ => fail s!"not definitionally equal: {repr left} and {repr right}"
+  | _, _ => fail "not definitionally equal"
 
 partial def isPropExpr (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (expr : Expr) : Result Unit := do

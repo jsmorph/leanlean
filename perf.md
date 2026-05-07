@@ -252,6 +252,24 @@ The cached profile run completed in about 78 seconds, emitted one profile row, a
 
 A later cached stats retry on the larger host reached the same declaration through the v4 cache and remained active there for more than one hour before interruption.  The output file ended with the `LinearEquiv.noConfusion` started row, contained no stderr, and left the cache at 125 MB.  The memory monitor wrote `.tmp/mathlib-probes/linearMap-det-comp-v4-long.mem.tsv`; RSS reached 580,864 KB during prefix replay, settled at 574,488 KB by the third minute, and stayed at 574,488 KB through the final 3,802-second sample.  The result keeps the boundary classified as CPU-bound generated-support performance rather than acceptance.
 
+SQLite locking was checked separately during the focused diagnostic runs.  The cache had no WAL or SHM sidecar, `PRAGMA quick_check` returned `ok`, and `BEGIN IMMEDIATE; ROLLBACK;` completed within a five-second timeout while the diagnostic profiler was active.  The replay code also emits the `started` row before lookup, performs the SQLite lookup, and writes back only after `addDecl` succeeds, so a run stopped at the `LinearEquiv.noConfusion` started row is inside declaration checking rather than waiting on the post-check cache append.
+
+`mpc-dynamic-profile-export` is a diagnostic executable for this case.  It streams the NDJSON artifact, replays the prefix through a v4 SQLite cache, and checks only the selected declaration with bounded dynamic counters.  Its checker copy deliberately emits profiling data rather than serving as an acceptance oracle.  The selected declaration exhausts a 10,000-step budget in 28 ms after prefix replay, with the counts dominated by structural definitional equality, WHNF, beta reduction, and repeated transparent unfolding of semiring structure fields:
+
+```bash
+timeout 180s .lake/build/bin/mpc-dynamic-profile-export \
+  --cache-layer .tmp/mathlib-probes/mathlib-cache-v4.db \
+  --declaration 7358 \
+  --budget 10000 \
+  .tmp/mathlib-probes/linearMap-det-comp.ndjson \
+  > .tmp/mathlib-probes/linearMap-det-comp-v4.decl7358-dynamic-clean10k.json \
+  2> .tmp/mathlib-probes/linearMap-det-comp-v4.decl7358-dynamic-clean10k.err
+```
+
+The 10,000-step profile recorded 1,022 definitional-equality calls, 1,021 structural-defeq calls, 3,975 WHNF calls, 536 beta reductions, and 270 transparent-definition unfolds.  The top unfolded names were `Semiring.toNonAssocSemiring`, `NonUnitalSemiring.toNonUnitalNonAssocSemiring`, `Semiring.toNonUnitalSemiring`, `Semiring.toNatCast`, and `Semiring.toOne`.  A 100,000-step run repeatedly advanced through successful structural application comparisons and result-type instantiation before stopping between heartbeats; this supports the same conclusion as the hour-long stats run: the cost is repeated conversion through ordinary generated structure support, not a SQLite lock or a missing primitive reduction.
+
+Structural conversion now compares application spines directly after WHNF rather than recursively comparing each nested function prefix and final argument.  The change preserves the conversion rule and removes repeated prefix comparison on long applications.  It did not by itself turn `LinearEquiv.noConfusion` into an accepted declaration, so the next useful work is conversion memoization or a derived-support checker for generated no-confusion definitions, kept outside the MPC kernel.
+
 ## Mathlib Abelian Resource Boundary
 
 The `CategoryTheory.Abelian.image_ι_comp_eq_zero` probe used `Mathlib.CategoryTheory.Abelian.Basic` with the shared mathlib SQLite cache.  The corrected root built successfully and exported `.tmp/mathlib-probes/category-abelian-image-zero.ndjson`, a 27 MB artifact, but the old v2-cache path was killed with exit code 137 before it wrote checker output or declaration stats.  The old cache file was 2.8 GB, and inspecting it showed 12,566 content rows whose rendered declaration keys occupied 2,620,504,409 bytes, with a largest key of 156,683,766 bytes.

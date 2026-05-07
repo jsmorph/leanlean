@@ -31,5 +31,9 @@ name = "mpc-migrate-layer"
 root = "MigrateLayer"
 
 [[lean_exe]]
+name = "mpc-dynamic-profile-export"
+root = "DynamicProfileExport"
+
+[[lean_exe]]
 name = "mpctest"
 root = "MPCTest"
