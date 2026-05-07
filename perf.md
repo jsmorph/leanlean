@@ -15,7 +15,7 @@ Use `MPC_LEAN4EXPORT` when `lean4export` is not on `PATH`.  The generated artifa
 | Run the export self-check cold | `env MPC_LEAN4EXPORT=/path/to/lean4export MPC_CACHE_DB= tools/mpc-export-self-check.sh` |
 | Run the Omega stress profiler | `env MPC_LEAN4EXPORT=/path/to/lean4export MPC_STRESS_TIMEOUT=120 tools/mpc-omega-stress.sh` |
 
-Use `--stats-jsonl` for per-declaration timing without structural counters.  Each declaration emits a `started` row before replay begins and then a `checked`, `reused`, or `rejected` row after replay finishes.  The rows include a monotonic `timestamp_ms`; when a run stalls or times out, the last `started` row identifies the declaration being processed.  Use `--profile-jsonl` when the question needs expression-size counters, head-application counters, or constant-kind counters beside timing.  Use `--profile-declaration <n>` when declaration `n` takes too long to finish and the prefix before it can still replay, because this mode replays the prefix and emits counters for the selected declaration without checking that declaration.
+Use `--stats-jsonl` for per-declaration timing without structural counters.  Each declaration emits a `started` row before replay begins and then a `checked`, `reused`, or `rejected` row after replay finishes.  The rows include a monotonic `timestamp_ms`; when a run stalls or times out, the last `started` row identifies the declaration being processed.  The timestamp is an absolute monotonic clock sample, not elapsed time since process start, so use `elapsed_ms`, `cumulative_ms`, or an external timer for durations.  Use `--profile-jsonl` when the question needs expression-size counters, head-application counters, or constant-kind counters beside timing.  Use `--profile-declaration <n>` when declaration `n` takes too long to finish and the prefix before it can still replay, because this mode replays the prefix and emits counters for the selected declaration without checking that declaration.
 
 ```bash
 .lake/build/bin/mpc-check-export \
@@ -248,7 +248,7 @@ timeout 1800s .lake/build/bin/mpc-check-export \
   2> .tmp/mathlib-probes/category-abelian-image-zero-v4-cold.stats.err
 ```
 
-The run accepted after checking 5,174 declaration entries, produced environment size 5,753, emitted no stderr, and left a 29 MB cache DB.  The cumulative declaration-check time was 1,143,884 ms, while the final telemetry timestamp was 1,944,269 ms.  The gap between those numbers belongs to adapter-side artifact processing, lowering, cache lookup, and SQLite writes, so later cache work should measure replay time and command time separately.
+The run accepted after checking 5,174 declaration entries, produced environment size 5,753, emitted no stderr, and left a 29 MB cache DB.  The cumulative declaration-check time was 1,143,884 ms.  A timed cold wall measurement was not taken for this run, so later cache work should measure replay time and command time separately when adapter overhead is the question.
 
 A timed warm replay then reused the whole artifact:
 
@@ -276,7 +276,7 @@ timeout 7200s .lake/build/bin/mpc-check-export \
   2> .tmp/mathlib-probes/snake-lemma-no-main-v4.stats.err
 ```
 
-The run accepted 7,691 target declarations, reused 5,095 declaration entries, checked 2,596 new entries, produced environment size 8,447, emitted no stderr, and grew the v4 cache to 107 MB.  The cumulative declaration time was 2,822,125 ms, and the final telemetry timestamp was 5,207,774 ms.  This support artifact ends at `CategoryTheory.ShortComplex.SnakeInput.naturality_δ`, so it does not include the main `CategoryTheory.ShortComplex.SnakeInput.snake_lemma` theorem.
+The run accepted 7,691 target declarations, reused 5,095 declaration entries, checked 2,596 new entries, produced environment size 8,447, emitted no stderr, and grew the v4 cache to 107 MB.  The cumulative declaration time was 2,822,125 ms.  This support artifact ends at `CategoryTheory.ShortComplex.SnakeInput.naturality_δ`, so it does not include the main `CategoryTheory.ShortComplex.SnakeInput.snake_lemma` theorem.
 
 The slowest checked declarations were concentrated in homology-data packaging, with one later finite-category equivalence proof:
 
@@ -293,7 +293,39 @@ The slowest checked declarations were concentrated in homology-data packaging, w
 | 82,358 | 5792 | `CategoryTheory.ShortComplex.RightHomologyData.ofAbelian._proof_7` |
 | 62,198 | 5787 | `CategoryTheory.ShortComplex.LeftHomologyData.ofAbelian` |
 
-This run changes the snake-lemma support classification from host-resource failure to accepted support with serious proof-conversion cost.  The next probe should run the main snake artifact against the same v4 cache, because the accepted support prefix now covers the expensive homology-data declarations.  If the main theorem fails, the result should be interpreted against this support baseline rather than against the earlier v3 host kill.
+This run changed the snake-lemma support classification from host-resource failure to accepted support with serious proof-conversion cost.  The main-batch probe below then ran against the same v4 cache, using this accepted support prefix as the baseline.  That separation matters because the support proof costs and the main theorem cost are different performance questions.
+
+## Mathlib Snake Main
+
+The main snake batch reused the v4 cache populated by the no-main support run:
+
+```bash
+timeout 7200s .lake/build/bin/mpc-check-export \
+  --cache-layer .tmp/mathlib-probes/mathlib-cache-v4.db \
+  --stats-jsonl \
+  .tmp/mathlib-probes/snake-lemma-batch1.ndjson \
+  > .tmp/mathlib-probes/snake-lemma-batch1-v4.stats.jsonl \
+  2> .tmp/mathlib-probes/snake-lemma-batch1-v4.stats.err
+```
+
+The run accepted 8,020 target declarations, reused 7,525 declaration entries, checked 495 new entries, produced environment size 8,795, emitted no stderr, and grew the v4 cache to 110 MB.  The cumulative declaration time was 682,566 ms.  The main theorem `CategoryTheory.ShortComplex.SnakeInput.snake_lemma` checked at declaration index 7,893 in 70,865 ms.
+
+The slowest checked declarations were:
+
+| Elapsed ms | Index | Declaration |
+|---:|---:|---|
+| 70,865 | 7893 | `CategoryTheory.ShortComplex.SnakeInput.snake_lemma` |
+| 46,348 | 6568 | `CategoryTheory.ComposableArrows.exact_iff_δ₀` |
+| 9,071 | 2156 | `_private.Mathlib.Algebra.Homology.ExactSequence.0.CategoryTheory.ComposableArrows.IsComplex.zero'._proof_9` |
+| 9,032 | 2145 | `_private.Mathlib.Algebra.Homology.ExactSequence.0.CategoryTheory.ComposableArrows.sc'._proof_3` |
+| 6,711 | 2193 | `_private.Mathlib.CategoryTheory.ComposableArrows.Basic.0.CategoryTheory.ComposableArrows.Precomp.map._proof_8` |
+| 6,421 | 2384 | `_private.Init.Grind.ToIntLemmas.0.Lean.Grind.ToInt.le_upper._proof_1_6` |
+| 6,190 | 2200 | `_private.Mathlib.CategoryTheory.ComposableArrows.Basic.0.CategoryTheory.ComposableArrows.Precomp.map_succ_succ._proof_1` |
+| 6,188 | 2202 | `_private.Mathlib.CategoryTheory.ComposableArrows.Basic.0.CategoryTheory.ComposableArrows.Precomp.map_succ_succ._proof_3` |
+| 5,432 | 2188 | `_private.Mathlib.CategoryTheory.ComposableArrows.Basic.0.CategoryTheory.ComposableArrows.Precomp.map._proof_5` |
+| 5,040 | 2182 | `_private.Mathlib.CategoryTheory.ComposableArrows.Basic.0.CategoryTheory.ComposableArrows.Precomp.obj._proof_3` |
+
+This run resolves the earlier snake-lemma host-resource question for this artifact.  The support replay converted the previous resource failure into cached declarations, and the main theorem then checked as an ordinary theorem body.  The remaining issue is performance rather than a missing rule package.
 
 ## Conversion Fast Paths
 
