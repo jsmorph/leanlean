@@ -250,6 +250,8 @@ timeout 900s .lake/build/bin/mpc-check-export \
 
 The cached profile run completed in about 78 seconds, emitted one profile row, and emitted no stderr.  The selected declaration has 8,996 expression nodes, 4,194 application nodes, 734 constant nodes, 733 head applications, 195 definition constants, 193 transparent-definition head applications, and 11 theorem constants.  The profile has no recursor, projection, quotient-lift, equality-rec, equality-ndrec, or primitive-Nat head applications, so the current evidence points to generated no-confusion definition checking through ordinary transparent definitions rather than a missing primitive reduction rule.
 
+A later cached stats retry on the larger host reached the same declaration through the v4 cache and remained active there for roughly fifteen minutes before interruption.  The output file ended with the `LinearEquiv.noConfusion` started row, contained no stderr, and left the cache at 125 MB.  The result keeps the boundary classified as generated-support performance rather than acceptance.
+
 ## Mathlib Abelian Resource Boundary
 
 The `CategoryTheory.Abelian.image_ι_comp_eq_zero` probe used `Mathlib.CategoryTheory.Abelian.Basic` with the shared mathlib SQLite cache.  The corrected root built successfully and exported `.tmp/mathlib-probes/category-abelian-image-zero.ndjson`, a 27 MB artifact, but the old v2-cache path was killed with exit code 137 before it wrote checker output or declaration stats.  The old cache file was 2.8 GB, and inspecting it showed 12,566 content rows whose rendered declaration keys occupied 2,620,504,409 bytes, with a largest key of 156,683,766 bytes.
