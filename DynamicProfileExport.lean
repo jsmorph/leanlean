@@ -8,9 +8,10 @@ structure Config where
   cacheLayerPath : System.FilePath
   declarationIndex : Nat
   budget : Nat := 1000000
+  useMemo : Bool := false
 
 def usage : String :=
-  "usage: mpc-dynamic-profile-export --cache-layer <layer.db> --declaration <n> [--budget <n>] <export.ndjson>"
+  "usage: mpc-dynamic-profile-export --cache-layer <layer.db> --declaration <n> [--budget <n>] [--memo] <export.ndjson>"
 
 def filePath (path : String) : Except String System.FilePath :=
   if path.isEmpty then
@@ -32,38 +33,40 @@ def setInputPath (input? : Option String) (path : String) :
 
 partial def parseArgsLoop
     (input? : Option String) (cacheLayerPath? : Option System.FilePath)
-    (declarationIndex? : Option Nat) (budget : Nat) :
+    (declarationIndex? : Option Nat) (budget : Nat) (useMemo : Bool) :
     List String →
-      Except String (Option String × Option System.FilePath × Option Nat × Nat)
-  | [] => pure (input?, cacheLayerPath?, declarationIndex?, budget)
+      Except String (Option String × Option System.FilePath × Option Nat × Nat × Bool)
+  | [] => pure (input?, cacheLayerPath?, declarationIndex?, budget, useMemo)
   | "--cache-layer" :: path :: rest => do
       if cacheLayerPath?.isSome then
         .error "multiple cache layers"
       else
-        parseArgsLoop input? (some (← filePath path)) declarationIndex? budget rest
+        parseArgsLoop input? (some (← filePath path)) declarationIndex? budget useMemo rest
   | "--cache-layer" :: [] => .error "missing value after --cache-layer"
   | "--declaration" :: value :: rest => do
       if declarationIndex?.isSome then
         .error "multiple declaration indexes"
       else
         parseArgsLoop input? cacheLayerPath?
-          (some (← parseNatArgument "declaration index" value)) budget rest
+          (some (← parseNatArgument "declaration index" value)) budget useMemo rest
   | "--declaration" :: [] => .error "missing value after --declaration"
   | "--budget" :: value :: rest => do
       parseArgsLoop input? cacheLayerPath? declarationIndex?
-        (← parseNatArgument "budget" value) rest
+        (← parseNatArgument "budget" value) useMemo rest
   | "--budget" :: [] => .error "missing value after --budget"
+  | "--memo" :: rest =>
+      parseArgsLoop input? cacheLayerPath? declarationIndex? budget true rest
   | "--help" :: _ => .error usage
   | arg :: rest => do
       if arg.startsWith "-" then
         .error s!"unknown argument: {arg}"
       else
         parseArgsLoop (← setInputPath input? arg) cacheLayerPath? declarationIndex?
-          budget rest
+          budget useMemo rest
 
 def parseArgs (args : List String) : Except String Config := do
-  let (input?, cacheLayerPath?, declarationIndex?, budget) ←
-    parseArgsLoop none none none 1000000 args
+  let (input?, cacheLayerPath?, declarationIndex?, budget, useMemo) ←
+    parseArgsLoop none none none 1000000 false args
   let some input := input?
     | .error "missing input path"
   let some cacheLayerPath := cacheLayerPath?
@@ -74,7 +77,8 @@ def parseArgs (args : List String) : Except String Config := do
     inputPath := (← filePath input),
     cacheLayerPath,
     declarationIndex,
-    budget
+    budget,
+    useMemo
   }
 
 def replayStatusLabel : MPC.Adapters.Layer.ReplayStepStatus → String
@@ -126,7 +130,7 @@ def runProfile (config : Config) : IO (Result Lean.Json) := do
         | .ok (env, declaration) => do
             let json ←
               MPC.Adapters.DynamicProfile.profileDeclaration
-                MPC.Configs.LeanCore429 env config.budget declaration
+                MPC.Configs.LeanCore429 env config.budget config.useMemo declaration
             pure (.ok json)
 
 def run (args : List String) : IO UInt32 := do

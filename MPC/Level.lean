@@ -8,7 +8,7 @@ inductive Level where
   | succ : Level → Level
   | max : Level → Level → Level
   | imax : Level → Level → Level
-  deriving BEq, Repr, Inhabited
+  deriving BEq, Repr, Inhabited, Hashable
 
 namespace Level
 

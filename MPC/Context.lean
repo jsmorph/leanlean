@@ -5,7 +5,7 @@ namespace MPC
 structure Binder where
   name : Name
   type : Expr
-  deriving BEq, Repr
+  deriving BEq, Repr, Hashable
 
 abbrev Context := List Binder
 

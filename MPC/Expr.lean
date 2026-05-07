@@ -5,7 +5,7 @@ namespace MPC
 inductive Literal where
   | nat : Nat → Literal
   | str : String → Literal
-  deriving BEq, Repr, Inhabited
+  deriving BEq, Repr, Inhabited, Hashable
 
 inductive Expr where
   | bvar : Nat → Expr
@@ -17,7 +17,7 @@ inductive Expr where
   | forallE : Name → Expr → Expr → Expr
   | letE : Name → Expr → Expr → Expr → Expr
   | proj : Name → Nat → Expr → Expr
-  deriving BEq, Repr, Inhabited
+  deriving BEq, Repr, Inhabited, Hashable
 
 def Expr.mkApps (fn : Expr) : List Expr → Expr
   | [] => fn

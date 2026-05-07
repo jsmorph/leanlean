@@ -36,13 +36,34 @@ structure Stats where
   quotientReductionSuccesses : Nat := 0
   equalityRecReductionAttempts : Nat := 0
   equalityRecReductionSuccesses : Nat := 0
+  whnfCacheHits : Nat := 0
+  whnfCacheMisses : Nat := 0
+  whnfCacheEntries : Nat := 0
+  defEqCacheHits : Nat := 0
+  defEqCacheMisses : Nat := 0
+  defEqCacheEntries : Nat := 0
   unfoldNames : Std.HashMap String Nat := {}
   defEqHeadPairs : Std.HashMap String Nat := {}
+
+structure WhnfKey where
+  levelParams : LevelContext
+  expr : Expr
+  deriving BEq, Hashable
+
+structure DefEqKey where
+  levelParams : LevelContext
+  ctx : Context
+  left : Expr
+  right : Expr
+  deriving BEq, Hashable
 
 structure Profiler where
   budget : Nat
   ref : IO.Ref Stats
   markRef : IO.Ref String
+  whnfCacheRef : IO.Ref (Std.HashMap WhnfKey Expr)
+  defEqCacheRef : IO.Ref (Std.HashMap DefEqKey Unit)
+  useMemo : Bool := false
   traceEvery : Nat := 1000
 
 abbrev M := ExceptT Error IO
@@ -95,6 +116,61 @@ def countJson (entry : String × Nat) : Lean.Json :=
 def countsJson (map : Std.HashMap String Nat) (limit : Nat) : Lean.Json :=
   Lean.Json.arr ((topCounts map limit).map countJson).toArray
 
+def whnfCacheExprLimit : Nat :=
+  128
+
+def defEqCacheExprLimit : Nat :=
+  32
+
+partial def exprCacheSizeCapped (cap : Nat) : Expr → Nat
+  | .bvar _
+  | .sort _
+  | .const ..
+  | .lit _ => 1
+  | .app fn arg =>
+      if cap == 0 then
+        1
+      else
+        let left := exprCacheSizeCapped (cap - 1) fn
+        if left >= cap then
+          cap
+        else
+          let right := exprCacheSizeCapped (cap - 1 - left) arg
+          Nat.min cap (1 + left + right)
+  | .lam _ type body
+  | .forallE _ type body =>
+      if cap == 0 then
+        1
+      else
+        let typeSize := exprCacheSizeCapped (cap - 1) type
+        if typeSize >= cap then
+          cap
+        else
+          let bodySize := exprCacheSizeCapped (cap - 1 - typeSize) body
+          Nat.min cap (1 + typeSize + bodySize)
+  | .letE _ type value body =>
+      if cap == 0 then
+        1
+      else
+        let typeSize := exprCacheSizeCapped (cap - 1) type
+        if typeSize >= cap then
+          cap
+        else
+          let valueSize := exprCacheSizeCapped (cap - 1 - typeSize) value
+          if typeSize + valueSize >= cap then
+            cap
+          else
+            let bodySize := exprCacheSizeCapped (cap - 1 - typeSize - valueSize) body
+            Nat.min cap (1 + typeSize + valueSize + bodySize)
+  | .proj _ _ target =>
+      if cap == 0 then
+        1
+      else
+        Nat.min cap (1 + exprCacheSizeCapped (cap - 1) target)
+
+def exprCacheable (limit : Nat) (expr : Expr) : Bool :=
+  exprCacheSizeCapped (limit + 1) expr <= limit
+
 def exprHeadLabel (expr : Expr) : String :=
   let (head, _) := expr.getAppFnArgs
   match head with
@@ -134,6 +210,10 @@ def Profiler.noteUnfold (profiler : Profiler) (name : Name) : M Unit := do
 
 def recordAttempt (profiler : Profiler) (update : Stats → Stats) : M Unit :=
   profiler.step update
+
+def recordStats (profiler : Profiler) (update : Stats → Stats) : M Unit := do
+  let stats ← profiler.ref.get
+  profiler.ref.set (update stats)
 
 mutual
 
@@ -259,6 +339,26 @@ partial def reduceEqRec? (profiler : Profiler) (manifest : Manifest) (env : Env)
       | _ => reduceToMinorIfEndpointsMatch
 
 partial def whnf (profiler : Profiler) (manifest : Manifest) (env : Env)
+    (levelParams : LevelContext) (expr : Expr) : M Expr := do
+  if !profiler.useMemo || !exprCacheable whnfCacheExprLimit expr then
+    whnfCore profiler manifest env levelParams expr
+  else
+    let key : WhnfKey := { levelParams, expr }
+    match (← profiler.whnfCacheRef.get).get? key with
+    | some value => do
+        recordStats profiler fun stats =>
+          { stats with whnfCacheHits := stats.whnfCacheHits + 1 }
+        pure value
+    | none => do
+        recordStats profiler fun stats =>
+          { stats with whnfCacheMisses := stats.whnfCacheMisses + 1 }
+        let value ← whnfCore profiler manifest env levelParams expr
+        profiler.whnfCacheRef.set ((← profiler.whnfCacheRef.get).insert key value)
+        recordStats profiler fun stats =>
+          { stats with whnfCacheEntries := stats.whnfCacheEntries + 1 }
+        pure value
+
+partial def whnfCore (profiler : Profiler) (manifest : Manifest) (env : Env)
     (levelParams : LevelContext) (expr : Expr) : M Expr := do
   profiler.mark "whnf"
   profiler.step fun stats => { stats with whnfCalls := stats.whnfCalls + 1 }
@@ -695,6 +795,32 @@ partial def structureEtaDefEq (profiler : Profiler) (manifest : Manifest) (env :
 
 partial def profileDefEq (profiler : Profiler) (manifest : Manifest) (env : Env)
     (levelParams : LevelContext) (ctx : Context) (left right : Expr) : M Unit := do
+  if !profiler.useMemo ||
+      !ctx.isEmpty ||
+      !exprCacheable defEqCacheExprLimit left ||
+      !exprCacheable defEqCacheExprLimit right then
+    profileDefEqCore profiler manifest env levelParams ctx left right
+  else
+    let key : DefEqKey := { levelParams, ctx, left, right }
+    match (← profiler.defEqCacheRef.get).get? key with
+    | some () => do
+        recordStats profiler fun stats =>
+          { stats with defEqCacheHits := stats.defEqCacheHits + 1 }
+        pure ()
+    | none => do
+        recordStats profiler fun stats =>
+          { stats with defEqCacheMisses := stats.defEqCacheMisses + 1 }
+        match ← capture (profileDefEqCore profiler manifest env levelParams ctx left right) with
+        | Except.ok () => do
+            let cache ← profiler.defEqCacheRef.get
+            profiler.defEqCacheRef.set (cache.insert key ())
+            recordStats profiler fun stats =>
+              { stats with defEqCacheEntries := stats.defEqCacheEntries + 1 }
+            pure ()
+        | Except.error err => throw err
+
+partial def profileDefEqCore (profiler : Profiler) (manifest : Manifest) (env : Env)
+    (levelParams : LevelContext) (ctx : Context) (left right : Expr) : M Unit := do
   profiler.mark "defeq"
   profiler.noteDefEqHeads left right
   profiler.step fun stats => { stats with defEqCalls := stats.defEqCalls + 1 }
@@ -785,15 +911,23 @@ def Stats.toJson (stats : Stats) : Lean.Json :=
     ("quotient_reduction_successes", jsonNat stats.quotientReductionSuccesses),
     ("equality_rec_reduction_attempts", jsonNat stats.equalityRecReductionAttempts),
     ("equality_rec_reduction_successes", jsonNat stats.equalityRecReductionSuccesses),
+    ("whnf_cache_hits", jsonNat stats.whnfCacheHits),
+    ("whnf_cache_misses", jsonNat stats.whnfCacheMisses),
+    ("whnf_cache_entries", jsonNat stats.whnfCacheEntries),
+    ("defeq_cache_hits", jsonNat stats.defEqCacheHits),
+    ("defeq_cache_misses", jsonNat stats.defEqCacheMisses),
+    ("defeq_cache_entries", jsonNat stats.defEqCacheEntries),
     ("top_unfold_names", countsJson stats.unfoldNames 30),
     ("top_defeq_head_pairs", countsJson stats.defEqHeadPairs 30)
   ]
 
-def profileDeclaration (manifest : Manifest) (env : Env) (budget : Nat)
+def profileDeclaration (manifest : Manifest) (env : Env) (budget : Nat) (useMemo : Bool)
     (declaration : Declaration) : IO Lean.Json := do
   let ref ← IO.mkRef ({} : Stats)
   let markRef ← IO.mkRef "start"
-  let profiler : Profiler := { budget, ref, markRef }
+  let whnfCacheRef ← IO.mkRef ({} : Std.HashMap WhnfKey Expr)
+  let defEqCacheRef ← IO.mkRef ({} : Std.HashMap DefEqKey Unit)
+  let profiler : Profiler := { budget, ref, markRef, whnfCacheRef, defEqCacheRef, useMemo }
   let startedMs ← IO.monoMsNow
   let result ← (checkDeclaration profiler manifest env declaration).run
   let stoppedMs ← IO.monoMsNow
