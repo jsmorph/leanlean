@@ -34,6 +34,7 @@ def usage : String :=
   "       mpc-check-export --cache-layer <layer.db> <export.ndjson>\n" ++
   "       mpc-check-export [--limit <n>] [--trace] [--stats|--stats-jsonl|--profile-jsonl] [--diagnostic-assume-generated] <export.ndjson>\n" ++
   "       mpc-check-export --profile-declaration <n> <export.ndjson>\n" ++
+  "       mpc-check-export --cache-layer <layer.db> --profile-declaration <n> <export.ndjson>\n" ++
   "       mpc-check-export [--assume-generated] <export.ndjson>  (alias for diagnostic mode)\n" ++
   "       IN=<export.ndjson> mpc-check-export"
 
@@ -820,6 +821,18 @@ def saveLayerConfig (config : Config) (state : MPC.Adapters.Export.ParseState)
     | .ok () =>
         MPC.Adapters.Layer.saveFromState MPC.Configs.LeanCore429 layerPath state
 
+def emitDeclarationProfile (index : Nat) (env : Env)
+    (declaration : Declaration) : IO Unit := do
+  emitDeclarationTelemetry .profileJsonl {
+    index,
+    kind := MPC.Adapters.Export.declarationKindLabel declaration,
+    name := MPC.Adapters.Export.declarationNameLabel declaration,
+    elapsedMs := 0,
+    cumulativeMs := 0,
+    status := .checked,
+    profile? := some (profileDeclaration env declaration)
+  }
+
 def profileDeclarationAt (config : Config) (state : MPC.Adapters.Export.ParseState)
     (index : Nat) : IO (Result Unit) := do
   let declarations := prepareDeclarations { config with limit? := none } state
@@ -829,17 +842,60 @@ def profileDeclarationAt (config : Config) (state : MPC.Adapters.Export.ParseSta
   match ← replayLoop MPC.Configs.LeanCore429 {} 0 0 emptyEnv prefixDeclarations with
   | .error err => pure (.error err)
   | .ok env =>
-      let telemetry : DeclarationTelemetry := {
-        index,
-        kind := MPC.Adapters.Export.declarationKindLabel declaration,
-        name := MPC.Adapters.Export.declarationNameLabel declaration,
-        elapsedMs := 0,
-        cumulativeMs := 0,
-        status := .checked,
-        profile? := some (profileDeclaration env declaration)
-      }
-      IO.println telemetry.toJson.compress
+      emitDeclarationProfile index env declaration
       pure (.ok ())
+
+partial def profileDeclarationAtWithCacheLayerLoop
+    (layerPath : System.FilePath) (index : Nat) (handle : IO.FS.Handle)
+    (lineNumber : Nat) (parseState : MPC.Adapters.Export.State)
+    (replayState : MPC.Adapters.Layer.SqliteOnDemandReplayState) :
+    IO (Result Bool) := do
+  let line ← handle.getLine
+  if line == "" then
+    pure (.ok false)
+  else
+    match MPC.Adapters.Export.parseLineEvent lineNumber parseState line with
+    | .error err => pure (.error err)
+    | .ok (parseState, event) =>
+        let mut replayState := replayState
+        for declaration in event.declarations do
+          if replayState.index == index then
+            emitDeclarationProfile index replayState.env declaration
+            return .ok true
+          match ←
+              MPC.Adapters.Layer.replaySqliteOnDemandStep MPC.Configs.LeanCore429
+                layerPath none true replayState declaration with
+          | .error err => return .error err
+          | .ok nextState => replayState := nextState
+        profileDeclarationAtWithCacheLayerLoop layerPath index handle (lineNumber + 1)
+          parseState replayState
+
+def profileDeclarationAtWithCacheLayer
+    (config : Config) (layerPath : System.FilePath) (index : Nat) :
+    IO (Result Unit) := do
+  if config.checkedLayerPath?.isSome || config.saveLayerPath?.isSome || config.loadLayerPath?.isSome then
+    pure (.error { message := "--cache-layer cannot be combined with --checked-layer, --save-layer, or --load-layer" })
+  else if config.limit?.isSome then
+    pure (.error { message := "--cache-layer cannot be combined with --limit" })
+  else if !MPC.Adapters.Layer.sqlitePath layerPath then
+    pure (.error { message := "--cache-layer requires a SQLite layer path" })
+  else if config.replayOptions.telemetry != .off then
+    pure (.error { message := "--cache-layer profile-declaration cannot be combined with telemetry output" })
+  else if config.replayOptions.trace then
+    pure (.error { message := "--cache-layer cannot be combined with --trace" })
+  else if config.diagnosticAssumeGenerated then
+    pure (.error { message := "--cache-layer cannot be combined with diagnostic generated assumptions" })
+  else
+    match ← MPC.Adapters.Layer.ensureSqliteOnDemandLayer layerPath with
+    | .error err => pure (.error err)
+    | .ok () =>
+        match ← IO.FS.withFile config.inputPath .read fun handle =>
+            profileDeclarationAtWithCacheLayerLoop layerPath index handle 1 {} {} with
+        | .error err =>
+            pure (.error { message := s!"while using cache layer {layerPath}: {err.message}" })
+        | .ok true => pure (.ok ())
+        | .ok false =>
+            pure (.error { message := s!"profile declaration index {index} is out of range" })
 
 def run (args : List String) : IO UInt32 := do
   match ← parseArgs args with
@@ -851,14 +907,22 @@ def run (args : List String) : IO UInt32 := do
   | .ok config => do
       match config.cacheLayerPath? with
       | some layerPath =>
-          match ← replayWithCacheLayerStreaming config layerPath with
-          | .ok result => do
-              printOutcome "cache-accepted" config.inputPath
-                s!"reused {result.reused} declaration entries; checked {result.checked} declaration entries; target declarations {result.target}; environment size {result.env.length}; cache layer {layerPath}"
-              return 0
-          | .error err => do
-              printOutcome "rejected" config.inputPath err.message
-              return 1
+          match config.profileDeclaration? with
+          | some index =>
+              match ← profileDeclarationAtWithCacheLayer config layerPath index with
+              | .ok () => return 0
+              | .error err => do
+                  printOutcome "rejected" config.inputPath err.message
+                  return 1
+          | none =>
+              match ← replayWithCacheLayerStreaming config layerPath with
+              | .ok result => do
+                  printOutcome "cache-accepted" config.inputPath
+                    s!"reused {result.reused} declaration entries; checked {result.checked} declaration entries; target declarations {result.target}; environment size {result.env.length}; cache layer {layerPath}"
+                  return 0
+              | .error err => do
+                  printOutcome "rejected" config.inputPath err.message
+                  return 1
       | none => pure ()
       let input ← IO.FS.readFile config.inputPath
       match MPC.Adapters.Export.parseString input with

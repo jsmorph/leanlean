@@ -15,7 +15,7 @@ Use `MPC_LEAN4EXPORT` when `lean4export` is not on `PATH`.  The generated artifa
 | Run the export self-check cold | `env MPC_LEAN4EXPORT=/path/to/lean4export MPC_CACHE_DB= tools/mpc-export-self-check.sh` |
 | Run the Omega stress profiler | `env MPC_LEAN4EXPORT=/path/to/lean4export MPC_STRESS_TIMEOUT=120 tools/mpc-omega-stress.sh` |
 
-Use `--stats-jsonl` for per-declaration timing without structural counters.  Each declaration emits a `started` row before replay begins and then a `checked`, `reused`, or `rejected` row after replay finishes.  The rows include a monotonic `timestamp_ms`; when a run stalls or times out, the last `started` row identifies the declaration being processed.  The timestamp is an absolute monotonic clock sample, not elapsed time since process start, so use `elapsed_ms`, `cumulative_ms`, or an external timer for durations.  Use `--profile-jsonl` when the question needs expression-size counters, head-application counters, or constant-kind counters beside timing.  Use `--profile-declaration <n>` when declaration `n` takes too long to finish and the prefix before it can still replay, because this mode replays the prefix and emits counters for the selected declaration without checking that declaration.
+Use `--stats-jsonl` for per-declaration timing without structural counters.  Each declaration emits a `started` row before replay begins and then a `checked`, `reused`, or `rejected` row after replay finishes.  The rows include a monotonic `timestamp_ms`; when a run stalls or times out, the last `started` row identifies the declaration being processed.  The timestamp is an absolute monotonic clock sample, not elapsed time since process start, so use `elapsed_ms`, `cumulative_ms`, or an external timer for durations.  Use `--profile-jsonl` when the question needs expression-size counters, head-application counters, or constant-kind counters beside timing.  Use `--profile-declaration <n>` when declaration `n` takes too long to finish and the prefix before it can still replay, because this mode replays the prefix and emits counters for the selected declaration without checking that declaration.  Combine `--cache-layer <db>` with `--profile-declaration <n>` when the accepted prefix already lives in a v4 SQLite cache.  That mode streams the artifact, reuses or checks and persists prefix declarations through SQLite, emits one profile row for declaration `n`, and leaves declaration `n` unchecked.
 
 ```bash
 .lake/build/bin/mpc-check-export \
@@ -33,9 +33,15 @@ Use `--stats-jsonl` for per-declaration timing without structural counters.  Eac
   --profile-declaration 1174 \
   .lake/build/mpc-export-self-check/mpc-level.ndjson \
   > .tmp/mpc-level-decl-1174.profile.jsonl
+
+.lake/build/bin/mpc-check-export \
+  --cache-layer .tmp/mathlib-probes/mathlib-cache-v4.db \
+  --profile-declaration 7358 \
+  .tmp/mathlib-probes/linearMap-det-comp.ndjson \
+  > .tmp/mathlib-probes/linearMap-det-comp-v4.decl7358-cache-profile.jsonl
 ```
 
-`--cache-layer`, `--load-layer`, and `--save-layer` measure checked-layer behavior.  `--cache-layer` mutates a SQLite DB and rejects if an existing cached name has different declaration content, which can happen after source changes; use `MPC_CACHE_DB=` for a cold self-check when that distinction is not under test.  Cache modes do not support `--profile-jsonl`, and `--cache-layer` also rejects `--limit`, so cache measurements should use the text outcome or `--stats-jsonl` where supported.
+`--cache-layer`, `--load-layer`, and `--save-layer` measure checked-layer behavior.  `--cache-layer` mutates a SQLite DB and rejects if an existing cached name has different declaration content, which can happen after source changes; use `MPC_CACHE_DB=` for a cold self-check when that distinction is not under test.  Cache modes do not support `--profile-jsonl`, and `--cache-layer` rejects `--limit`, so cache measurements should use the text outcome, `--stats-jsonl`, or cached `--profile-declaration` where supported.
 
 SQLite cache files now use the v4 on-demand format.  A v4 cache stores declaration groups under a SHA-256 digest of the lowered declaration rendering and records the digest encoding as `repr-v1`.  It stores checked entries by declaration group, erases theorem proof bodies from stored entries, and streams NDJSON input during `--cache-layer` replay, so large cached probes do not allocate the full input string, the split line list, or the full lowered declaration list before replay starts.
 
@@ -231,7 +237,18 @@ timeout 7200s .lake/build/bin/mpc-check-export \
 
 The run reached `LinearEquiv.noConfusion` at declaration index 7,358 after checking `LinearEquiv.noConfusionType`.  The stats file contains 7,359 started rows, 4,118 reused rows, and 3,240 checked rows; stderr was empty, and the v4 cache had grown to 125 MB.  The run was interrupted after `LinearEquiv.noConfusion` remained active for several minutes, so the result keeps the classification as generated-support performance rather than acceptance.
 
-A focused `--profile-declaration 7358` attempt was stopped after the cold prefix replay consumed several minutes without emitting output.  The existing static profile remains the current structural evidence for this declaration.  A better next diagnostic is a cached or prefix-aware declaration profiler, because the current profiler cannot reuse the accepted SQLite prefix.
+A focused `--profile-declaration 7358` attempt was stopped after the cold prefix replay consumed several minutes without emitting output.  Cached declaration profiling now handles this case:
+
+```bash
+timeout 900s .lake/build/bin/mpc-check-export \
+  --cache-layer .tmp/mathlib-probes/mathlib-cache-v4.db \
+  --profile-declaration 7358 \
+  .tmp/mathlib-probes/linearMap-det-comp.ndjson \
+  > .tmp/mathlib-probes/linearMap-det-comp-v4.decl7358-cache-profile.jsonl \
+  2> .tmp/mathlib-probes/linearMap-det-comp-v4.decl7358-cache-profile.err
+```
+
+The cached profile run completed in about 78 seconds, emitted one profile row, and emitted no stderr.  The selected declaration has 8,996 expression nodes, 4,194 application nodes, 734 constant nodes, 733 head applications, 195 definition constants, 193 transparent-definition head applications, and 11 theorem constants.  The profile has no recursor, projection, quotient-lift, equality-rec, equality-ndrec, or primitive-Nat head applications, so the current evidence points to generated no-confusion definition checking through ordinary transparent definitions rather than a missing primitive reduction rule.
 
 ## Mathlib Abelian Resource Boundary
 

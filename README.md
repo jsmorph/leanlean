@@ -29,7 +29,7 @@ The repository now contains only MPC code and the files needed to build, drive, 
 | Surface | Status |
 | --- | --- |
 | Native regression suite | `lake exe mpctest` passes and covers the core rule packages, adapters, checked layers, and name encoding. |
-| Export checker | `mpc-check-export` accepts the maintained generated fixtures and supports text, JSONL, profile JSONL, declaration profiling, and SQLite checked-layer reuse.  With `--cache-layer`, it streams the NDJSON file and replays declarations against the on-demand SQLite cache. |
+| Export checker | `mpc-check-export` accepts the maintained generated fixtures and supports text, JSONL, profile JSONL, declaration profiling, cached declaration profiling, and SQLite checked-layer reuse.  With `--cache-layer`, it streams the NDJSON file and replays declarations against the on-demand SQLite cache. |
 | Export fixtures | `MPCFixtures` contains the arithmetic GCD/parity example, nested-indexed inductive examples, a mutual even/odd example, and the Omega stress module. |
 | Export self-check | `tools/mpc-export-self-check.sh` covers every non-adapter MPC module with source-facing roots and uses `MPC_CACHE_DB` for persistent checked-layer reuse. |
 | Performance work | `perf.md` records the current profile data, major optimizations, and remaining proof-heavy replay costs. |
