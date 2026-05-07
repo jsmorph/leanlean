@@ -250,7 +250,7 @@ timeout 900s .lake/build/bin/mpc-check-export \
 
 The cached profile run completed in about 78 seconds, emitted one profile row, and emitted no stderr.  The selected declaration has 8,996 expression nodes, 4,194 application nodes, 734 constant nodes, 733 head applications, 195 definition constants, 193 transparent-definition head applications, and 11 theorem constants.  The profile has no recursor, projection, quotient-lift, equality-rec, equality-ndrec, or primitive-Nat head applications, so the current evidence points to generated no-confusion definition checking through ordinary transparent definitions rather than a missing primitive reduction rule.
 
-A later cached stats retry on the larger host reached the same declaration through the v4 cache and remained active there for roughly fifteen minutes before interruption.  The output file ended with the `LinearEquiv.noConfusion` started row, contained no stderr, and left the cache at 125 MB.  The result keeps the boundary classified as generated-support performance rather than acceptance.
+A later cached stats retry on the larger host reached the same declaration through the v4 cache and remained active there for more than one hour before interruption.  The output file ended with the `LinearEquiv.noConfusion` started row, contained no stderr, and left the cache at 125 MB.  The memory monitor wrote `.tmp/mathlib-probes/linearMap-det-comp-v4-long.mem.tsv`; RSS reached 580,864 KB during prefix replay, settled at 574,488 KB by the third minute, and stayed at 574,488 KB through the final 3,802-second sample.  The result keeps the boundary classified as CPU-bound generated-support performance rather than acceptance.
 
 ## Mathlib Abelian Resource Boundary
 
