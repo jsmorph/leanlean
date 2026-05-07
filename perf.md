@@ -218,6 +218,21 @@ timeout 300s .lake/build/bin/mpc-check-export \
 
 The hard declaration is `LinearEquiv.noConfusion`, a generated definition with 699 type nodes and 8,297 value nodes.  A head-count scan is dominated by `Semiring.toNonAssocSemiring`, `HEq`, `LinearEquiv`, `RingHomInvPair`, `RingHom`, `Module`, `Eq.ndrec`, and `eq_of_heq`.  This differs from the ordinary proof-term walls because the hard object is derived structure support; a shortcut would be a derived declaration checker or audit layer, not an MPC conversion rule.
 
+The v4 retry used the digest cache and reached the same declaration:
+
+```bash
+timeout 7200s .lake/build/bin/mpc-check-export \
+  --cache-layer .tmp/mathlib-probes/mathlib-cache-v4.db \
+  --stats-jsonl \
+  .tmp/mathlib-probes/linearMap-det-comp.ndjson \
+  > .tmp/mathlib-probes/linearMap-det-comp-v4.stats.jsonl \
+  2> .tmp/mathlib-probes/linearMap-det-comp-v4.stats.err
+```
+
+The run reached `LinearEquiv.noConfusion` at declaration index 7,358 after checking `LinearEquiv.noConfusionType`.  The stats file contains 7,359 started rows, 4,118 reused rows, and 3,240 checked rows; stderr was empty, and the v4 cache had grown to 125 MB.  The run was interrupted after `LinearEquiv.noConfusion` remained active for several minutes, so the result keeps the classification as generated-support performance rather than acceptance.
+
+A focused `--profile-declaration 7358` attempt was stopped after the cold prefix replay consumed several minutes without emitting output.  The existing static profile remains the current structural evidence for this declaration.  A better next diagnostic is a cached or prefix-aware declaration profiler, because the current profiler cannot reuse the accepted SQLite prefix.
+
 ## Mathlib Abelian Resource Boundary
 
 The `CategoryTheory.Abelian.image_ι_comp_eq_zero` probe used `Mathlib.CategoryTheory.Abelian.Basic` with the shared mathlib SQLite cache.  The corrected root built successfully and exported `.tmp/mathlib-probes/category-abelian-image-zero.ndjson`, a 27 MB artifact, but the old v2-cache path was killed with exit code 137 before it wrote checker output or declaration stats.  The old cache file was 2.8 GB, and inspecting it showed 12,566 content rows whose rendered declaration keys occupied 2,620,504,409 bytes, with a largest key of 156,683,766 bytes.
