@@ -288,6 +288,8 @@ The useful fix was to preserve projection-target WHNF when a projection cannot r
 
 Two further local experiments were rejected.  A post-WHNF alpha-equivalence check removed some identical projection chains after the target-WHNF fix, but selected-declaration time stayed flat at the 1,000,000-step budget.  A constructor-specific proof-field skip reduced structural comparisons, but it moved the same work into 136,033 inference calls and 30,899 sort-inference calls in the same budget.  The next performance pass should not add proof-field probing unless it has cached or expected-type information available at the comparison site.
 
+The full cached replay still times out at declaration 12,736 after the projection-target WHNF fix.  The run reached the declaration after about 194 seconds of cache replay, then ran until the 30-minute timeout without stderr or a completion row.  A constant identity-level-substitution fast path measured neutral on the focused 1,000,000-step profile, leaving defEq calls, WHNF calls, and structural calls unchanged within noise, so it was removed.
+
 ## Mathlib Abelian Resource Boundary
 
 The `CategoryTheory.Abelian.image_ι_comp_eq_zero` probe used `Mathlib.CategoryTheory.Abelian.Basic` with the shared mathlib SQLite cache.  The corrected root built successfully and exported `.tmp/mathlib-probes/category-abelian-image-zero.ndjson`, a 27 MB artifact, but the old v2-cache path was killed with exit code 137 before it wrote checker output or declaration stats.  The old cache file was 2.8 GB, and inspecting it showed 12,566 content rows whose rendered declaration keys occupied 2,620,504,409 bytes, with a largest key of 156,683,766 bytes.
