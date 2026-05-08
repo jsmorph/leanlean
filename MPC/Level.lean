@@ -87,6 +87,13 @@ partial def Level.instantiate (subst : List (Name × Level)) : Level → Level
         | .max left right => .max (left.instantiate subst) (right.instantiate subst)
         | .imax left right => .imax (left.instantiate subst) (right.instantiate subst)
 
+partial def Level.defEqZero : Level → Bool
+  | .zero => true
+  | .param _ => false
+  | .succ _ => false
+  | .max left right => left.defEqZero && right.defEqZero
+  | .imax _ right => right.defEqZero
+
 def Level.normalizeSummands? : Level → Option (List Level.Summand)
   | .zero => some [{ name? := none, offset := 0 }]
   | .param name => some [{ name? := some name, offset := 0 }]
@@ -106,17 +113,20 @@ def Level.reduceIMax : Level → Level
   | .imax left right =>
       let left := reduceIMax left
       let right := reduceIMax right
-      match right with
-      | .zero => .zero
-      | .succ _ => .max left right
-      | _ =>
-          match normalizeSummands? right with
-          | some summands =>
-              if summands.any fun summand => 0 < summand.offset then
-                .max left right
-              else
-                .imax left right
-          | none => .imax left right
+      if left.defEqZero then
+        right
+      else
+        match right with
+        | .zero => .zero
+        | .succ _ => .max left right
+        | _ =>
+            match normalizeSummands? right with
+            | some summands =>
+                if summands.any fun summand => 0 < summand.offset then
+                  .max left right
+                else
+                  .imax left right
+            | none => .imax left right
 termination_by level => level
 
 partial def Level.normalize : Level → Level

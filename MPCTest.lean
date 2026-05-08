@@ -2394,6 +2394,16 @@ def checkUniverseComparison : IO Unit := do
     (Level.le (.imax u v) (.max u v))
   expect "universe comparison keeps unrelated parameters distinct"
     (!(Level.defEq u v))
+  expect "universe comparison removes nested imax zero left sides"
+    (Level.defEq
+      (.imax one (.imax .zero (.imax .zero (.max one u))))
+      (.imax one (.max one u)))
+  expect "zero universe recognizes imax with zero right side"
+    (Level.defEqZero (.imax u (.max .zero .zero)))
+  expect "zero universe rejects unresolved imax right side"
+    (!(Level.defEqZero (.imax u v)))
+  expect "zero universe rejects positive max summand"
+    (!(Level.defEqZero (.max .zero one)))
 
 def checkQuotients : IO Unit := do
   expectError "quotient primitives disabled"

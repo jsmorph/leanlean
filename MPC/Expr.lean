@@ -34,24 +34,28 @@ partial def Expr.getAppFnArgsAux : Expr → List Expr → Expr × List Expr
 def Expr.getAppFnArgs (expr : Expr) : Expr × List Expr :=
   Expr.getAppFnArgsAux expr []
 
-partial def Expr.liftFrom (amount cutoff : Nat) : Expr → Expr
-  | .bvar index =>
-      if cutoff <= index then .bvar (index + amount) else .bvar index
-  | .sort level => .sort level
-  | .const name levels => .const name levels
-  | .lit literal => .lit literal
-  | .app fn arg => .app (fn.liftFrom amount cutoff) (arg.liftFrom amount cutoff)
-  | .lam name type body =>
-      .lam name (type.liftFrom amount cutoff) (body.liftFrom amount (cutoff + 1))
-  | .forallE name type body =>
-      .forallE name (type.liftFrom amount cutoff) (body.liftFrom amount (cutoff + 1))
-  | .letE name type value body =>
-      .letE name
-        (type.liftFrom amount cutoff)
-        (value.liftFrom amount cutoff)
-        (body.liftFrom amount (cutoff + 1))
-  | .proj structureName fieldIndex target =>
-      .proj structureName fieldIndex (target.liftFrom amount cutoff)
+partial def Expr.liftFrom (amount cutoff : Nat) (expr : Expr) : Expr :=
+  if amount == 0 then
+    expr
+  else
+    match expr with
+    | .bvar index =>
+        if cutoff <= index then .bvar (index + amount) else .bvar index
+    | .sort level => .sort level
+    | .const name levels => .const name levels
+    | .lit literal => .lit literal
+    | .app fn arg => .app (fn.liftFrom amount cutoff) (arg.liftFrom amount cutoff)
+    | .lam name type body =>
+        .lam name (type.liftFrom amount cutoff) (body.liftFrom amount (cutoff + 1))
+    | .forallE name type body =>
+        .forallE name (type.liftFrom amount cutoff) (body.liftFrom amount (cutoff + 1))
+    | .letE name type value body =>
+        .letE name
+          (type.liftFrom amount cutoff)
+          (value.liftFrom amount cutoff)
+          (body.liftFrom amount (cutoff + 1))
+    | .proj structureName fieldIndex target =>
+        .proj structureName fieldIndex (target.liftFrom amount cutoff)
 
 def Expr.lift (amount : Nat) (expr : Expr) : Expr :=
   expr.liftFrom amount 0

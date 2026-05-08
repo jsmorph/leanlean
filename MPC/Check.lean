@@ -13,7 +13,7 @@ def checkLevelsClosed (ctx : LevelContext) (levels : List Level) : Result Unit :
       fail s!"level is not closed in active universe context: {repr level}"
 
 def inferPiSort (manifest : Manifest) (domain codomain : Level) : Level :=
-  if manifest.prop == .enabled && codomain.defEq .zero then
+  if manifest.prop == .enabled && codomain.defEqZero then
     .zero
   else
     .imax domain codomain
@@ -193,7 +193,7 @@ partial def isPropExpr (manifest : Manifest) (env : Env) (levelParams : LevelCon
     fail "Prop is disabled by the manifest"
   else
     let sort ← inferSort manifest env levelParams ctx expr
-    if sort.defEq .zero then pure () else fail s!"not a proposition: {repr expr}"
+    if sort.defEqZero then pure () else fail s!"not a proposition: {repr expr}"
 
 partial def proofIrrelevanceDefEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (left right : Expr) : Result Unit := do
