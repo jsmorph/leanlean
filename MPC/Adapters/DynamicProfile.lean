@@ -48,6 +48,7 @@ structure Stats where
   defEqShapePairs : Std.HashMap String Nat := {}
   defEqContextDepths : Std.HashMap String Nat := {}
   structuralHeadPairs : Std.HashMap String Nat := {}
+  structuralProjectionSamples : List (String × String) := []
 
 structure WhnfKey where
   levelParams : LevelContext
@@ -119,6 +120,15 @@ def countJson (entry : String × Nat) : Lean.Json :=
 
 def countsJson (map : Std.HashMap String Nat) (limit : Nat) : Lean.Json :=
   Lean.Json.arr ((topCounts map limit).map countJson).toArray
+
+def stringPairJson (entry : String × String) : Lean.Json :=
+  Lean.Json.mkObj [
+    ("left", Lean.Json.str entry.1),
+    ("right", Lean.Json.str entry.2)
+  ]
+
+def stringPairsJson (entries : List (String × String)) : Lean.Json :=
+  Lean.Json.arr (entries.map stringPairJson).toArray
 
 def whnfCacheExprLimit : Nat :=
   128
@@ -192,6 +202,29 @@ def exprShapeLabel (expr : Expr) : String :=
   let (_, args) := expr.getAppFnArgs
   s!"{exprHeadLabel expr}/{args.length}/{exprCacheSizeCapped 65 expr}"
 
+partial def exprShort : Nat → Expr → String
+  | 0, expr => exprShapeLabel expr
+  | fuel + 1, expr =>
+      match expr with
+      | .bvar index => s!"bvar {index}"
+      | .sort level => s!"sort {repr level}"
+      | .const name levels => s!"const {name}.{levels.length}"
+      | .lit (.nat value) => s!"nat {value}"
+      | .lit (.str value) => s!"str {value}"
+      | .app .. =>
+          let (head, args) := expr.getAppFnArgs
+          let argText := String.intercalate ", " ((args.take 3).map (exprShort fuel))
+          let suffix := if args.length > 3 then ", ..." else ""
+          s!"app {exprHeadLabel head}/{args.length}({argText}{suffix})"
+      | .lam name type body =>
+          s!"lam {name} : {exprShort fuel type} => {exprShort fuel body}"
+      | .forallE name type body =>
+          s!"forall {name} : {exprShort fuel type} => {exprShort fuel body}"
+      | .letE name type value body =>
+          s!"let {name} : {exprShort fuel type} := {exprShort fuel value}; {exprShort fuel body}"
+      | .proj structureName fieldIndex target =>
+          s!"proj {structureName}.{fieldIndex}({exprShort fuel target})"
+
 def Profiler.step (profiler : Profiler) (update : Stats → Stats) : M Unit := do
   let stats ← profiler.ref.get
   if stats.steps >= profiler.budget then
@@ -216,8 +249,20 @@ def Profiler.noteDefEq (profiler : Profiler) (ctx : Context) (left right : Expr)
 def Profiler.noteStructuralCompare (profiler : Profiler) (left right : Expr) : M Unit := do
   let key := exprShapeLabel left ++ " | " ++ exprShapeLabel right
   let stats ← profiler.ref.get
+  let samples :=
+    match left, right with
+    | .proj .., _ | _, .proj .. =>
+        if stats.structuralProjectionSamples.length < 20 then
+          stats.structuralProjectionSamples ++ [(exprShort 5 left, exprShort 5 right)]
+        else
+          stats.structuralProjectionSamples
+    | _, _ => stats.structuralProjectionSamples
   profiler.ref.set
-    { stats with structuralHeadPairs := incrementString stats.structuralHeadPairs key }
+    {
+      stats with
+      structuralHeadPairs := incrementString stats.structuralHeadPairs key,
+      structuralProjectionSamples := samples
+    }
 
 def Profiler.noteUnfold (profiler : Profiler) (name : Name) : M Unit := do
   profiler.step fun stats =>
@@ -386,16 +431,19 @@ partial def whnfCore (profiler : Profiler) (manifest : Manifest) (env : Env)
       profiler.step fun stats => { stats with zetaReductions := stats.zetaReductions + 1 }
       whnf profiler manifest env levelParams (Expr.instantiate1 body value)
   | .proj structureName fieldIndex target => do
-      recordAttempt profiler fun stats =>
-        { stats with projectionReductionAttempts := stats.projectionReductionAttempts + 1 }
-      match ← liftResult
-          (_root_.MPC.Packages.Projection.reduce?
-            _root_.MPC.whnf manifest env levelParams structureName fieldIndex target) with
-      | some reduced => do
-          profiler.step fun stats =>
-            { stats with projectionReductionSuccesses := stats.projectionReductionSuccesses + 1 }
-          whnf profiler manifest env levelParams reduced
-      | none => pure (.proj structureName fieldIndex target)
+      if !manifest.supportsProjections then
+        pure (.proj structureName fieldIndex target)
+      else
+        recordAttempt profiler fun stats =>
+          { stats with projectionReductionAttempts := stats.projectionReductionAttempts + 1 }
+        let targetWhnf ← whnf profiler manifest env levelParams target
+        match ← liftResult
+            (_root_.MPC.Packages.Projection.reduceTarget? manifest env structureName fieldIndex targetWhnf) with
+        | some reduced => do
+            profiler.step fun stats =>
+              { stats with projectionReductionSuccesses := stats.projectionReductionSuccesses + 1 }
+            whnf profiler manifest env levelParams reduced
+        | none => pure (.proj structureName fieldIndex targetWhnf)
   | .app fn arg => do
       profiler.mark "whnf:app"
       let appExpr := Expr.app fn arg
@@ -992,7 +1040,8 @@ def Stats.toJson (stats : Stats) : Lean.Json :=
     ("top_defeq_head_pairs", countsJson stats.defEqHeadPairs 30),
     ("top_defeq_shape_pairs", countsJson stats.defEqShapePairs 30),
     ("top_defeq_context_depths", countsJson stats.defEqContextDepths 30),
-    ("top_structural_head_pairs", countsJson stats.structuralHeadPairs 30)
+    ("top_structural_head_pairs", countsJson stats.structuralHeadPairs 30),
+    ("structural_projection_samples", stringPairsJson stats.structuralProjectionSamples)
   ]
 
 def profileDeclaration (manifest : Manifest) (env : Env) (budget : Nat) (useMemo : Bool)

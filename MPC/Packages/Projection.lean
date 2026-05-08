@@ -54,13 +54,11 @@ def fieldIndexByName? (fields : List Binder) (fieldName : Name) : Option Nat :=
 
 -- Avoid an exported sparse matcher for the constructor-kind test.
 set_option backward.match.sparseCases false in
-partial def reduce? (whnfFn : Manifest → Env → LevelContext → Expr → Result Expr)
-    (manifest : Manifest) (env : Env) (levelParams : LevelContext)
-    (structureName : Name) (fieldIndex : Nat) (target : Expr) : Result (Option Expr) := do
+def reduceTarget? (manifest : Manifest) (env : Env)
+    (structureName : Name) (fieldIndex : Nat) (targetWhnf : Expr) : Result (Option Expr) := do
   if !manifest.supportsProjections then
     pure none
   else
-    let targetWhnf ← whnfFn manifest env levelParams target
     let (head, args) := targetWhnf.getAppFnArgs
     match head with
     | Expr.const ctorName _ =>
@@ -78,6 +76,15 @@ partial def reduce? (whnfFn : Manifest → Env → LevelContext → Expr → Res
               | _ => pure none
         | _ => pure none
     | _ => pure none
+
+partial def reduce? (whnfFn : Manifest → Env → LevelContext → Expr → Result Expr)
+    (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (structureName : Name) (fieldIndex : Nat) (target : Expr) : Result (Option Expr) := do
+  if !manifest.supportsProjections then
+    pure none
+  else
+    let targetWhnf ← whnfFn manifest env levelParams target
+    reduceTarget? manifest env structureName fieldIndex targetWhnf
 
 partial def reduceConstant? (_whnfFn : Manifest → Env → LevelContext → Expr → Result Expr)
     (manifest : Manifest) (env : Env) (_levelParams : LevelContext)

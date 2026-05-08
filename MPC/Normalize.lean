@@ -119,11 +119,14 @@ partial def whnf (manifest : Manifest) (env : Env) (levelParams : LevelContext)
   | .letE _ _ value body =>
       whnf manifest env levelParams (Expr.instantiate1 body value)
   | .proj structureName fieldIndex target => do
-      match ←
-          MPC.Packages.Projection.reduce? whnf manifest env levelParams structureName
-            fieldIndex target with
-      | some reduced => whnf manifest env levelParams reduced
-      | none => pure (.proj structureName fieldIndex target)
+      if !manifest.supportsProjections then
+        pure (.proj structureName fieldIndex target)
+      else
+        let targetWhnf ← whnf manifest env levelParams target
+        match ←
+            MPC.Packages.Projection.reduceTarget? manifest env structureName fieldIndex targetWhnf with
+        | some reduced => whnf manifest env levelParams reduced
+        | none => pure (.proj structureName fieldIndex targetWhnf)
   | .app fn arg =>
       let appExpr := Expr.app fn arg
       let (head, args) := Expr.getAppFnArgs appExpr
