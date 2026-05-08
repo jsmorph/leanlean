@@ -149,9 +149,15 @@ structure ConstantInfo where
   kind : ConstantKind
   deriving BEq, Repr, Inhabited
 
+structure ConstructorFieldInfo where
+  paramCount : Nat
+  proofFields : List Bool := []
+  deriving BEq, Repr, Inhabited
+
 structure Env where
   entries : List ConstantInfo := []
   index : Std.HashMap Name ConstantInfo := {}
+  constructorFieldInfo : Std.HashMap Name ConstructorFieldInfo := {}
 
 def emptyEnv : Env :=
   {}
@@ -164,17 +170,85 @@ def listGet? : List α → Nat → Option α
 def Env.find? (env : Env) (name : Name) : Option ConstantInfo :=
   env.index.get? name
 
+def Env.findConstructorFieldInfo? (env : Env) (name : Name) :
+    Option ConstructorFieldInfo :=
+  env.constructorFieldInfo.get? name
+
 def Env.contains (env : Env) (name : Name) : Bool :=
   env.index.contains name
 
 def Env.length (env : Env) : Nat :=
   env.entries.length
 
+partial def typeResultSortWithArity? : Expr → Option (Nat × Level)
+  | .forallE _ _ body => do
+      let (arity, level) ← typeResultSortWithArity? body
+      pure (arity + 1, level)
+  | .sort level => some (0, level)
+  | _ => none
+
+partial def forallResult : Expr → Expr
+  | .forallE _ _ body => forallResult body
+  | expr => expr
+
+def ConstantInfo.propResultArity? (info : ConstantInfo) : Option Nat := do
+  let (arity, level) ← typeResultSortWithArity? info.type
+  if level.defEqZero then
+    some arity
+  else
+    none
+
+def Env.knownPropType (env : Env) (type : Expr) : Bool :=
+  let result := forallResult type
+  let (head, args) := result.getAppFnArgs
+  match head with
+  | .const name _ =>
+      match env.find? name with
+      | some info =>
+          match info.propResultArity? with
+          | some arity => args.length == arity
+          | none => false
+      | none => false
+  | _ => false
+
+def Env.constructorFieldInfoFromFields? (env : Env) (paramCount : Nat)
+    (fields : List Binder) : Option ConstructorFieldInfo :=
+  let proofFields := fields.map fun field => env.knownPropType field.type
+  if proofFields.any (fun flag => flag) then
+    some { paramCount, proofFields }
+  else
+    none
+
+def Env.constructorFieldInfoFor? (env : Env) (info : ConstantInfo) :
+    Option ConstructorFieldInfo :=
+  match info.kind with
+  | .constructor inductiveName ctorIndex _ =>
+      match env.find? inductiveName with
+      | some { kind := .inductiveType spec, .. } =>
+          match listGet? spec.constructors ctorIndex with
+          | some ctor => env.constructorFieldInfoFromFields? spec.params.length ctor.fields
+          | none => none
+      | some { kind := .indexedInductiveType spec, .. } =>
+          match listGet? spec.constructors ctorIndex with
+          | some ctor => env.constructorFieldInfoFromFields? spec.params.length ctor.fields
+          | none => none
+      | _ => none
+  | _ => none
+
 def Env.add (env : Env) (info : ConstantInfo) : Result Env :=
   if env.contains info.name then
     fail s!"constant already exists: {info.name}"
   else
-    pure { entries := info :: env.entries, index := env.index.insert info.name info }
+    let constructorFieldInfo :=
+      match env.constructorFieldInfoFor? info with
+      | some fieldInfo => env.constructorFieldInfo.insert info.name fieldInfo
+      | none => env.constructorFieldInfo
+    pure
+      {
+        entries := info :: env.entries
+        index := env.index.insert info.name info
+        constructorFieldInfo
+      }
 
 def ConstantInfo.levelSubst? (info : ConstantInfo) (levels : List Level) :
     Option (List (Name × Level)) :=

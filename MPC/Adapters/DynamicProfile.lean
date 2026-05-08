@@ -43,6 +43,7 @@ structure Stats where
   defEqCacheHits : Nat := 0
   defEqCacheMisses : Nat := 0
   defEqCacheEntries : Nat := 0
+  constructorProofFieldSkips : Nat := 0
   unfoldNames : Std.HashMap String Nat := {}
   defEqHeadPairs : Std.HashMap String Nat := {}
   defEqShapePairs : Std.HashMap String Nat := {}
@@ -744,8 +745,7 @@ partial def structuralDefEq (profiler : Profiler) (manifest : Manifest) (env : E
       if leftName != rightName || leftLevels.length != rightLevels.length then
         fail s!"constants differ: {leftName}{repr leftLevels} and {rightName}{repr rightLevels}"
       else
-        for pair in leftLevels.zip rightLevels do
-          if pair.1.defEq pair.2 then pure () else fail "constant levels differ"
+        liftResult (MPC.checkLevelArgsDefEq leftLevels rightLevels)
   | .lit left, .lit right =>
       if left == right then pure () else fail "literals differ"
   | .lit (.nat value), _ =>
@@ -766,9 +766,39 @@ partial def structuralDefEq (profiler : Profiler) (manifest : Manifest) (env : E
       if leftArgs.length != rightArgs.length then
         fail "application arities differ"
       else
-        profileDefEq profiler manifest env levelParams ctx leftHead rightHead
-        for pair in leftArgs.zip rightArgs do
-          profileDefEq profiler manifest env levelParams ctx pair.1 pair.2
+        let genericApplicationCompare : M Unit := do
+          profileDefEq profiler manifest env levelParams ctx leftHead rightHead
+          for pair in leftArgs.zip rightArgs do
+            profileDefEq profiler manifest env levelParams ctx pair.1 pair.2
+        match leftHead, rightHead with
+        | .const leftName leftLevels, .const rightName rightLevels =>
+            if manifest.prop == .enabled && leftName == rightName then
+              match env.findConstructorFieldInfo? leftName with
+              | some fieldInfo =>
+                  let expectedArity := fieldInfo.paramCount + fieldInfo.proofFields.length
+                  if leftArgs.length == expectedArity &&
+                      rightArgs.length == expectedArity then
+                    liftResult (MPC.checkLevelArgsDefEq leftLevels rightLevels)
+                    for pair in (leftArgs.take fieldInfo.paramCount).zip
+                        (rightArgs.take fieldInfo.paramCount) do
+                      profileDefEq profiler manifest env levelParams ctx pair.1 pair.2
+                    let leftFields := leftArgs.drop fieldInfo.paramCount
+                    let rightFields := rightArgs.drop fieldInfo.paramCount
+                    for pair in fieldInfo.proofFields.zip (leftFields.zip rightFields) do
+                      if pair.1 then
+                        recordStats profiler fun stats =>
+                          {
+                            stats with
+                            constructorProofFieldSkips := stats.constructorProofFieldSkips + 1
+                          }
+                      else
+                        profileDefEq profiler manifest env levelParams ctx pair.2.1 pair.2.2
+                  else
+                    genericApplicationCompare
+              | none => genericApplicationCompare
+            else
+              genericApplicationCompare
+        | _, _ => genericApplicationCompare
   | .lam _ leftType leftBody, .lam _ rightType rightBody => do
       profileDefEq profiler manifest env levelParams ctx leftType rightType
       profileDefEq profiler manifest env levelParams (ctx.extend "_" leftType) leftBody rightBody
@@ -1046,6 +1076,7 @@ def Stats.toJson (stats : Stats) : Lean.Json :=
     ("defeq_cache_hits", jsonNat stats.defEqCacheHits),
     ("defeq_cache_misses", jsonNat stats.defEqCacheMisses),
     ("defeq_cache_entries", jsonNat stats.defEqCacheEntries),
+    ("constructor_proof_field_skips", jsonNat stats.constructorProofFieldSkips),
     ("top_unfold_names", countsJson stats.unfoldNames 30),
     ("top_defeq_head_pairs", countsJson stats.defEqHeadPairs 30),
     ("top_defeq_shape_pairs", countsJson stats.defEqShapePairs 30),

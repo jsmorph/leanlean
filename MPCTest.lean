@@ -34,7 +34,11 @@ def expectEnvContains (label : String) (env : Env) (name : Name) : IO Unit :=
     throw <| IO.userError s!"{label}: missing {name}"
 
 def shadowEnv (env : Env) (info : ConstantInfo) : Env :=
-  { entries := info :: env.entries, index := env.index.insert info.name info }
+  {
+    entries := info :: env.entries
+    index := env.index.insert info.name info
+    constructorFieldInfo := env.constructorFieldInfo
+  }
 
 def type0 : Expr :=
   .sort (.succ .zero)
@@ -2144,6 +2148,9 @@ def checkEquality : IO Unit := do
         equalityEndpointProofDeclarations ++
         [.axiom "aEqA" [] (eqAlpha (.const "a" []) (.const "a" []))]))
   expectEnvContains "equality primitives" env "Eq.rec"
+  expect "Eq proof type metadata"
+    (env.knownPropType (eqAlpha (.const "a" []) (.const "a" [])))
+  expect "underapplied Eq metadata" (!env.knownPropType (.const "Eq" [.succ .zero]))
   expectOkLabel "proof irrelevance"
     (defEq MPC.Configs.EqualityPoc env [] [] (.const "p" []) (.const "q" []))
   expectError "sort mismatch conversion terminates"
@@ -2165,6 +2172,11 @@ def checkEquality : IO Unit := do
   let proofBoxEnv ← expectOkLabel "Eq.rec proof endpoint replay"
     (replay MPC.Configs.EqualityPoc env
       [.inductive proofBoxSpec, .axiom "proofBoxEq" [] proofBoxEqType])
+  match proofBoxEnv.findConstructorFieldInfo? "ProofBox.mk" with
+  | some info => expect "ProofBox proof field metadata" (info.proofFields == [false, true])
+  | none => throw <| IO.userError "ProofBox proof field metadata: missing"
+  expectOkLabel "constructor proof-field conversion"
+    (defEq MPC.Configs.EqualityPoc proofBoxEnv [] [] proofBoxP proofBoxQ)
   expectOkLabel "Eq.rec proof endpoint K conversion"
     (defEq MPC.Configs.EqualityPoc proofBoxEnv [] [] proofBoxEqRecTransport (.const "b" []))
   let ndInferred ← expectOkLabel "Eq.ndrec inference"

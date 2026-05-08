@@ -22,6 +22,13 @@ def sortLevel? : Expr → Option Level
   | .sort level => some level
   | _ => none
 
+def checkLevelArgsDefEq (left right : List Level) : Result Unit := do
+  if left.length != right.length then
+    fail "constant levels differ"
+  else
+    for pair in left.zip right do
+      if pair.1.defEq pair.2 then pure () else fail "constant levels differ"
+
 mutual
 
 partial def infer (manifest : Manifest) (env : Env) (levelParams : LevelContext)
@@ -145,8 +152,7 @@ partial def structuralDefEq (manifest : Manifest) (env : Env) (levelParams : Lev
       if leftName != rightName || leftLevels.length != rightLevels.length then
         fail s!"constants differ: {leftName}{repr leftLevels} and {rightName}{repr rightLevels}"
       else
-        for pair in leftLevels.zip rightLevels do
-          if pair.1.defEq pair.2 then pure () else fail "constant levels differ"
+        checkLevelArgsDefEq leftLevels rightLevels
   | .lit left, .lit right =>
       if left == right then pure () else fail "literals differ"
   | .lit (.nat value), _ =>
@@ -167,9 +173,35 @@ partial def structuralDefEq (manifest : Manifest) (env : Env) (levelParams : Lev
       if leftArgs.length != rightArgs.length then
         fail "application arities differ"
       else
-        defEq manifest env levelParams ctx leftHead rightHead
-        for pair in leftArgs.zip rightArgs do
-          defEq manifest env levelParams ctx pair.1 pair.2
+        let genericApplicationCompare : Result Unit := do
+          defEq manifest env levelParams ctx leftHead rightHead
+          for pair in leftArgs.zip rightArgs do
+            defEq manifest env levelParams ctx pair.1 pair.2
+        match leftHead, rightHead with
+        | .const leftName leftLevels, .const rightName rightLevels =>
+            if manifest.prop == .enabled && leftName == rightName then
+              match env.findConstructorFieldInfo? leftName with
+              | some fieldInfo =>
+                  let expectedArity := fieldInfo.paramCount + fieldInfo.proofFields.length
+                  if leftArgs.length == expectedArity &&
+                      rightArgs.length == expectedArity then
+                    checkLevelArgsDefEq leftLevels rightLevels
+                    for pair in (leftArgs.take fieldInfo.paramCount).zip
+                        (rightArgs.take fieldInfo.paramCount) do
+                      defEq manifest env levelParams ctx pair.1 pair.2
+                    let leftFields := leftArgs.drop fieldInfo.paramCount
+                    let rightFields := rightArgs.drop fieldInfo.paramCount
+                    for pair in fieldInfo.proofFields.zip (leftFields.zip rightFields) do
+                      if pair.1 then
+                        pure ()
+                      else
+                        defEq manifest env levelParams ctx pair.2.1 pair.2.2
+                  else
+                    genericApplicationCompare
+              | none => genericApplicationCompare
+            else
+              genericApplicationCompare
+        | _, _ => genericApplicationCompare
   | .lam _ leftType leftBody, .lam _ rightType rightBody =>
       defEq manifest env levelParams ctx leftType rightType
       defEq manifest env levelParams (ctx.extend "_" leftType) leftBody rightBody
