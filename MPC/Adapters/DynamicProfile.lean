@@ -370,19 +370,28 @@ partial def whnfCore (profiler : Profiler) (manifest : Manifest) (env : Env)
   | .proj structureName fieldIndex target => do
       recordAttempt profiler fun stats =>
         { stats with projectionReductionAttempts := stats.projectionReductionAttempts + 1 }
-      pure (.proj structureName fieldIndex target)
+      match ← liftResult
+          (_root_.MPC.Packages.Projection.reduce?
+            _root_.MPC.whnf manifest env levelParams structureName fieldIndex target) with
+      | some reduced => do
+          profiler.step fun stats =>
+            { stats with projectionReductionSuccesses := stats.projectionReductionSuccesses + 1 }
+          whnf profiler manifest env levelParams reduced
+      | none => pure (.proj structureName fieldIndex target)
   | .app fn arg => do
       profiler.mark "whnf:app"
       let appExpr := Expr.app fn arg
       let (head, args) := Expr.getAppFnArgs appExpr
       let primitiveReduction? ←
         match head with
-        | .const name _ =>
+        | .const name levels =>
             match env.find? name with
-            | some _ => do
+            | some info => do
                 recordAttempt profiler fun stats =>
                   { stats with primitiveReductionAttempts := stats.primitiveReductionAttempts + 1 }
-                pure none
+                liftResult
+                  (_root_.MPC.Packages.PrimitiveNat.reduce?
+                    _root_.MPC.whnf manifest env levelParams name info levels args)
             | none => pure none
         | _ => pure none
       match primitiveReduction? with
@@ -393,10 +402,12 @@ partial def whnfCore (profiler : Profiler) (manifest : Manifest) (env : Env)
       | none =>
           let projectionReduction? ←
             match head with
-            | .const _ _ => do
+            | .const name levels => do
                 recordAttempt profiler fun stats =>
                   { stats with projectionReductionAttempts := stats.projectionReductionAttempts + 1 }
-                pure none
+                liftResult
+                  (_root_.MPC.Packages.Projection.reduceConstant?
+                    _root_.MPC.whnf manifest env levelParams name levels args)
             | _ => pure none
           match projectionReduction? with
           | some reduced => do
