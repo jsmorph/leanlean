@@ -45,6 +45,9 @@ structure Stats where
   defEqCacheEntries : Nat := 0
   unfoldNames : Std.HashMap String Nat := {}
   defEqHeadPairs : Std.HashMap String Nat := {}
+  defEqShapePairs : Std.HashMap String Nat := {}
+  defEqContextDepths : Std.HashMap String Nat := {}
+  structuralHeadPairs : Std.HashMap String Nat := {}
 
 structure WhnfKey where
   levelParams : LevelContext
@@ -185,6 +188,10 @@ def exprHeadLabel (expr : Expr) : String :=
   | .letE .. => "let"
   | .proj structureName fieldIndex _ => s!"proj {structureName}.{fieldIndex}"
 
+def exprShapeLabel (expr : Expr) : String :=
+  let (_, args) := expr.getAppFnArgs
+  s!"{exprHeadLabel expr}/{args.length}/{exprCacheSizeCapped 65 expr}"
+
 def Profiler.step (profiler : Profiler) (update : Stats → Stats) : M Unit := do
   let stats ← profiler.ref.get
   if stats.steps >= profiler.budget then
@@ -196,10 +203,21 @@ def Profiler.step (profiler : Profiler) (update : Stats → Stats) : M Unit := d
       let mark ← profiler.markRef.get
       trace s!"profile-step\t{nextStats.steps}\tmark={mark}\tinfer={nextStats.inferCalls}\tcheck={nextStats.checkCalls}\tdefeq={nextStats.defEqCalls}\twhnf={nextStats.whnfCalls}\twhnfAlphaEq={nextStats.whnfAlphaEqCalls}"
 
-def Profiler.noteDefEqHeads (profiler : Profiler) (left right : Expr) : M Unit := do
+def Profiler.noteDefEq (profiler : Profiler) (ctx : Context) (left right : Expr) : M Unit := do
   let key := exprHeadLabel left ++ " | " ++ exprHeadLabel right
+  let shapeKey := exprShapeLabel left ++ " | " ++ exprShapeLabel right
+  let ctxKey := toString ctx.length
   profiler.step fun stats =>
-    { stats with defEqHeadPairs := incrementString stats.defEqHeadPairs key }
+    { stats with
+      defEqHeadPairs := incrementString stats.defEqHeadPairs key,
+      defEqShapePairs := incrementString stats.defEqShapePairs shapeKey,
+      defEqContextDepths := incrementString stats.defEqContextDepths ctxKey }
+
+def Profiler.noteStructuralCompare (profiler : Profiler) (left right : Expr) : M Unit := do
+  let key := exprShapeLabel left ++ " | " ++ exprShapeLabel right
+  let stats ← profiler.ref.get
+  profiler.ref.set
+    { stats with structuralHeadPairs := incrementString stats.structuralHeadPairs key }
 
 def Profiler.noteUnfold (profiler : Profiler) (name : Name) : M Unit := do
   profiler.step fun stats =>
@@ -658,6 +676,7 @@ partial def structuralDefEq (profiler : Profiler) (manifest : Manifest) (env : E
   profiler.mark "structural-defeq:right-whnf"
   let right ← whnf profiler manifest env levelParams right
   profiler.mark "structural-defeq:compare"
+  profiler.noteStructuralCompare left right
   match left, right with
   | .bvar left, .bvar right =>
       if left == right then pure () else fail "bound variables differ"
@@ -844,7 +863,7 @@ partial def structureEtaDefEq (profiler : Profiler) (manifest : Manifest) (env :
 partial def profileDefEq (profiler : Profiler) (manifest : Manifest) (env : Env)
     (levelParams : LevelContext) (ctx : Context) (left right : Expr) : M Unit := do
   profiler.mark "defeq"
-  profiler.noteDefEqHeads left right
+  profiler.noteDefEq ctx left right
   profiler.step fun stats => { stats with defEqCalls := stats.defEqCalls + 1 }
   if left.alphaEq right then
     recordStats profiler fun stats =>
@@ -970,7 +989,10 @@ def Stats.toJson (stats : Stats) : Lean.Json :=
     ("defeq_cache_misses", jsonNat stats.defEqCacheMisses),
     ("defeq_cache_entries", jsonNat stats.defEqCacheEntries),
     ("top_unfold_names", countsJson stats.unfoldNames 30),
-    ("top_defeq_head_pairs", countsJson stats.defEqHeadPairs 30)
+    ("top_defeq_head_pairs", countsJson stats.defEqHeadPairs 30),
+    ("top_defeq_shape_pairs", countsJson stats.defEqShapePairs 30),
+    ("top_defeq_context_depths", countsJson stats.defEqContextDepths 30),
+    ("top_structural_head_pairs", countsJson stats.structuralHeadPairs 30)
   ]
 
 def profileDeclaration (manifest : Manifest) (env : Env) (budget : Nat) (useMemo : Bool)
