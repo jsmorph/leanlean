@@ -292,6 +292,8 @@ The full cached replay still times out at declaration 12,736 after the projectio
 
 Long dynamic profiles need sparse heartbeat output.  The 100,000,000-step diagnostic exhausted its budget with 4,669,208 defEq calls, 41,476,946 WHNF calls, 1,775,367 structural comparisons, 7,758,302 successful projection reductions, and 1,967,489 transparent unfolds.  Lambda-root samples show pointwise algebra-instance formulas, including `HAdd.hAdd` and `HSMul.hSMul` over `Pi`, rather than a new primitive or generated reducer.  `mpc-dynamic-profile-export --trace-every <n>` now controls heartbeat frequency, with a default of 100,000 steps.
 
+A constant-WHNF cache is not useful on this profile.  The experimental cache keyed on transparent constant name and universe levels, which avoids hashing full expressions and should have been favorable if repeated unfolding were the isolated cost.  On the 1,000,000-step run, it reduced transparent unfolds from 20,991 to 104 but increased selected time from about 339 ms to 348 ms and increased defEq calls from 43,688 to 45,605.
+
 ## Mathlib Abelian Resource Boundary
 
 The `CategoryTheory.Abelian.image_ι_comp_eq_zero` probe used `Mathlib.CategoryTheory.Abelian.Basic` with the shared mathlib SQLite cache.  The corrected root built successfully and exported `.tmp/mathlib-probes/category-abelian-image-zero.ndjson`, a 27 MB artifact, but the old v2-cache path was killed with exit code 137 before it wrote checker output or declaration stats.  The old cache file was 2.8 GB, and inspecting it showed 12,566 content rows whose rendered declaration keys occupied 2,620,504,409 bytes, with a largest key of 156,683,766 bytes.
