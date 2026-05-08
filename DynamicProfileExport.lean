@@ -8,10 +8,11 @@ structure Config where
   cacheLayerPath : System.FilePath
   declarationIndex : Nat
   budget : Nat := 1000000
+  traceEvery : Nat := 100000
   useMemo : Bool := false
 
 def usage : String :=
-  "usage: mpc-dynamic-profile-export --cache-layer <layer.db> --declaration <n> [--budget <n>] [--memo] <export.ndjson>"
+  "usage: mpc-dynamic-profile-export --cache-layer <layer.db> --declaration <n> [--budget <n>] [--trace-every <n>] [--memo] <export.ndjson>"
 
 def filePath (path : String) : Except String System.FilePath :=
   if path.isEmpty then
@@ -33,40 +34,44 @@ def setInputPath (input? : Option String) (path : String) :
 
 partial def parseArgsLoop
     (input? : Option String) (cacheLayerPath? : Option System.FilePath)
-    (declarationIndex? : Option Nat) (budget : Nat) (useMemo : Bool) :
+    (declarationIndex? : Option Nat) (budget traceEvery : Nat) (useMemo : Bool) :
     List String →
-      Except String (Option String × Option System.FilePath × Option Nat × Nat × Bool)
-  | [] => pure (input?, cacheLayerPath?, declarationIndex?, budget, useMemo)
+      Except String (Option String × Option System.FilePath × Option Nat × Nat × Nat × Bool)
+  | [] => pure (input?, cacheLayerPath?, declarationIndex?, budget, traceEvery, useMemo)
   | "--cache-layer" :: path :: rest => do
       if cacheLayerPath?.isSome then
         .error "multiple cache layers"
       else
-        parseArgsLoop input? (some (← filePath path)) declarationIndex? budget useMemo rest
+        parseArgsLoop input? (some (← filePath path)) declarationIndex? budget traceEvery useMemo rest
   | "--cache-layer" :: [] => .error "missing value after --cache-layer"
   | "--declaration" :: value :: rest => do
       if declarationIndex?.isSome then
         .error "multiple declaration indexes"
       else
         parseArgsLoop input? cacheLayerPath?
-          (some (← parseNatArgument "declaration index" value)) budget useMemo rest
+          (some (← parseNatArgument "declaration index" value)) budget traceEvery useMemo rest
   | "--declaration" :: [] => .error "missing value after --declaration"
   | "--budget" :: value :: rest => do
       parseArgsLoop input? cacheLayerPath? declarationIndex?
-        (← parseNatArgument "budget" value) useMemo rest
+        (← parseNatArgument "budget" value) traceEvery useMemo rest
   | "--budget" :: [] => .error "missing value after --budget"
+  | "--trace-every" :: value :: rest => do
+      parseArgsLoop input? cacheLayerPath? declarationIndex? budget
+        (← parseNatArgument "trace interval" value) useMemo rest
+  | "--trace-every" :: [] => .error "missing value after --trace-every"
   | "--memo" :: rest =>
-      parseArgsLoop input? cacheLayerPath? declarationIndex? budget true rest
+      parseArgsLoop input? cacheLayerPath? declarationIndex? budget traceEvery true rest
   | "--help" :: _ => .error usage
   | arg :: rest => do
       if arg.startsWith "-" then
         .error s!"unknown argument: {arg}"
       else
         parseArgsLoop (← setInputPath input? arg) cacheLayerPath? declarationIndex?
-          budget useMemo rest
+          budget traceEvery useMemo rest
 
 def parseArgs (args : List String) : Except String Config := do
-  let (input?, cacheLayerPath?, declarationIndex?, budget, useMemo) ←
-    parseArgsLoop none none none 1000000 false args
+  let (input?, cacheLayerPath?, declarationIndex?, budget, traceEvery, useMemo) ←
+    parseArgsLoop none none none 1000000 100000 false args
   let some input := input?
     | .error "missing input path"
   let some cacheLayerPath := cacheLayerPath?
@@ -78,6 +83,7 @@ def parseArgs (args : List String) : Except String Config := do
     cacheLayerPath,
     declarationIndex,
     budget,
+    traceEvery,
     useMemo
   }
 
@@ -130,7 +136,7 @@ def runProfile (config : Config) : IO (Result Lean.Json) := do
         | .ok (env, declaration) => do
             let json ←
               MPC.Adapters.DynamicProfile.profileDeclaration
-                MPC.Configs.LeanCore429 env config.budget config.useMemo declaration
+                MPC.Configs.LeanCore429 env config.budget config.traceEvery config.useMemo declaration
             pure (.ok json)
 
 def run (args : List String) : IO UInt32 := do

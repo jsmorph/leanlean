@@ -49,6 +49,7 @@ structure Stats where
   defEqContextDepths : Std.HashMap String Nat := {}
   structuralHeadPairs : Std.HashMap String Nat := {}
   structuralProjectionSamples : List (String × String) := []
+  structuralLambdaSamples : List (String × String) := []
 
 structure WhnfKey where
   levelParams : LevelContext
@@ -257,11 +258,20 @@ def Profiler.noteStructuralCompare (profiler : Profiler) (left right : Expr) : M
         else
           stats.structuralProjectionSamples
     | _, _ => stats.structuralProjectionSamples
+  let lambdaSamples :=
+    match left, right with
+    | .lam .., .lam .. =>
+        if stats.structuralLambdaSamples.length < 20 then
+          stats.structuralLambdaSamples ++ [(exprShort 5 left, exprShort 5 right)]
+        else
+          stats.structuralLambdaSamples
+    | _, _ => stats.structuralLambdaSamples
   profiler.ref.set
     {
       stats with
       structuralHeadPairs := incrementString stats.structuralHeadPairs key,
-      structuralProjectionSamples := samples
+      structuralProjectionSamples := samples,
+      structuralLambdaSamples := lambdaSamples
     }
 
 def Profiler.noteUnfold (profiler : Profiler) (name : Name) : M Unit := do
@@ -1041,16 +1051,17 @@ def Stats.toJson (stats : Stats) : Lean.Json :=
     ("top_defeq_shape_pairs", countsJson stats.defEqShapePairs 30),
     ("top_defeq_context_depths", countsJson stats.defEqContextDepths 30),
     ("top_structural_head_pairs", countsJson stats.structuralHeadPairs 30),
-    ("structural_projection_samples", stringPairsJson stats.structuralProjectionSamples)
+    ("structural_projection_samples", stringPairsJson stats.structuralProjectionSamples),
+    ("structural_lambda_samples", stringPairsJson stats.structuralLambdaSamples)
   ]
 
-def profileDeclaration (manifest : Manifest) (env : Env) (budget : Nat) (useMemo : Bool)
-    (declaration : Declaration) : IO Lean.Json := do
+def profileDeclaration (manifest : Manifest) (env : Env) (budget traceEvery : Nat)
+    (useMemo : Bool) (declaration : Declaration) : IO Lean.Json := do
   let ref ← IO.mkRef ({} : Stats)
   let markRef ← IO.mkRef "start"
   let whnfCacheRef ← IO.mkRef ({} : Std.HashMap WhnfKey Expr)
   let defEqCacheRef ← IO.mkRef ({} : Std.HashMap DefEqKey Unit)
-  let profiler : Profiler := { budget, ref, markRef, whnfCacheRef, defEqCacheRef, useMemo }
+  let profiler : Profiler := { budget, ref, markRef, whnfCacheRef, defEqCacheRef, useMemo, traceEvery }
   let startedMs ← IO.monoMsNow
   let result ← (checkDeclaration profiler manifest env declaration).run
   let stoppedMs ← IO.monoMsNow
@@ -1069,6 +1080,7 @@ def profileDeclaration (manifest : Manifest) (env : Env) (budget : Nat) (useMemo
     ("message", Lean.Json.str statusAndMessage.2),
     ("elapsed_ms", jsonNat (stoppedMs - startedMs)),
     ("budget", jsonNat budget),
+    ("trace_every", jsonNat traceEvery),
     ("stats", stats.toJson)
   ]
   pure (Lean.Json.mkObj fields)

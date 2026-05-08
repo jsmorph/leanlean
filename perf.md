@@ -290,6 +290,8 @@ Two further local experiments were rejected.  A post-WHNF alpha-equivalence chec
 
 The full cached replay still times out at declaration 12,736 after the projection-target WHNF fix.  The run reached the declaration after about 194 seconds of cache replay, then ran until the 30-minute timeout without stderr or a completion row.  A constant identity-level-substitution fast path measured neutral on the focused 1,000,000-step profile, leaving defEq calls, WHNF calls, and structural calls unchanged within noise, so it was removed.
 
+Long dynamic profiles need sparse heartbeat output.  The 100,000,000-step diagnostic exhausted its budget with 4,669,208 defEq calls, 41,476,946 WHNF calls, 1,775,367 structural comparisons, 7,758,302 successful projection reductions, and 1,967,489 transparent unfolds.  Lambda-root samples show pointwise algebra-instance formulas, including `HAdd.hAdd` and `HSMul.hSMul` over `Pi`, rather than a new primitive or generated reducer.  `mpc-dynamic-profile-export --trace-every <n>` now controls heartbeat frequency, with a default of 100,000 steps.
+
 ## Mathlib Abelian Resource Boundary
 
 The `CategoryTheory.Abelian.image_ι_comp_eq_zero` probe used `Mathlib.CategoryTheory.Abelian.Basic` with the shared mathlib SQLite cache.  The corrected root built successfully and exported `.tmp/mathlib-probes/category-abelian-image-zero.ndjson`, a 27 MB artifact, but the old v2-cache path was killed with exit code 137 before it wrote checker output or declaration stats.  The old cache file was 2.8 GB, and inspecting it showed 12,566 content rows whose rendered declaration keys occupied 2,620,504,409 bytes, with a largest key of 156,683,766 bytes.
