@@ -143,6 +143,9 @@ partial def structuralDefEq (manifest : Manifest) (env : Env) (levelParams : Lev
     (ctx : Context) (left right : Expr) : Result Unit := do
   let left ← whnf manifest env levelParams left
   let right ← whnf manifest env levelParams right
+  if left.alphaEq right then
+    pure ()
+  else
   match left, right with
   | .bvar left, .bvar right =>
       if left == right then pure () else fail "bound variables differ"

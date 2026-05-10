@@ -11,6 +11,10 @@ namespace MPC.Adapters.DynamicProfile
 
 structure RepeatEntry where
   count : Nat := 0
+  successCount : Nat := 0
+  failureCount : Nat := 0
+  repeatSuccessCount : Nat := 0
+  repeatFailureCount : Nat := 0
   firstStep : Nat := 0
   lastStep : Nat := 0
   summary : String := ""
@@ -24,6 +28,7 @@ structure Stats where
   defEqCalls : Nat := 0
   defEqAlphaEqHits : Nat := 0
   structuralDefEqCalls : Nat := 0
+  structuralWhnfAlphaEqHits : Nat := 0
   whnfCalls : Nat := 0
   whnfAlphaEqCalls : Nat := 0
   proofIrrelevanceCalls : Nat := 0
@@ -54,6 +59,10 @@ structure Stats where
   defEqRepeatObservations : Nat := 0
   defEqRepeatHits : Nat := 0
   defEqRepeatDropped : Nat := 0
+  defEqRepeatSuccesses : Nat := 0
+  defEqRepeatFailures : Nat := 0
+  defEqRepeatHitSuccesses : Nat := 0
+  defEqRepeatHitFailures : Nat := 0
   whnfRepeatObservations : Nat := 0
   whnfRepeatHits : Nat := 0
   whnfRepeatDropped : Nat := 0
@@ -171,6 +180,10 @@ def repeatEntryJson (entry : String × RepeatEntry) : Lean.Json :=
   Lean.Json.mkObj [
     ("fingerprint", Lean.Json.str entry.1),
     ("count", jsonNat entry.2.count),
+    ("success_count", jsonNat entry.2.successCount),
+    ("failure_count", jsonNat entry.2.failureCount),
+    ("repeat_success_count", jsonNat entry.2.repeatSuccessCount),
+    ("repeat_failure_count", jsonNat entry.2.repeatFailureCount),
     ("first_step", jsonNat entry.2.firstStep),
     ("last_step", jsonNat entry.2.lastStep),
     ("summary", Lean.Json.str entry.2.summary),
@@ -303,6 +316,10 @@ structure RepeatUpdate where
   hit : Bool := false
   dropped : Bool := false
 
+structure DefEqRepeatObservation where
+  fingerprint : String
+  hit : Bool := false
+
 def updateRepeatMap (map : Std.HashMap String RepeatEntry) (step : Nat)
     (fingerprint summary sample : String) : RepeatUpdate :=
   match map.get? fingerprint with
@@ -335,7 +352,8 @@ def whnfRepeatSummary (expr : Expr) : String :=
   exprShapeLabel expr
 
 def Profiler.noteDefEqRepeat (profiler : Profiler) (step : Nat)
-    (levelParams : LevelContext) (ctx : Context) (left right : Expr) : M Unit := do
+    (levelParams : LevelContext) (ctx : Context) (left right : Expr) :
+    M (Option DefEqRepeatObservation) := do
   let fingerprint := defEqRepeatFingerprint levelParams ctx left right
   let stats ← profiler.ref.get
   let update := updateRepeatMap stats.defEqRepeats step fingerprint
@@ -349,6 +367,39 @@ def Profiler.noteDefEqRepeat (profiler : Profiler) (step : Nat)
       defEqRepeatDropped := stats.defEqRepeatDropped + if update.dropped then 1 else 0,
       defEqRepeats := update.map
     }
+  if update.dropped then
+    pure none
+  else
+    pure (some { fingerprint, hit := update.hit })
+
+def updateDefEqRepeatOutcome (entry : RepeatEntry) (hit success : Bool) : RepeatEntry :=
+  {
+    entry with
+    successCount := entry.successCount + if success then 1 else 0,
+    failureCount := entry.failureCount + if success then 0 else 1,
+    repeatSuccessCount := entry.repeatSuccessCount + if hit && success then 1 else 0,
+    repeatFailureCount := entry.repeatFailureCount + if hit && !success then 1 else 0
+  }
+
+def Profiler.noteDefEqRepeatOutcome (profiler : Profiler)
+    (observation : DefEqRepeatObservation) (success : Bool) : M Unit := do
+  let stats ← profiler.ref.get
+  match stats.defEqRepeats.get? observation.fingerprint with
+  | none => pure ()
+  | some entry =>
+      profiler.ref.set
+        {
+          stats with
+          defEqRepeatSuccesses := stats.defEqRepeatSuccesses + if success then 1 else 0,
+          defEqRepeatFailures := stats.defEqRepeatFailures + if success then 0 else 1,
+          defEqRepeatHitSuccesses :=
+            stats.defEqRepeatHitSuccesses + if observation.hit && success then 1 else 0,
+          defEqRepeatHitFailures :=
+            stats.defEqRepeatHitFailures + if observation.hit && !success then 1 else 0,
+          defEqRepeats :=
+            stats.defEqRepeats.insert observation.fingerprint
+              (updateDefEqRepeatOutcome entry observation.hit success)
+        }
 
 def Profiler.noteWhnfRepeat (profiler : Profiler) (step : Nat)
     (levelParams : LevelContext) (expr : Expr) : M Unit := do
@@ -866,6 +917,10 @@ partial def structuralDefEq (profiler : Profiler) (manifest : Manifest) (env : E
   let right ← whnf profiler manifest env levelParams right
   profiler.mark "structural-defeq:compare"
   profiler.noteStructuralCompare left right
+  if left.alphaEq right then
+    recordStats profiler fun stats =>
+      { stats with structuralWhnfAlphaEqHits := stats.structuralWhnfAlphaEqHits + 1 }
+  else
   match left, right with
   | .bvar left, .bvar right =>
       if left == right then pure () else fail "bound variables differ"
@@ -1088,32 +1143,49 @@ partial def profileDefEq (profiler : Profiler) (manifest : Manifest) (env : Env)
     recordStats profiler fun stats =>
       { stats with defEqAlphaEqHits := stats.defEqAlphaEqHits + 1 }
   else do
+    let observation? ←
+      if profiler.useRepeatDiag then
+        let stats ← profiler.ref.get
+        profiler.noteDefEqRepeat stats.steps levelParams ctx left right
+      else
+        pure none
+    let runCompare : M Unit :=
+      if !profiler.useMemo ||
+          !ctx.isEmpty ||
+          !exprCacheable defEqCacheExprLimit left ||
+          !exprCacheable defEqCacheExprLimit right then
+        profileDefEqCore profiler manifest env levelParams ctx left right
+      else do
+        let key : DefEqKey := { levelParams, ctx, left, right }
+        match (← profiler.defEqCacheRef.get).get? key with
+        | some () => do
+            recordStats profiler fun stats =>
+              { stats with defEqCacheHits := stats.defEqCacheHits + 1 }
+            pure ()
+        | none => do
+            recordStats profiler fun stats =>
+              { stats with defEqCacheMisses := stats.defEqCacheMisses + 1 }
+            match ← capture (profileDefEqCore profiler manifest env levelParams ctx left right) with
+            | Except.ok () => do
+                let cache ← profiler.defEqCacheRef.get
+                profiler.defEqCacheRef.set (cache.insert key ())
+                recordStats profiler fun stats =>
+                  { stats with defEqCacheEntries := stats.defEqCacheEntries + 1 }
+                pure ()
+            | Except.error err => throw err
     if profiler.useRepeatDiag then
-      let stats ← profiler.ref.get
-      profiler.noteDefEqRepeat stats.steps levelParams ctx left right
-    if !profiler.useMemo ||
-        !ctx.isEmpty ||
-        !exprCacheable defEqCacheExprLimit left ||
-        !exprCacheable defEqCacheExprLimit right then
-      profileDefEqCore profiler manifest env levelParams ctx left right
+      match ← capture runCompare with
+      | Except.ok () => do
+          match observation? with
+          | some observation => profiler.noteDefEqRepeatOutcome observation true
+          | none => pure ()
+      | Except.error err => do
+          match observation? with
+          | some observation => profiler.noteDefEqRepeatOutcome observation false
+          | none => pure ()
+          throw err
     else
-      let key : DefEqKey := { levelParams, ctx, left, right }
-      match (← profiler.defEqCacheRef.get).get? key with
-      | some () => do
-          recordStats profiler fun stats =>
-            { stats with defEqCacheHits := stats.defEqCacheHits + 1 }
-          pure ()
-      | none => do
-          recordStats profiler fun stats =>
-            { stats with defEqCacheMisses := stats.defEqCacheMisses + 1 }
-          match ← capture (profileDefEqCore profiler manifest env levelParams ctx left right) with
-          | Except.ok () => do
-              let cache ← profiler.defEqCacheRef.get
-              profiler.defEqCacheRef.set (cache.insert key ())
-              recordStats profiler fun stats =>
-                { stats with defEqCacheEntries := stats.defEqCacheEntries + 1 }
-              pure ()
-          | Except.error err => throw err
+      runCompare
 
 partial def profileDefEqCore (profiler : Profiler) (manifest : Manifest) (env : Env)
     (levelParams : LevelContext) (ctx : Context) (left right : Expr) : M Unit := do
@@ -1185,6 +1257,7 @@ def Stats.toJson (stats : Stats) : Lean.Json :=
     ("defeq_calls", jsonNat stats.defEqCalls),
     ("defeq_alphaeq_hits", jsonNat stats.defEqAlphaEqHits),
     ("structural_defeq_calls", jsonNat stats.structuralDefEqCalls),
+    ("structural_whnf_alphaeq_hits", jsonNat stats.structuralWhnfAlphaEqHits),
     ("whnf_calls", jsonNat stats.whnfCalls),
     ("whnf_alpha_eq_calls", jsonNat stats.whnfAlphaEqCalls),
     ("proof_irrelevance_calls", jsonNat stats.proofIrrelevanceCalls),
@@ -1215,6 +1288,10 @@ def Stats.toJson (stats : Stats) : Lean.Json :=
     ("defeq_nonalpha_repeat_observations", jsonNat stats.defEqRepeatObservations),
     ("defeq_nonalpha_repeat_hits", jsonNat stats.defEqRepeatHits),
     ("defeq_nonalpha_repeat_dropped", jsonNat stats.defEqRepeatDropped),
+    ("defeq_nonalpha_repeat_successes", jsonNat stats.defEqRepeatSuccesses),
+    ("defeq_nonalpha_repeat_failures", jsonNat stats.defEqRepeatFailures),
+    ("defeq_nonalpha_repeat_hit_successes", jsonNat stats.defEqRepeatHitSuccesses),
+    ("defeq_nonalpha_repeat_hit_failures", jsonNat stats.defEqRepeatHitFailures),
     ("defeq_nonalpha_repeat_distinct", jsonNat stats.defEqRepeats.size),
     ("whnf_repeat_observations", jsonNat stats.whnfRepeatObservations),
     ("whnf_repeat_hits", jsonNat stats.whnfRepeatHits),
