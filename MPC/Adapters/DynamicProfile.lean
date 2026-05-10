@@ -9,6 +9,13 @@ import Std.Data.HashMap
 
 namespace MPC.Adapters.DynamicProfile
 
+structure RepeatEntry where
+  count : Nat := 0
+  firstStep : Nat := 0
+  lastStep : Nat := 0
+  summary : String := ""
+  sample : String := ""
+
 structure Stats where
   steps : Nat := 0
   inferCalls : Nat := 0
@@ -44,11 +51,19 @@ structure Stats where
   defEqCacheMisses : Nat := 0
   defEqCacheEntries : Nat := 0
   constructorProofFieldSkips : Nat := 0
+  defEqRepeatObservations : Nat := 0
+  defEqRepeatHits : Nat := 0
+  defEqRepeatDropped : Nat := 0
+  whnfRepeatObservations : Nat := 0
+  whnfRepeatHits : Nat := 0
+  whnfRepeatDropped : Nat := 0
   unfoldNames : Std.HashMap String Nat := {}
   defEqHeadPairs : Std.HashMap String Nat := {}
   defEqShapePairs : Std.HashMap String Nat := {}
   defEqContextDepths : Std.HashMap String Nat := {}
   structuralHeadPairs : Std.HashMap String Nat := {}
+  defEqRepeats : Std.HashMap String RepeatEntry := {}
+  whnfRepeats : Std.HashMap String RepeatEntry := {}
   structuralProjectionSamples : List (String × String) := []
   structuralLambdaSamples : List (String × String) := []
 
@@ -71,6 +86,7 @@ structure Profiler where
   whnfCacheRef : IO.Ref (Std.HashMap WhnfKey Expr)
   defEqCacheRef : IO.Ref (Std.HashMap DefEqKey Unit)
   useMemo : Bool := false
+  useRepeatDiag : Bool := false
   traceEvery : Nat := 1000
 
 abbrev M := ExceptT Error IO
@@ -132,11 +148,52 @@ def stringPairJson (entry : String × String) : Lean.Json :=
 def stringPairsJson (entries : List (String × String)) : Lean.Json :=
   Lean.Json.arr (entries.map stringPairJson).toArray
 
+def insertRepeatSorted (entry : String × RepeatEntry) :
+    List (String × RepeatEntry) → List (String × RepeatEntry)
+  | [] => [entry]
+  | head :: rest =>
+      if entry.2.count > head.2.count then
+        entry :: head :: rest
+      else
+        head :: insertRepeatSorted entry rest
+
+def topRepeats (map : Std.HashMap String RepeatEntry) (limit : Nat) :
+    List (String × RepeatEntry) :=
+  (map.toList.foldl
+    (fun entries entry =>
+      if entry.2.count > 1 then
+        insertRepeatSorted entry entries
+      else
+        entries)
+    []).take limit
+
+def repeatEntryJson (entry : String × RepeatEntry) : Lean.Json :=
+  Lean.Json.mkObj [
+    ("fingerprint", Lean.Json.str entry.1),
+    ("count", jsonNat entry.2.count),
+    ("first_step", jsonNat entry.2.firstStep),
+    ("last_step", jsonNat entry.2.lastStep),
+    ("summary", Lean.Json.str entry.2.summary),
+    ("sample", Lean.Json.str entry.2.sample)
+  ]
+
+def repeatsJson (map : Std.HashMap String RepeatEntry) (limit : Nat) : Lean.Json :=
+  Lean.Json.arr ((topRepeats map limit).map repeatEntryJson).toArray
+
 def whnfCacheExprLimit : Nat :=
   128
 
 def defEqCacheExprLimit : Nat :=
   32
+
+def repeatMapLimit : Nat :=
+  200000
+
+def repeatTopLimit : Nat :=
+  30
+
+def hashText {α : Type} [Hashable α] (value : α) : String :=
+  toString (hash value)
 
 partial def exprCacheSizeCapped (cap : Nat) : Expr → Nat
   | .bvar _
@@ -204,6 +261,9 @@ def exprShapeLabel (expr : Expr) : String :=
   let (_, args) := expr.getAppFnArgs
   s!"{exprHeadLabel expr}/{args.length}/{exprCacheSizeCapped 65 expr}"
 
+def exprFingerprintLabel (expr : Expr) : String :=
+  s!"{exprHeadLabel expr}/{exprCacheSizeCapped 4097 expr}/{hashText expr}"
+
 partial def exprShort : Nat → Expr → String
   | 0, expr => exprShapeLabel expr
   | fuel + 1, expr =>
@@ -237,6 +297,73 @@ def Profiler.step (profiler : Profiler) (update : Stats → Stats) : M Unit := d
     if profiler.traceEvery > 0 && nextStats.steps % profiler.traceEvery == 0 then
       let mark ← profiler.markRef.get
       trace s!"profile-step\t{nextStats.steps}\tmark={mark}\tinfer={nextStats.inferCalls}\tcheck={nextStats.checkCalls}\tdefeq={nextStats.defEqCalls}\twhnf={nextStats.whnfCalls}\twhnfAlphaEq={nextStats.whnfAlphaEqCalls}"
+
+structure RepeatUpdate where
+  map : Std.HashMap String RepeatEntry
+  hit : Bool := false
+  dropped : Bool := false
+
+def updateRepeatMap (map : Std.HashMap String RepeatEntry) (step : Nat)
+    (fingerprint summary sample : String) : RepeatUpdate :=
+  match map.get? fingerprint with
+  | some entry =>
+      {
+        map := map.insert fingerprint
+          { entry with count := entry.count + 1, lastStep := step }
+        hit := true
+      }
+  | none =>
+      if map.size < repeatMapLimit then
+        {
+          map := map.insert fingerprint
+            { count := 1, firstStep := step, lastStep := step, summary, sample }
+        }
+      else
+        { map, dropped := true }
+
+def defEqRepeatFingerprint (levelParams : LevelContext) (ctx : Context)
+    (left right : Expr) : String :=
+  s!"lp={hashText levelParams};ctx={ctx.length}:{hashText ctx};left={exprFingerprintLabel left};right={exprFingerprintLabel right}"
+
+def defEqRepeatSummary (ctx : Context) (left right : Expr) : String :=
+  s!"ctx={ctx.length}; {exprShapeLabel left} | {exprShapeLabel right}"
+
+def whnfRepeatFingerprint (levelParams : LevelContext) (expr : Expr) : String :=
+  s!"lp={hashText levelParams};expr={exprFingerprintLabel expr}"
+
+def whnfRepeatSummary (expr : Expr) : String :=
+  exprShapeLabel expr
+
+def Profiler.noteDefEqRepeat (profiler : Profiler) (step : Nat)
+    (levelParams : LevelContext) (ctx : Context) (left right : Expr) : M Unit := do
+  let fingerprint := defEqRepeatFingerprint levelParams ctx left right
+  let stats ← profiler.ref.get
+  let update := updateRepeatMap stats.defEqRepeats step fingerprint
+    (defEqRepeatSummary ctx left right)
+    (s!"{exprShort 4 left} | {exprShort 4 right}")
+  profiler.ref.set
+    {
+      stats with
+      defEqRepeatObservations := stats.defEqRepeatObservations + 1,
+      defEqRepeatHits := stats.defEqRepeatHits + if update.hit then 1 else 0,
+      defEqRepeatDropped := stats.defEqRepeatDropped + if update.dropped then 1 else 0,
+      defEqRepeats := update.map
+    }
+
+def Profiler.noteWhnfRepeat (profiler : Profiler) (step : Nat)
+    (levelParams : LevelContext) (expr : Expr) : M Unit := do
+  let fingerprint := whnfRepeatFingerprint levelParams expr
+  let stats ← profiler.ref.get
+  let update := updateRepeatMap stats.whnfRepeats step fingerprint
+    (whnfRepeatSummary expr) (exprShort 5 expr)
+  profiler.ref.set
+    {
+      stats with
+      whnfRepeatObservations := stats.whnfRepeatObservations + 1,
+      whnfRepeatHits := stats.whnfRepeatHits + if update.hit then 1 else 0,
+      whnfRepeatDropped := stats.whnfRepeatDropped + if update.dropped then 1 else 0,
+      whnfRepeats := update.map
+    }
 
 def Profiler.noteDefEq (profiler : Profiler) (ctx : Context) (left right : Expr) : M Unit := do
   let key := exprHeadLabel left ++ " | " ++ exprHeadLabel right
@@ -437,6 +564,9 @@ partial def whnfCore (profiler : Profiler) (manifest : Manifest) (env : Env)
     (levelParams : LevelContext) (expr : Expr) : M Expr := do
   profiler.mark "whnf"
   profiler.step fun stats => { stats with whnfCalls := stats.whnfCalls + 1 }
+  if profiler.useRepeatDiag then
+    let stats ← profiler.ref.get
+    profiler.noteWhnfRepeat stats.steps levelParams expr
   match expr with
   | .letE _ _ value body => do
       profiler.step fun stats => { stats with zetaReductions := stats.zetaReductions + 1 }
@@ -953,32 +1083,37 @@ partial def profileDefEq (profiler : Profiler) (manifest : Manifest) (env : Env)
   profiler.mark "defeq"
   profiler.noteDefEq ctx left right
   profiler.step fun stats => { stats with defEqCalls := stats.defEqCalls + 1 }
-  if left.alphaEq right then
+  let alphaEq := left.alphaEq right
+  if alphaEq then
     recordStats profiler fun stats =>
       { stats with defEqAlphaEqHits := stats.defEqAlphaEqHits + 1 }
-  else if !profiler.useMemo ||
-      !ctx.isEmpty ||
-      !exprCacheable defEqCacheExprLimit left ||
-      !exprCacheable defEqCacheExprLimit right then
-    profileDefEqCore profiler manifest env levelParams ctx left right
-  else
-    let key : DefEqKey := { levelParams, ctx, left, right }
-    match (← profiler.defEqCacheRef.get).get? key with
-    | some () => do
-        recordStats profiler fun stats =>
-          { stats with defEqCacheHits := stats.defEqCacheHits + 1 }
-        pure ()
-    | none => do
-        recordStats profiler fun stats =>
-          { stats with defEqCacheMisses := stats.defEqCacheMisses + 1 }
-        match ← capture (profileDefEqCore profiler manifest env levelParams ctx left right) with
-        | Except.ok () => do
-            let cache ← profiler.defEqCacheRef.get
-            profiler.defEqCacheRef.set (cache.insert key ())
-            recordStats profiler fun stats =>
-              { stats with defEqCacheEntries := stats.defEqCacheEntries + 1 }
-            pure ()
-        | Except.error err => throw err
+  else do
+    if profiler.useRepeatDiag then
+      let stats ← profiler.ref.get
+      profiler.noteDefEqRepeat stats.steps levelParams ctx left right
+    if !profiler.useMemo ||
+        !ctx.isEmpty ||
+        !exprCacheable defEqCacheExprLimit left ||
+        !exprCacheable defEqCacheExprLimit right then
+      profileDefEqCore profiler manifest env levelParams ctx left right
+    else
+      let key : DefEqKey := { levelParams, ctx, left, right }
+      match (← profiler.defEqCacheRef.get).get? key with
+      | some () => do
+          recordStats profiler fun stats =>
+            { stats with defEqCacheHits := stats.defEqCacheHits + 1 }
+          pure ()
+      | none => do
+          recordStats profiler fun stats =>
+            { stats with defEqCacheMisses := stats.defEqCacheMisses + 1 }
+          match ← capture (profileDefEqCore profiler manifest env levelParams ctx left right) with
+          | Except.ok () => do
+              let cache ← profiler.defEqCacheRef.get
+              profiler.defEqCacheRef.set (cache.insert key ())
+              recordStats profiler fun stats =>
+                { stats with defEqCacheEntries := stats.defEqCacheEntries + 1 }
+              pure ()
+          | Except.error err => throw err
 
 partial def profileDefEqCore (profiler : Profiler) (manifest : Manifest) (env : Env)
     (levelParams : LevelContext) (ctx : Context) (left right : Expr) : M Unit := do
@@ -1077,22 +1212,33 @@ def Stats.toJson (stats : Stats) : Lean.Json :=
     ("defeq_cache_misses", jsonNat stats.defEqCacheMisses),
     ("defeq_cache_entries", jsonNat stats.defEqCacheEntries),
     ("constructor_proof_field_skips", jsonNat stats.constructorProofFieldSkips),
+    ("defeq_nonalpha_repeat_observations", jsonNat stats.defEqRepeatObservations),
+    ("defeq_nonalpha_repeat_hits", jsonNat stats.defEqRepeatHits),
+    ("defeq_nonalpha_repeat_dropped", jsonNat stats.defEqRepeatDropped),
+    ("defeq_nonalpha_repeat_distinct", jsonNat stats.defEqRepeats.size),
+    ("whnf_repeat_observations", jsonNat stats.whnfRepeatObservations),
+    ("whnf_repeat_hits", jsonNat stats.whnfRepeatHits),
+    ("whnf_repeat_dropped", jsonNat stats.whnfRepeatDropped),
+    ("whnf_repeat_distinct", jsonNat stats.whnfRepeats.size),
     ("top_unfold_names", countsJson stats.unfoldNames 30),
     ("top_defeq_head_pairs", countsJson stats.defEqHeadPairs 30),
     ("top_defeq_shape_pairs", countsJson stats.defEqShapePairs 30),
     ("top_defeq_context_depths", countsJson stats.defEqContextDepths 30),
     ("top_structural_head_pairs", countsJson stats.structuralHeadPairs 30),
+    ("top_defeq_nonalpha_repeats", repeatsJson stats.defEqRepeats repeatTopLimit),
+    ("top_whnf_repeats", repeatsJson stats.whnfRepeats repeatTopLimit),
     ("structural_projection_samples", stringPairsJson stats.structuralProjectionSamples),
     ("structural_lambda_samples", stringPairsJson stats.structuralLambdaSamples)
   ]
 
 def profileDeclaration (manifest : Manifest) (env : Env) (budget traceEvery : Nat)
-    (useMemo : Bool) (declaration : Declaration) : IO Lean.Json := do
+    (useMemo useRepeatDiag : Bool) (declaration : Declaration) : IO Lean.Json := do
   let ref ← IO.mkRef ({} : Stats)
   let markRef ← IO.mkRef "start"
   let whnfCacheRef ← IO.mkRef ({} : Std.HashMap WhnfKey Expr)
   let defEqCacheRef ← IO.mkRef ({} : Std.HashMap DefEqKey Unit)
-  let profiler : Profiler := { budget, ref, markRef, whnfCacheRef, defEqCacheRef, useMemo, traceEvery }
+  let profiler : Profiler :=
+    { budget, ref, markRef, whnfCacheRef, defEqCacheRef, useMemo, useRepeatDiag, traceEvery }
   let startedMs ← IO.monoMsNow
   let result ← (checkDeclaration profiler manifest env declaration).run
   let stoppedMs ← IO.monoMsNow
@@ -1112,6 +1258,7 @@ def profileDeclaration (manifest : Manifest) (env : Env) (budget traceEvery : Na
     ("elapsed_ms", jsonNat (stoppedMs - startedMs)),
     ("budget", jsonNat budget),
     ("trace_every", jsonNat traceEvery),
+    ("repeat_diag", Lean.Json.bool useRepeatDiag),
     ("stats", stats.toJson)
   ]
   pure (Lean.Json.mkObj fields)
