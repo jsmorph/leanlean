@@ -515,3 +515,13 @@ The full `Real.continuous_sqrt` replay accepts after this change.  It reused 6,5
 | 2,313 | 9752 | `continuous_of_continuousAt_zero₂` |
 | 2,151 | 4658 | `Lean.Grind.CommRing.Mon.revlex_k_eq_revlex` |
 | 1,840 | 4666 | `Lean.Grind.CommRing.Poly.combine_k_eq_combine` |
+
+`Measurable.dist` also accepts after the congruence change.  The run reused 9,312 declaration entries, checked 1,169 declarations, accepted 10,481 target declarations, produced environment size 11,319, and emitted no stderr.  The checked rows recorded 7,486,368 counted steps, 1,731,034 WHNF calls, 64,147 transparent unfolds, 14,080 congruence successes, and 58 congruence misses.
+
+| Elapsed ms | Index | Declaration |
+|---:|---:|---|
+| 1,733 | 8214 | `_private.Mathlib.Data.Nat.Sqrt.0.Nat.sqrt_isSqrt._proof_1_7` |
+| 1,605 | 8106 | `_private.Mathlib.Data.Nat.Sqrt.0.Nat.AM_GM` |
+| 1,034 | 8099 | `_private.Init.Data.Nat.Mod.0.Nat.mul_lt_mul_left._proof_1_1` |
+| 666 | 8097 | `_private.Mathlib.Data.Nat.Sqrt.0.Nat.sqrt.iter_sq_le._proof_1_1` |
+| 549 | 8547 | `Prod.opensMeasurableSpace` |
