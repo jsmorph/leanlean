@@ -464,6 +464,7 @@ structure DeclarationTelemetry where
   status : ReplayStatus
   timestampMs? : Option Nat := none
   profile? : Option DeclarationProfile := none
+  details? : Option Lean.Json := none
 
 def DeclarationTelemetry.toJson (entry : DeclarationTelemetry) : Lean.Json :=
   let fields := [
@@ -483,6 +484,10 @@ def DeclarationTelemetry.toJson (entry : DeclarationTelemetry) : Lean.Json :=
     match entry.profile? with
     | some profile => fields ++ profile.toJsonFields
     | none => fields
+  let fields :=
+    match entry.details? with
+    | some details => fields ++ [("details", details)]
+    | none => fields
   Lean.Json.mkObj fields
 
 def DeclarationTelemetry.text (entry : DeclarationTelemetry) : String :=
@@ -490,7 +495,11 @@ def DeclarationTelemetry.text (entry : DeclarationTelemetry) : String :=
     match entry.timestampMs? with
     | some timestampMs => s!" timestamp_ms={timestampMs}"
     | none => ""
-  s!"stats: index={entry.index} status={entry.status.label}{timestamp} elapsed_ms={entry.elapsedMs} cumulative_ms={entry.cumulativeMs} kind={entry.kind} name={entry.name}"
+  let details :=
+    match entry.details? with
+    | some details => s!" details={details.compress}"
+    | none => ""
+  s!"stats: index={entry.index} status={entry.status.label}{timestamp} elapsed_ms={entry.elapsedMs} cumulative_ms={entry.cumulativeMs} kind={entry.kind} name={entry.name}{details}"
 
 def emitDeclarationTelemetry
     (format : TelemetryFormat)
@@ -679,7 +688,8 @@ def layerReplayObserver? (format : TelemetryFormat) :
           cumulativeMs := step.cumulativeMs,
           status,
           timestampMs? := some step.timestampMs,
-          profile? := none
+          profile? := none,
+          details? := step.details?
         }
 
 def buildCheckedLayerFromFile (path : System.FilePath) :
@@ -756,7 +766,7 @@ def replayWithSavedLayer (config : Config) (state : MPC.Adapters.Export.ParseSta
 
 partial def streamCacheLayerLoop (layerPath : System.FilePath)
     (handle : IO.FS.Handle) (observer? : Option MPC.Adapters.Layer.ReplayObserver)
-    (addDeclFn? : Option MPC.Adapters.Layer.AddDeclFn)
+    (policy? : Option MPC.Adapters.Layer.ReplayCheckPolicy)
     (lineNumber : Nat) (parseState : MPC.Adapters.Export.State)
     (audit : MPC.Adapters.Export.Audit)
     (replayState : MPC.Adapters.Layer.SqliteOnDemandReplayState) :
@@ -772,17 +782,27 @@ partial def streamCacheLayerLoop (layerPath : System.FilePath)
         for declaration in event.declarations do
           match ←
               MPC.Adapters.Layer.replaySqliteOnDemandStep MPC.Configs.LeanCore429
-                layerPath observer? true replayState declaration addDeclFn? with
+                layerPath observer? true replayState declaration policy? with
           | .error err => return .error err
           | .ok nextState => replayState := nextState
-        streamCacheLayerLoop layerPath handle observer? addDeclFn? (lineNumber + 1) parseState
+        streamCacheLayerLoop layerPath handle observer? policy? (lineNumber + 1) parseState
           (MPC.Adapters.Export.mergeAudit audit event.audit) replayState
 
-def cacheLayerAddDeclFn? (config : Config) : Option MPC.Adapters.Layer.AddDeclFn :=
+def cacheLayerCheckPolicy? (config : Config) : Option MPC.Adapters.Layer.ReplayCheckPolicy :=
   if config.replayOptions.defEqSuccessCache then
-    some fun env declaration =>
-      MPC.Adapters.DynamicProfile.addDeclarationWithDefEqSuccessCache
-        MPC.Configs.LeanCore429 env declaration
+    some {
+      name := "defeq-success-cache",
+      check := fun env declaration => do
+        match ←
+            MPC.Adapters.DynamicProfile.addDeclarationWithDefEqSuccessCacheStats
+              MPC.Configs.LeanCore429 env declaration with
+        | .ok (env, stats) =>
+            pure (.ok {
+              env,
+              details? := some stats.toReplayJson
+            })
+        | .error err => pure (.error err)
+    }
   else
     none
 
@@ -807,9 +827,9 @@ def replayWithCacheLayerStreaming (config : Config) (layerPath : System.FilePath
     | .error err => pure (.error err)
     | .ok () =>
         let observer? := layerReplayObserver? config.replayOptions.telemetry
-        let addDeclFn? := cacheLayerAddDeclFn? config
+        let policy? := cacheLayerCheckPolicy? config
         match ← IO.FS.withFile config.inputPath .read fun handle =>
-            streamCacheLayerLoop layerPath handle observer? addDeclFn? 1 {} {} {} with
+            streamCacheLayerLoop layerPath handle observer? policy? 1 {} {} {} with
         | .error err => pure (.error { message := s!"while using cache layer {layerPath}: {err.message}" })
         | .ok (audit, replayState) =>
             match MPC.Adapters.Layer.finishSqliteOnDemandReplay audit replayState with

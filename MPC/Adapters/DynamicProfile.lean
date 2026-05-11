@@ -1357,6 +1357,26 @@ def Stats.toJson (stats : Stats) : Lean.Json :=
     ("structural_lambda_samples", stringPairsJson stats.structuralLambdaSamples)
   ]
 
+def Stats.toReplayJson (stats : Stats) : Lean.Json :=
+  Lean.Json.mkObj [
+    ("steps", jsonNat stats.steps),
+    ("infer_calls", jsonNat stats.inferCalls),
+    ("infer_sort_calls", jsonNat stats.inferSortCalls),
+    ("check_calls", jsonNat stats.checkCalls),
+    ("defeq_calls", jsonNat stats.defEqCalls),
+    ("defeq_alphaeq_hits", jsonNat stats.defEqAlphaEqHits),
+    ("structural_defeq_calls", jsonNat stats.structuralDefEqCalls),
+    ("structural_whnf_alphaeq_hits", jsonNat stats.structuralWhnfAlphaEqHits),
+    ("whnf_calls", jsonNat stats.whnfCalls),
+    ("definition_unfolds", jsonNat stats.definitionUnfolds),
+    ("projection_reduction_successes", jsonNat stats.projectionReductionSuccesses),
+    ("constructor_proof_field_skips", jsonNat stats.constructorProofFieldSkips),
+    ("defeq_success_cache_hits", jsonNat stats.defEqSuccessCacheHits),
+    ("defeq_success_cache_misses", jsonNat stats.defEqSuccessCacheMisses),
+    ("defeq_success_cache_entries", jsonNat stats.defEqSuccessCacheEntries),
+    ("defeq_success_cache_dropped", jsonNat stats.defEqSuccessCacheDropped)
+  ]
+
 def newProfiler (budget traceEvery : Nat)
     (useMemo useRepeatDiag useDefEqSuccessCache : Bool) : IO Profiler := do
   let ref ← IO.mkRef ({} : Stats)
@@ -1383,7 +1403,18 @@ def replayProfilerBudget : Nat :=
 def addDeclarationWithDefEqSuccessCache (manifest : Manifest) (env : Env)
     (declaration : Declaration) : IO (Result Env) := do
   let profiler ← newProfiler replayProfilerBudget 0 false false true
-  (addDeclaration profiler manifest env declaration).run
+  match ← (addDeclaration profiler manifest env declaration).run with
+  | .ok env => pure (.ok env)
+  | .error err => pure (.error err)
+
+def addDeclarationWithDefEqSuccessCacheStats (manifest : Manifest) (env : Env)
+    (declaration : Declaration) : IO (Result (Env × Stats)) := do
+  let profiler ← newProfiler replayProfilerBudget 0 false false true
+  match ← (addDeclaration profiler manifest env declaration).run with
+  | .ok env => do
+      let stats ← profiler.ref.get
+      pure (.ok (env, stats))
+  | .error err => pure (.error err)
 
 def profileDeclaration (manifest : Manifest) (env : Env) (budget traceEvery : Nat)
     (useMemo useRepeatDiag useDefEqSuccessCache : Bool)

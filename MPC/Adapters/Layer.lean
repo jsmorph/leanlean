@@ -70,12 +70,21 @@ structure ReplayStep where
   elapsedMs : Nat
   cumulativeMs : Nat
   timestampMs : Nat
+  details? : Option Lean.Json := none
 
 abbrev ReplayObserver :=
   ReplayStep → IO Unit
 
-abbrev AddDeclFn :=
-  Env → Declaration → IO (Result Env)
+structure ReplayCheckResult where
+  env : Env
+  details? : Option Lean.Json := none
+
+abbrev ReplayCheckFn :=
+  Env → Declaration → IO (Result ReplayCheckResult)
+
+structure ReplayCheckPolicy where
+  name : String
+  check : ReplayCheckFn
 
 structure SaveSummary where
   declarations : Nat
@@ -1408,20 +1417,33 @@ def emitReplayStart (observer? : Option ReplayObserver) (index : Nat)
   | none => pure none
 
 def emitReplayStep (observer? : Option ReplayObserver) (index : Nat) (declaration : Declaration)
-    (status : ReplayStepStatus) (startMs? : Option Nat) (cumulativeMs : Nat) : IO Nat := do
+    (status : ReplayStepStatus) (startMs? : Option Nat) (cumulativeMs : Nat)
+    (details? : Option Lean.Json := none) : IO Nat := do
   match observer?, startMs? with
   | some observer, some startMs =>
       let stopMs ← IO.monoMsNow
       let elapsedMs := stopMs - startMs
       let cumulativeMs := cumulativeMs + elapsedMs
-      observer { index, declaration, status, elapsedMs, cumulativeMs, timestampMs := stopMs }
+      observer { index, declaration, status, elapsedMs, cumulativeMs, timestampMs := stopMs, details? }
       pure cumulativeMs
   | _, _ => pure cumulativeMs
+
+def checkResultDetails? (policy? : Option ReplayCheckPolicy)
+    (result : ReplayCheckResult) : Option Lean.Json :=
+  match policy?, result.details? with
+  | none, details? => details?
+  | some policy, none =>
+      some (Lean.Json.mkObj [("check_policy", Lean.Json.str policy.name)])
+  | some policy, some details =>
+      some (Lean.Json.mkObj [
+        ("check_policy", Lean.Json.str policy.name),
+        ("check_stats", details)
+      ])
 
 def replaySqliteOnDemandStep (manifest : Manifest) (layerPath : System.FilePath)
     (observer? : Option ReplayObserver) (persist : Bool)
     (state : SqliteOnDemandReplayState) (declaration : Declaration)
-    (addDeclFn? : Option AddDeclFn := none) :
+    (policy? : Option ReplayCheckPolicy := none) :
     IO (Result SqliteOnDemandReplayState) := do
   let startMs? ← emitReplayStart observer? state.index declaration state.cumulativeMs
   let key := declarationContentKey declaration
@@ -1486,12 +1508,15 @@ def replaySqliteOnDemandStep (manifest : Manifest) (layerPath : System.FilePath)
       | .ok false =>
           let before := state.env
           let checked ←
-            match addDeclFn? with
-            | some addDeclFn => addDeclFn state.env declaration
-            | none => pure (addDecl manifest state.env declaration)
+            match policy? with
+            | some policy => policy.check state.env declaration
+            | none =>
+                match addDecl manifest state.env declaration with
+                | .ok env => pure (.ok { env })
+                | .error err => pure (.error err)
           match checked with
-          | .ok env =>
-              match addedEntries before env with
+          | .ok result =>
+              match addedEntries before result.env with
               | .error err =>
                   let _ ←
                     emitReplayStep observer? state.index declaration .rejected startMs?
@@ -1518,10 +1543,10 @@ def replaySqliteOnDemandStep (manifest : Manifest) (layerPath : System.FilePath)
                     state.newContentToNames.insert key (entries.map fun info => info.name)
                   let cumulativeMs ←
                     emitReplayStep observer? state.index declaration .checked startMs?
-                      state.cumulativeMs
+                      state.cumulativeMs (checkResultDetails? policy? result)
                   pure (.ok {
                     state with
-                    env,
+                    env := result.env,
                     checked := state.checked + 1,
                     newEntries,
                     newContentToNames,
