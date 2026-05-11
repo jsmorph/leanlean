@@ -535,3 +535,5 @@ The full `Real.continuous_sqrt` replay accepts after this change.  It reused 6,5
 `snake-delta-mono-epi` accepts as a warm-cache snake support probe.  It reused 7,645 declaration entries, checked two declarations, accepted 7,647 target declarations, produced environment size 8,401, and emitted no stderr.  The checked suffix took 61 ms total, so the observed time in that run is SQLite replay through previously accepted category-theory and homology support.
 
 `abelian-basic-batch1` accepts under the current v4 cache.  It reused 5,484 declaration entries, checked 68 declarations, accepted 5,552 target declarations, produced environment size 6,182, and emitted no stderr.  The checked suffix ends at `CategoryTheory.Abelian.monoLift_comp`, which checked in 76 ms.
+
+`abelian-basic-batch2` accepts under the same cache.  It reused 5,584 declaration entries, checked 48 declarations, accepted 5,632 target declarations, produced environment size 6,250, and emitted no stderr.  The slowest checked row was `CategoryTheory.Abelian.mono_pushout_of_mono_g` at 1,418 ms.
