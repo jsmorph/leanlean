@@ -1271,57 +1271,27 @@ partial def profileDefEqCore (profiler : Profiler) (manifest : Manifest) (env : 
 
 end
 
-def checkDeclaration (profiler : Profiler) (manifest : Manifest) (env : Env) :
-    Declaration → M Unit
-  | .axiom _ levelParams type => do
-      trace "phase\taxiom\tvalidate"
-      liftResult (Manifest.validate manifest)
-      trace "phase\taxiom\tinfer-type"
-      let _ ← inferSort profiler manifest env levelParams [] type
-      pure ()
-  | .definition _ levelParams type value
-  | .opaque _ levelParams type value => do
-      trace "phase\tdefinition\tvalidate"
-      liftResult (Manifest.validate manifest)
-      trace "phase\tdefinition\tinfer-type"
-      let _ ← inferSort profiler manifest env levelParams [] type
-      trace "phase\tdefinition\tcheck-value"
-      check profiler manifest env levelParams [] value type
-  | .theorem _ levelParams type value => do
-      trace "phase\ttheorem\tvalidate"
-      liftResult (Manifest.validate manifest)
-      trace "phase\ttheorem\tcheck-prop"
-      isPropExpr profiler manifest env levelParams [] type
-      trace "phase\ttheorem\tcheck-value"
-      check profiler manifest env levelParams [] value type
-  | declaration => do
-      trace "phase\tgenerated\tadd-declaration"
-      let _ ← liftResult (MPC.addDecl manifest env declaration)
-      pure ()
+def declarationOps (profiler : Profiler) (manifest : Manifest) : MPC.DeclarationOps M where
+  validate := liftResult (Manifest.validate manifest)
+  inferSort := fun env levelParams ctx expr =>
+    inferSort profiler manifest env levelParams ctx expr
+  check := fun env levelParams ctx expr expectedType =>
+    check profiler manifest env levelParams ctx expr expectedType
+  isPropExpr := fun env levelParams ctx expr =>
+    isPropExpr profiler manifest env levelParams ctx expr
+  addConstant := fun env info =>
+    liftResult (Env.add env info)
+  addGenerated := fun env declaration =>
+    liftResult (MPC.addGeneratedDecl manifest env declaration)
 
-def addDeclaration (profiler : Profiler) (manifest : Manifest) (env : Env) :
-    Declaration → M Env
-  | .axiom name levelParams type => do
-      liftResult (Manifest.validate manifest)
-      let _ ← inferSort profiler manifest env levelParams [] type
-      liftResult (Env.add env { name, levelParams, type, kind := .axiom })
-  | .definition name levelParams type value => do
-      liftResult (Manifest.validate manifest)
-      let _ ← inferSort profiler manifest env levelParams [] type
-      check profiler manifest env levelParams [] value type
-      liftResult (Env.add env { name, levelParams, type, value? := some value, kind := .definition })
-  | .opaque name levelParams type value => do
-      liftResult (Manifest.validate manifest)
-      let _ ← inferSort profiler manifest env levelParams [] type
-      check profiler manifest env levelParams [] value type
-      liftResult (Env.add env { name, levelParams, type, value? := some value, kind := .opaque })
-  | .theorem name levelParams type value => do
-      liftResult (Manifest.validate manifest)
-      isPropExpr profiler manifest env levelParams [] type
-      check profiler manifest env levelParams [] value type
-      liftResult (Env.add env { name, levelParams, type, value? := some value, kind := .theorem })
-  | declaration =>
-      liftResult (MPC.addDecl manifest env declaration)
+def addDeclaration (profiler : Profiler) (manifest : Manifest) (env : Env)
+    (declaration : Declaration) : M Env :=
+  MPC.addDeclWith (declarationOps profiler manifest) env declaration
+
+def checkDeclaration (profiler : Profiler) (manifest : Manifest) (env : Env)
+    (declaration : Declaration) : M Unit := do
+  let _ ← addDeclaration profiler manifest env declaration
+  pure ()
 
 def Stats.toJson (stats : Stats) : Lean.Json :=
   Lean.Json.mkObj [
