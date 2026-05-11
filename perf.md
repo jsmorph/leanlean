@@ -539,3 +539,5 @@ The full `Real.continuous_sqrt` replay accepts after this change.  It reused 6,5
 `abelian-basic-batch2` accepts under the same cache.  It reused 5,584 declaration entries, checked 48 declarations, accepted 5,632 target declarations, produced environment size 6,250, and emitted no stderr.  The slowest checked row was `CategoryTheory.Abelian.mono_pushout_of_mono_g` at 1,418 ms.
 
 `abelian-exact-batch1` accepts under the current v4 cache.  It reused 6,091 declaration entries, checked 342 declarations, accepted 6,433 target declarations, produced environment size 7,115, and emitted no stderr.  The slowest checked row was `CategoryTheory.ShortComplex.exact_iff_image_eq_kernel` at 10,368 ms, and the target `CategoryTheory.Functor.reflects_exact_of_faithful` checked in 3,943 ms.
+
+`Polynomial.C_mul` accepts under the current v4 cache.  It reused 4,034 declaration entries, checked 256 declarations, accepted 4,290 target declarations, produced environment size 4,795, and emitted no stderr.  The target theorem checked in 5 ms.
