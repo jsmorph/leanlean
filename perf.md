@@ -525,3 +525,5 @@ The full `Real.continuous_sqrt` replay accepts after this change.  It reused 6,5
 | 1,034 | 8099 | `_private.Init.Data.Nat.Mod.0.Nat.mul_lt_mul_left._proof_1_1` |
 | 666 | 8097 | `_private.Mathlib.Data.Nat.Sqrt.0.Nat.sqrt.iter_sq_le._proof_1_1` |
 | 549 | 8547 | `Prod.opensMeasurableSpace` |
+
+`Nat.primeFactorsList_unique` accepts once the same cache contains the `Nat.sqrt` support checked by the measure probe.  The replay reused 2,889 declaration entries, checked 414 declarations, accepted 3,303 target declarations, produced environment size 3,730, and emitted no stderr.  The target theorem checked in 15 ms, while the remaining measured cost stayed in the reused numeric-support region.
