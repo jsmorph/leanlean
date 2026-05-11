@@ -2320,6 +2320,13 @@ def checkPrimitiveNat : IO Unit := do
   expectExprEq "Nat.add one value" addOne (natSucc (.const "m" []))
   expectOkLabel "Nat.add conversion"
     (defEq MPC.Configs.PrimitiveNatPoc env [] [] (appN (.const "Nat.add" []) [.const "m" [], .lit (.nat 1)]) (natSucc (.const "m" [])))
+  let addCongruenceLeft :=
+    appN (.const "Nat.add" []) [appN (.const "Nat.add" []) [.const "m" [], natZero], .const "m" []]
+  let addCongruenceRight :=
+    appN (.const "Nat.add" []) [.const "m" [], .const "m" []]
+  let addCongruence? ← expectOkLabel "same constant application congruence"
+    (constAppCongruence? MPC.Configs.PrimitiveNatPoc env [] [] addCongruenceLeft addCongruenceRight)
+  expect "same constant application congruence succeeds" addCongruence?.isSome
   let mulValue ← expectOkLabel "Nat.mul primitive reduction"
     (normalize MPC.Configs.PrimitiveNatPoc env [] (appN (.const "Nat.mul" []) [.lit (.nat 65536), .lit (.nat 65536)]))
   expectExprEq "Nat.mul primitive value" mulValue (.lit (.nat 4294967296))

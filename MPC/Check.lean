@@ -139,6 +139,48 @@ partial def reduceEqRecByEndpointDefEq? (manifest : Manifest) (env : Env)
       | _ => pure none
   | _ => pure none
 
+partial def constAppCongruence? (manifest : Manifest) (env : Env) (levelParams : LevelContext)
+    (ctx : Context) (left right : Expr) : Result (Option Unit) := do
+  let (leftHead, leftArgs) := left.getAppFnArgs
+  let (rightHead, rightArgs) := right.getAppFnArgs
+  if leftArgs.length != rightArgs.length then
+    pure none
+  else
+    match leftHead, rightHead with
+    | .const leftName leftLevels, .const rightName rightLevels =>
+        if !sameConst leftName leftLevels rightName rightLevels then
+          pure none
+        else
+          let genericCompare : Result Unit := do
+            for pair in leftArgs.zip rightArgs do
+              defEq manifest env levelParams ctx pair.1 pair.2
+          let compare : Result Unit := do
+            if manifest.prop == .enabled then
+              match env.findConstructorFieldInfo? leftName with
+              | some fieldInfo =>
+                  let expectedArity := fieldInfo.paramCount + fieldInfo.proofFields.length
+                  if leftArgs.length == expectedArity &&
+                      rightArgs.length == expectedArity then
+                    for pair in (leftArgs.take fieldInfo.paramCount).zip
+                        (rightArgs.take fieldInfo.paramCount) do
+                      defEq manifest env levelParams ctx pair.1 pair.2
+                    let leftFields := leftArgs.drop fieldInfo.paramCount
+                    let rightFields := rightArgs.drop fieldInfo.paramCount
+                    for pair in fieldInfo.proofFields.zip (leftFields.zip rightFields) do
+                      if pair.1 then
+                        pure ()
+                      else
+                        defEq manifest env levelParams ctx pair.2.1 pair.2.2
+                  else
+                    genericCompare
+              | none => genericCompare
+            else
+              genericCompare
+          match compare with
+          | .ok () => pure (some ())
+          | .error _ => pure none
+    | _, _ => pure none
+
 partial def structuralDefEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
     (ctx : Context) (left right : Expr) : Result Unit := do
   let left ← whnf manifest env levelParams left
@@ -345,34 +387,37 @@ partial def defEq (manifest : Manifest) (env : Env) (levelParams : LevelContext)
   if left.alphaEq right then
     pure ()
   else
-    match structuralDefEq manifest env levelParams ctx left right with
-    | .ok () => pure ()
-    | .error structuralError =>
-        match ← reduceEqRecByEndpointDefEq? manifest env levelParams ctx left with
-        | some reducedLeft => defEq manifest env levelParams ctx reducedLeft right
-        | none =>
-            match ← reduceEqRecByEndpointDefEq? manifest env levelParams ctx right with
-            | some reducedRight => defEq manifest env levelParams ctx left reducedRight
+    match ← constAppCongruence? manifest env levelParams ctx left right with
+    | some () => pure ()
+    | none =>
+        match structuralDefEq manifest env levelParams ctx left right with
+        | .ok () => pure ()
+        | .error structuralError =>
+            match ← reduceEqRecByEndpointDefEq? manifest env levelParams ctx left with
+            | some reducedLeft => defEq manifest env levelParams ctx reducedLeft right
             | none =>
-                match structureEtaDefEq manifest env levelParams ctx left right with
-                | .ok () => pure ()
-                | .error _ =>
-                    match structureEtaDefEq manifest env levelParams ctx right left with
+                match ← reduceEqRecByEndpointDefEq? manifest env levelParams ctx right with
+                | some reducedRight => defEq manifest env levelParams ctx left reducedRight
+                | none =>
+                    match structureEtaDefEq manifest env levelParams ctx left right with
                     | .ok () => pure ()
                     | .error _ =>
-                        match singletonInductiveDefEq manifest env levelParams ctx left right with
+                        match structureEtaDefEq manifest env levelParams ctx right left with
                         | .ok () => pure ()
                         | .error _ =>
-                            match proofIrrelevanceDefEq manifest env levelParams ctx left right with
+                            match singletonInductiveDefEq manifest env levelParams ctx left right with
                             | .ok () => pure ()
-                            | .error proofError =>
-                                match functionEtaDefEq manifest env levelParams ctx left right with
+                            | .error _ =>
+                                match proofIrrelevanceDefEq manifest env levelParams ctx left right with
                                 | .ok () => pure ()
-                                | .error _ =>
-                                    match functionEtaDefEq manifest env levelParams ctx right left with
+                                | .error proofError =>
+                                    match functionEtaDefEq manifest env levelParams ctx left right with
                                     | .ok () => pure ()
                                     | .error _ =>
-                                        fail s!"{structuralError.message}; proof irrelevance fallback failed: {proofError.message}"
+                                        match functionEtaDefEq manifest env levelParams ctx right left with
+                                        | .ok () => pure ()
+                                        | .error _ =>
+                                            fail s!"{structuralError.message}; proof irrelevance fallback failed: {proofError.message}"
 
 end
 

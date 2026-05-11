@@ -494,3 +494,24 @@ The first persistent checked layer stores the checked environment and lowered de
 |---|---:|---:|---:|
 | Save `MPC.Env` layer | 0 | 2,213 | cold replay cost |
 | Load `MPC.Env` layer for `MPC.Packages.Literal` | 2,062 | 4 | 7,914 ms |
+
+## Mathlib Rat Proof Conversion
+
+`Rat.addCommGroup._proof_1` stopped the `real-continuous-sqrt` probe at declaration index 3,290.  A 1,000,000-step dynamic run with the success cache exhausted its budget after 2,546 ms, with 495,111 WHNF calls, 41,404 transparent unfolds, and zero primitive-Nat reduction successes.  The profile showed repeated unfolding of ordinary arithmetic and class functions, including `Nat.add`, `instHAdd`, `Nat.brecOn`, and `Nat.gcd`, which identified conversion order as the cost center.
+
+Same-constant application congruence fixes this case by comparing arguments before unfolding a shared head.  The rule is a success-only fast path: if the heads, universe levels, and arguments compare definitionally equal, conversion succeeds; if an argument comparison fails, conversion falls back to the existing WHNF path.  The focused run then checked the declaration in 12 ms with 8,562 counted steps, 1,560 WHNF calls, 23 transparent unfolds, 11 congruence attempts, and 11 congruence successes.
+
+| Run | Status | Elapsed ms | Steps | WHNF calls | Unfolds | Congruence successes |
+|---|---:|---:|---:|---:|---:|---:|
+| Before congruence | Budget exhausted | 2,546 | 1,000,000 | 495,111 | 41,404 | 0 |
+| Same-head congruence | Checked | 12 | 8,562 | 1,560 | 23 | 11 |
+
+The full `Real.continuous_sqrt` replay accepts after this change.  It reused 6,553 declaration entries, checked 3,559 declarations, accepted 10,112 target declarations, produced environment size 10,955, and emitted no stderr.  The run recorded 161,619 ms of cumulative declaration time; the checked rows had 84,431 congruence successes and 4,586 congruence misses across 49,082,879 counted steps.
+
+| Elapsed ms | Index | Declaration |
+|---:|---:|---|
+| 11,507 | 9203 | `Real.exists_isLUB` |
+| 3,950 | 4361 | `_private.Init.Grind.Ring.Basic.0.Lean.Grind.IsCharP.mk'_aux._proof_1_5` |
+| 2,313 | 9752 | `continuous_of_continuousAt_zero₂` |
+| 2,151 | 4658 | `Lean.Grind.CommRing.Mon.revlex_k_eq_revlex` |
+| 1,840 | 4666 | `Lean.Grind.CommRing.Poly.combine_k_eq_combine` |

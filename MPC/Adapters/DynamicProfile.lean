@@ -35,6 +35,9 @@ structure Stats where
   functionEtaCalls : Nat := 0
   structureEtaCalls : Nat := 0
   singletonInductiveCalls : Nat := 0
+  constAppCongruenceAttempts : Nat := 0
+  constAppCongruenceSuccesses : Nat := 0
+  constAppCongruenceMisses : Nat := 0
   reduceEqRecByEndpointCalls : Nat := 0
   zetaReductions : Nat := 0
   betaReductions : Nat := 0
@@ -624,6 +627,87 @@ partial def reduceEqRec? (profiler : Profiler) (manifest : Manifest) (env : Env)
           | _ => reduceToMinorIfEndpointsMatch
       | _ => reduceToMinorIfEndpointsMatch
 
+partial def reduceConstantApp? (profiler : Profiler) (manifest : Manifest) (env : Env)
+    (levelParams : LevelContext) (name : Name) (levels : List Level) (args : List Expr) :
+    M (Option Expr) := do
+  match env.find? name with
+  | some info =>
+      recordAttempt profiler fun stats =>
+        { stats with primitiveReductionAttempts := stats.primitiveReductionAttempts + 1 }
+      match ← liftResult
+          (_root_.MPC.Packages.PrimitiveNat.reduce?
+            _root_.MPC.whnf manifest env levelParams name info levels args) with
+      | some reduced => do
+          profiler.step fun stats =>
+            { stats with primitiveReductionSuccesses := stats.primitiveReductionSuccesses + 1 }
+          pure (some reduced)
+      | none =>
+          recordAttempt profiler fun stats =>
+            { stats with projectionReductionAttempts := stats.projectionReductionAttempts + 1 }
+          match ← liftResult
+              (_root_.MPC.Packages.Projection.reduceConstant?
+                _root_.MPC.whnf manifest env levelParams name levels args) with
+          | some reduced => do
+              profiler.step fun stats =>
+                { stats with projectionReductionSuccesses := stats.projectionReductionSuccesses + 1 }
+              pure (some reduced)
+          | none =>
+              match info.kind with
+              | .recursor info =>
+                  recordAttempt profiler fun stats =>
+                    { stats with recursorReductionAttempts := stats.recursorReductionAttempts + 1 }
+                  match ← liftResult
+                      (_root_.MPC.reduceSimpleRecursor?
+                        _root_.MPC.whnf manifest env levelParams name info levels args) with
+                  | some reduced => do
+                      profiler.step fun stats =>
+                        { stats with
+                          recursorReductionSuccesses := stats.recursorReductionSuccesses + 1 }
+                      pure (some reduced)
+                  | none => pure none
+              | .mutualRecursor info =>
+                  recordAttempt profiler fun stats =>
+                    { stats with recursorReductionAttempts := stats.recursorReductionAttempts + 1 }
+                  match ← liftResult
+                      (_root_.MPC.reduceMutualRecursor?
+                        _root_.MPC.whnf manifest env levelParams name info levels args) with
+                  | some reduced => do
+                      profiler.step fun stats =>
+                        { stats with
+                          recursorReductionSuccesses := stats.recursorReductionSuccesses + 1 }
+                      pure (some reduced)
+                  | none => pure none
+              | .indexedRecursor info =>
+                  recordAttempt profiler fun stats =>
+                    { stats with recursorReductionAttempts := stats.recursorReductionAttempts + 1 }
+                  match ← liftResult
+                      (_root_.MPC.reduceIndexedRecursor?
+                        _root_.MPC.whnf manifest env levelParams name info levels args) with
+                  | some reduced => do
+                      profiler.step fun stats =>
+                        { stats with
+                          recursorReductionSuccesses := stats.recursorReductionSuccesses + 1 }
+                      pure (some reduced)
+                  | none => pure none
+              | .nestedRecursor info =>
+                  recordAttempt profiler fun stats =>
+                    { stats with recursorReductionAttempts := stats.recursorReductionAttempts + 1 }
+                  match ← liftResult
+                      (_root_.MPC.reduceNestedRecursor?
+                        _root_.MPC.whnf manifest env levelParams name info levels args) with
+                  | some reduced => do
+                      profiler.step fun stats =>
+                        { stats with
+                          recursorReductionSuccesses := stats.recursorReductionSuccesses + 1 }
+                      pure (some reduced)
+                  | none => pure none
+              | .quotientLift =>
+                  reduceQuotLift? profiler manifest env levelParams levels args
+              | .equalityRec =>
+                  reduceEqRec? profiler manifest env levelParams args
+              | _ => pure none
+  | none => pure none
+
 partial def whnf (profiler : Profiler) (manifest : Manifest) (env : Env)
     (levelParams : LevelContext) (expr : Expr) : M Expr := do
   if !profiler.useMemo || !exprCacheable whnfCacheExprLimit expr then
@@ -673,116 +757,43 @@ partial def whnfCore (profiler : Profiler) (manifest : Manifest) (env : Env)
       profiler.mark "whnf:app"
       let appExpr := Expr.app fn arg
       let (head, args) := Expr.getAppFnArgs appExpr
-      let primitiveReduction? ←
+      let originalConst? :=
         match head with
-        | .const name levels =>
-            match env.find? name with
-            | some info => do
-                recordAttempt profiler fun stats =>
-                  { stats with primitiveReductionAttempts := stats.primitiveReductionAttempts + 1 }
-                liftResult
-                  (_root_.MPC.Packages.PrimitiveNat.reduce?
-                    _root_.MPC.whnf manifest env levelParams name info levels args)
-            | none => pure none
-        | _ => pure none
-      match primitiveReduction? with
+        | .const name levels => some (name, levels)
+        | _ => none
+      match ←
+          match originalConst? with
+          | some (name, levels) => reduceConstantApp? profiler manifest env levelParams name levels args
+          | none => pure none with
       | some reduced => do
-          profiler.step fun stats =>
-            { stats with primitiveReductionSuccesses := stats.primitiveReductionSuccesses + 1 }
           whnf profiler manifest env levelParams reduced
       | none =>
-          let projectionReduction? ←
-            match head with
-            | .const name levels => do
-                recordAttempt profiler fun stats =>
-                  { stats with projectionReductionAttempts := stats.projectionReductionAttempts + 1 }
-                liftResult
-                  (_root_.MPC.Packages.Projection.reduceConstant?
-                    _root_.MPC.whnf manifest env levelParams name levels args)
-            | _ => pure none
-          match projectionReduction? with
-          | some reduced => do
-              profiler.step fun stats =>
-                { stats with projectionReductionSuccesses := stats.projectionReductionSuccesses + 1 }
-              whnf profiler manifest env levelParams reduced
-          | none =>
-              profiler.mark "whnf:head"
-              let head ← whnf profiler manifest env levelParams head
-              match head with
-              | Expr.const name levels =>
-                  match env.find? name with
-                  | some { kind := .recursor info, .. } =>
-                      recordAttempt profiler fun stats =>
-                        { stats with recursorReductionAttempts := stats.recursorReductionAttempts + 1 }
-                      match ← liftResult
-                          (_root_.MPC.reduceSimpleRecursor?
-                            _root_.MPC.whnf manifest env levelParams name info levels args) with
-                      | some reduced => do
-                          profiler.step fun stats =>
-                            { stats with
-                              recursorReductionSuccesses :=
-                                stats.recursorReductionSuccesses + 1 }
-                          whnf profiler manifest env levelParams reduced
-                      | none => pure (Expr.mkApps head args)
-                  | some { kind := .mutualRecursor info, .. } =>
-                      recordAttempt profiler fun stats =>
-                        { stats with recursorReductionAttempts := stats.recursorReductionAttempts + 1 }
-                      match ← liftResult
-                          (_root_.MPC.reduceMutualRecursor?
-                            _root_.MPC.whnf manifest env levelParams name info levels args) with
-                      | some reduced => do
-                          profiler.step fun stats =>
-                            { stats with
-                              recursorReductionSuccesses :=
-                                stats.recursorReductionSuccesses + 1 }
-                          whnf profiler manifest env levelParams reduced
-                      | none => pure (Expr.mkApps head args)
-                  | some { kind := .indexedRecursor info, .. } =>
-                      recordAttempt profiler fun stats =>
-                        { stats with recursorReductionAttempts := stats.recursorReductionAttempts + 1 }
-                      match ← liftResult
-                          (_root_.MPC.reduceIndexedRecursor?
-                            _root_.MPC.whnf manifest env levelParams name info levels args) with
-                      | some reduced => do
-                          profiler.step fun stats =>
-                            { stats with
-                              recursorReductionSuccesses :=
-                                stats.recursorReductionSuccesses + 1 }
-                          whnf profiler manifest env levelParams reduced
-                      | none => pure (Expr.mkApps head args)
-                  | some { kind := .nestedRecursor info, .. } =>
-                      recordAttempt profiler fun stats =>
-                        { stats with recursorReductionAttempts := stats.recursorReductionAttempts + 1 }
-                      match ← liftResult
-                          (_root_.MPC.reduceNestedRecursor?
-                            _root_.MPC.whnf manifest env levelParams name info levels args) with
-                      | some reduced => do
-                          profiler.step fun stats =>
-                            { stats with
-                              recursorReductionSuccesses :=
-                                stats.recursorReductionSuccesses + 1 }
-                          whnf profiler manifest env levelParams reduced
-                      | none => pure (Expr.mkApps head args)
-                  | some { kind := .quotientLift, .. } =>
-                      match ← reduceQuotLift? profiler manifest env levelParams levels args with
-                      | some reduced => whnf profiler manifest env levelParams reduced
-                      | none => pure (Expr.mkApps head args)
-                  | some { kind := .equalityRec, .. } =>
-                      match ← reduceEqRec? profiler manifest env levelParams args with
-                      | some reduced => whnf profiler manifest env levelParams reduced
-                      | none => pure (Expr.mkApps head args)
-                  | _ => pure (Expr.mkApps head args)
-              | .lam _ _ body =>
-                  match args with
-                  | first :: rest => do
-                      profiler.step fun stats =>
-                        { stats with betaReductions := stats.betaReductions + 1 }
-                      whnf profiler manifest env levelParams
-                        (Expr.mkApps (Expr.instantiate1 body first) rest)
-                  | [] => pure head
-              | .app _ _ =>
-                  whnf profiler manifest env levelParams (Expr.mkApps head args)
-              | _ => pure (Expr.mkApps head args)
+          profiler.mark "whnf:head"
+          let head ← whnf profiler manifest env levelParams head
+          match head with
+          | Expr.const name levels =>
+              let unchanged :=
+                match originalConst? with
+                | some (originalName, originalLevels) =>
+                    _root_.MPC.sameConst name levels originalName originalLevels
+                | none => false
+              if unchanged then
+                pure (Expr.mkApps head args)
+              else
+                match ← reduceConstantApp? profiler manifest env levelParams name levels args with
+                | some reduced => whnf profiler manifest env levelParams reduced
+                | none => pure (Expr.mkApps head args)
+          | .lam _ _ body =>
+              match args with
+              | first :: rest => do
+                  profiler.step fun stats =>
+                    { stats with betaReductions := stats.betaReductions + 1 }
+                  whnf profiler manifest env levelParams
+                    (Expr.mkApps (Expr.instantiate1 body first) rest)
+              | [] => pure head
+          | .app _ _ =>
+              whnf profiler manifest env levelParams (Expr.mkApps head args)
+          | _ => pure (Expr.mkApps head args)
   | .const name levels =>
       profiler.mark s!"whnf:const:{name}"
       match env.find? name with
@@ -938,6 +949,64 @@ partial def reduceEqRecByEndpointDefEq? (profiler : Profiler) (manifest : Manife
             | Except.error _ => pure none
       | _ => pure none
   | _ => pure none
+
+partial def constAppCongruence? (profiler : Profiler) (manifest : Manifest) (env : Env)
+    (levelParams : LevelContext) (ctx : Context) (left right : Expr) :
+    M (Option Unit) := do
+  let (leftHead, leftArgs) := left.getAppFnArgs
+  let (rightHead, rightArgs) := right.getAppFnArgs
+  if leftArgs.length != rightArgs.length then
+    pure none
+  else
+    match leftHead, rightHead with
+    | .const leftName leftLevels, .const rightName rightLevels =>
+        if !_root_.MPC.sameConst leftName leftLevels rightName rightLevels then
+          pure none
+        else
+          recordStats profiler fun stats =>
+            { stats with
+              constAppCongruenceAttempts := stats.constAppCongruenceAttempts + 1 }
+          let genericCompare : M Unit := do
+            for pair in leftArgs.zip rightArgs do
+              profileDefEq profiler manifest env levelParams ctx pair.1 pair.2
+          let compare : M Unit := do
+            if manifest.prop == .enabled then
+              match env.findConstructorFieldInfo? leftName with
+              | some fieldInfo =>
+                  let expectedArity := fieldInfo.paramCount + fieldInfo.proofFields.length
+                  if leftArgs.length == expectedArity &&
+                      rightArgs.length == expectedArity then
+                    for pair in (leftArgs.take fieldInfo.paramCount).zip
+                        (rightArgs.take fieldInfo.paramCount) do
+                      profileDefEq profiler manifest env levelParams ctx pair.1 pair.2
+                    let leftFields := leftArgs.drop fieldInfo.paramCount
+                    let rightFields := rightArgs.drop fieldInfo.paramCount
+                    for pair in fieldInfo.proofFields.zip (leftFields.zip rightFields) do
+                      if pair.1 then
+                        recordStats profiler fun stats =>
+                          {
+                            stats with
+                            constructorProofFieldSkips := stats.constructorProofFieldSkips + 1
+                          }
+                      else
+                        profileDefEq profiler manifest env levelParams ctx pair.2.1 pair.2.2
+                  else
+                    genericCompare
+              | none => genericCompare
+            else
+              genericCompare
+          match ← capture compare with
+          | Except.ok () => do
+              recordStats profiler fun stats =>
+                { stats with
+                  constAppCongruenceSuccesses := stats.constAppCongruenceSuccesses + 1 }
+              pure (some ())
+          | Except.error _ => do
+              recordStats profiler fun stats =>
+                { stats with
+                  constAppCongruenceMisses := stats.constAppCongruenceMisses + 1 }
+              pure none
+    | _, _ => pure none
 
 partial def structuralDefEq (profiler : Profiler) (manifest : Manifest) (env : Env)
     (levelParams : LevelContext) (ctx : Context) (left right : Expr) : M Unit := do
@@ -1240,34 +1309,37 @@ partial def profileDefEq (profiler : Profiler) (manifest : Manifest) (env : Env)
 
 partial def profileDefEqCore (profiler : Profiler) (manifest : Manifest) (env : Env)
     (levelParams : LevelContext) (ctx : Context) (left right : Expr) : M Unit := do
-  match ← capture (structuralDefEq profiler manifest env levelParams ctx left right) with
-    | Except.ok () => pure ()
-    | Except.error structuralError =>
-        match ← reduceEqRecByEndpointDefEq? profiler manifest env levelParams ctx left with
-        | some reducedLeft => profileDefEq profiler manifest env levelParams ctx reducedLeft right
-        | none =>
-            match ← reduceEqRecByEndpointDefEq? profiler manifest env levelParams ctx right with
-            | some reducedRight => profileDefEq profiler manifest env levelParams ctx left reducedRight
-            | none =>
-                match ← capture (structureEtaDefEq profiler manifest env levelParams ctx left right) with
-                | Except.ok () => pure ()
-                | Except.error _ =>
-                    match ← capture (structureEtaDefEq profiler manifest env levelParams ctx right left) with
-                    | Except.ok () => pure ()
-                    | Except.error _ =>
-                        match ← capture (singletonInductiveDefEq profiler manifest env levelParams ctx left right) with
-                        | Except.ok () => pure ()
-                        | Except.error _ =>
-                            match ← capture (proofIrrelevanceDefEq profiler manifest env levelParams ctx left right) with
-                            | Except.ok () => pure ()
-                            | Except.error proofError =>
-                                match ← capture (functionEtaDefEq profiler manifest env levelParams ctx left right) with
-                                | Except.ok () => pure ()
-                                | Except.error _ =>
-                                    match ← capture (functionEtaDefEq profiler manifest env levelParams ctx right left) with
-                                    | Except.ok () => pure ()
-                                    | Except.error _ =>
-                                        fail s!"{structuralError.message}; proof irrelevance fallback failed: {proofError.message}"
+  match ← constAppCongruence? profiler manifest env levelParams ctx left right with
+  | some () => pure ()
+  | none =>
+      match ← capture (structuralDefEq profiler manifest env levelParams ctx left right) with
+      | Except.ok () => pure ()
+      | Except.error structuralError =>
+          match ← reduceEqRecByEndpointDefEq? profiler manifest env levelParams ctx left with
+          | some reducedLeft => profileDefEq profiler manifest env levelParams ctx reducedLeft right
+          | none =>
+              match ← reduceEqRecByEndpointDefEq? profiler manifest env levelParams ctx right with
+              | some reducedRight => profileDefEq profiler manifest env levelParams ctx left reducedRight
+              | none =>
+                  match ← capture (structureEtaDefEq profiler manifest env levelParams ctx left right) with
+                  | Except.ok () => pure ()
+                  | Except.error _ =>
+                      match ← capture (structureEtaDefEq profiler manifest env levelParams ctx right left) with
+                      | Except.ok () => pure ()
+                      | Except.error _ =>
+                          match ← capture (singletonInductiveDefEq profiler manifest env levelParams ctx left right) with
+                          | Except.ok () => pure ()
+                          | Except.error _ =>
+                              match ← capture (proofIrrelevanceDefEq profiler manifest env levelParams ctx left right) with
+                              | Except.ok () => pure ()
+                              | Except.error proofError =>
+                                  match ← capture (functionEtaDefEq profiler manifest env levelParams ctx left right) with
+                                  | Except.ok () => pure ()
+                                  | Except.error _ =>
+                                      match ← capture (functionEtaDefEq profiler manifest env levelParams ctx right left) with
+                                      | Except.ok () => pure ()
+                                      | Except.error _ =>
+                                          fail s!"{structuralError.message}; proof irrelevance fallback failed: {proofError.message}"
 
 end
 
@@ -1309,6 +1381,9 @@ def Stats.toJson (stats : Stats) : Lean.Json :=
     ("function_eta_calls", jsonNat stats.functionEtaCalls),
     ("structure_eta_calls", jsonNat stats.structureEtaCalls),
     ("singleton_inductive_calls", jsonNat stats.singletonInductiveCalls),
+    ("const_app_congruence_attempts", jsonNat stats.constAppCongruenceAttempts),
+    ("const_app_congruence_successes", jsonNat stats.constAppCongruenceSuccesses),
+    ("const_app_congruence_misses", jsonNat stats.constAppCongruenceMisses),
     ("reduce_eqrec_by_endpoint_calls", jsonNat stats.reduceEqRecByEndpointCalls),
     ("zeta_reductions", jsonNat stats.zetaReductions),
     ("beta_reductions", jsonNat stats.betaReductions),
@@ -1369,6 +1444,9 @@ def Stats.toReplayJson (stats : Stats) : Lean.Json :=
     ("structural_whnf_alphaeq_hits", jsonNat stats.structuralWhnfAlphaEqHits),
     ("whnf_calls", jsonNat stats.whnfCalls),
     ("definition_unfolds", jsonNat stats.definitionUnfolds),
+    ("const_app_congruence_attempts", jsonNat stats.constAppCongruenceAttempts),
+    ("const_app_congruence_successes", jsonNat stats.constAppCongruenceSuccesses),
+    ("const_app_congruence_misses", jsonNat stats.constAppCongruenceMisses),
     ("projection_reduction_successes", jsonNat stats.projectionReductionSuccesses),
     ("constructor_proof_field_skips", jsonNat stats.constructorProofFieldSkips),
     ("defeq_success_cache_hits", jsonNat stats.defEqSuccessCacheHits),
