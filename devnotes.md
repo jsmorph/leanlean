@@ -573,3 +573,5 @@ The current v4 cache accepts `abelian-exact-batch1`.  The replay reused 6,091 de
 `Polynomial.C_mul` accepts under the current checker and v4 cache.  The replay reused 4,034 declaration entries, checked 256 new entries, accepted 4,290 target declarations, produced environment size 4,795, and emitted no stderr.  The target theorem checked in 5 ms, confirming that the earlier `Eq.ndrec` classification remains stable after the later equality and conversion changes.
 
 `Polynomial.X_mul` accepts as the companion polynomial replay.  The replay reused 4,238 declaration entries, checked 35 new entries, accepted 4,273 target declarations, produced environment size 4,760, and emitted no stderr.  The target theorem checked in 200 ms, with `AddMonoidAlgebra.mul_apply` as the next slowest checked row at 140 ms.
+
+`tools/mpc-mathlib-probe.sh` now accepts `MPC_PROBE_DEFEQ_SUCCESS_CACHE=1` when `MPC_CACHE_DB` is set.  The flag passes `--defeq-success-cache` to `mpc-check-export`, matching the current broad-probe mode without making the success cache the default for cold checks.

@@ -49,7 +49,7 @@ Older v2 cache files used rendered declarations as content keys and loaded the w
 
 The rejected v3 content-table experiment measured the storage failure directly.  Adding only 5,819 full rendered declaration keys to `.tmp/mathlib-probes/mathlib-cache-v3.db` grew the file to 5.7 GB.  The v4 schema stores a 64-character digest for that role and keeps the rendered declaration text out of SQLite.
 
-`tools/mpc-mathlib-probe.sh` writes checker stdout to `<label>.output`.  When `MPC_PROBE_STATS=1`, it writes the full telemetry stream to `<label>.stats.jsonl`, writes checker stderr to `<label>.stats.err`, and prints only the final checker outcome.  This keeps long mathlib probes inspectable without flooding the terminal.
+`tools/mpc-mathlib-probe.sh` writes checker stdout to `<label>.output`.  When `MPC_PROBE_STATS=1`, it writes the full telemetry stream to `<label>.stats.jsonl`, writes checker stderr to `<label>.stats.err`, and prints only the final checker outcome.  Set `MPC_CACHE_DB=<db>` and `MPC_PROBE_DEFEQ_SUCCESS_CACHE=1` to pass `--defeq-success-cache` to `mpc-check-export`, which is the normal mode for broad mathlib probing with a v4 SQLite cache.  This keeps long mathlib probes inspectable without flooding the terminal.
 
 When comparing runs, compare the same artifact and the same declaration prefix.  The most useful columns are declaration index, declaration name, status, elapsed milliseconds, cumulative milliseconds, expression node count, and transparent-definition head-application count.  A useful optimization note records both the winning and rejected hypotheses, because several cheap optimizations in this file measured inside run-to-run noise.
 

@@ -42,6 +42,7 @@ stats="$probe_dir/$label.stats.jsonl"
 stats_err="$probe_dir/$label.stats.err"
 checker="$repo_root/.lake/build/bin/mpc-check-export"
 checker_args=()
+cache_layer_enabled=0
 
 if ! command -v "$lean4export_bin" >/dev/null 2>&1; then
   echo "error: lean4export not found; set MPC_LEAN4EXPORT" >&2
@@ -50,6 +51,15 @@ fi
 
 if [[ "${MPC_CACHE_DB+x}" == "x" && -n "$MPC_CACHE_DB" ]]; then
   checker_args+=(--cache-layer "$MPC_CACHE_DB")
+  cache_layer_enabled=1
+fi
+
+if [[ "${MPC_PROBE_DEFEQ_SUCCESS_CACHE:-0}" == "1" ]]; then
+  if [[ "$cache_layer_enabled" != "1" ]]; then
+    echo "error: MPC_PROBE_DEFEQ_SUCCESS_CACHE=1 requires MPC_CACHE_DB" >&2
+    exit 2
+  fi
+  checker_args+=(--defeq-success-cache)
 fi
 
 if [[ "${MPC_PROBE_STATS:-0}" == "1" ]]; then
