@@ -533,3 +533,5 @@ The full `Real.continuous_sqrt` replay accepts after this change.  It reused 6,5
 `Finset.range_filter_eq` accepts under the same conditions.  The replay reused 2,453 declaration entries, checked 201 declarations, accepted 2,654 target declarations, produced environment size 2,975, and emitted no stderr.  The old range proof boundary checked in 367 ms, and the target theorem checked in 4 ms.
 
 `snake-delta-mono-epi` accepts as a warm-cache snake support probe.  It reused 7,645 declaration entries, checked two declarations, accepted 7,647 target declarations, produced environment size 8,401, and emitted no stderr.  The checked suffix took 61 ms total, so the observed time in that run is SQLite replay through previously accepted category-theory and homology support.
+
+`abelian-basic-batch1` accepts under the current v4 cache.  It reused 5,484 declaration entries, checked 68 declarations, accepted 5,552 target declarations, produced environment size 6,182, and emitted no stderr.  The checked suffix ends at `CategoryTheory.Abelian.monoLift_comp`, which checked in 76 ms.
