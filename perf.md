@@ -531,3 +531,5 @@ The full `Real.continuous_sqrt` replay accepts after this change.  It reused 6,5
 `Finset.prod_biUnion` also accepts after wider probes populated the old Grind dependency wall.  The replay reused 3,386 declaration entries, checked 40 declarations, accepted 3,426 target declarations, produced environment size 3,852, and emitted no stderr.  The checked suffix totaled 102,014 counted steps and 24,627 WHNF calls; the target theorem checked in 10 ms.
 
 `Finset.range_filter_eq` accepts under the same conditions.  The replay reused 2,453 declaration entries, checked 201 declarations, accepted 2,654 target declarations, produced environment size 2,975, and emitted no stderr.  The old range proof boundary checked in 367 ms, and the target theorem checked in 4 ms.
+
+`snake-delta-mono-epi` accepts as a warm-cache snake support probe.  It reused 7,645 declaration entries, checked two declarations, accepted 7,647 target declarations, produced environment size 8,401, and emitted no stderr.  The checked suffix took 61 ms total, so the observed time in that run is SQLite replay through previously accepted category-theory and homology support.
