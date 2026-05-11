@@ -1,3 +1,4 @@
+import MPC.Adapters.DynamicProfile
 import MPC.Adapters.Layer
 
 namespace MPC.CheckExport
@@ -12,6 +13,7 @@ inductive TelemetryFormat where
 structure ReplayOptions where
   trace : Bool := false
   telemetry : TelemetryFormat := .off
+  defEqSuccessCache : Bool := false
   deriving Inhabited
 
 structure Config where
@@ -31,7 +33,7 @@ def usage : String :=
   "       mpc-check-export --checked-layer <base.ndjson> <export.ndjson>\n" ++
   "       mpc-check-export --save-layer <layer.json|layer.sqlite> <export.ndjson>\n" ++
   "       mpc-check-export --load-layer <layer.json|layer.sqlite> <export.ndjson>\n" ++
-  "       mpc-check-export --cache-layer <layer.db> <export.ndjson>\n" ++
+  "       mpc-check-export --cache-layer <layer.db> [--defeq-success-cache] <export.ndjson>\n" ++
   "       mpc-check-export [--limit <n>] [--trace] [--stats|--stats-jsonl|--profile-jsonl] [--diagnostic-assume-generated] <export.ndjson>\n" ++
   "       mpc-check-export --profile-declaration <n> <export.ndjson>\n" ++
   "       mpc-check-export --cache-layer <layer.db> --profile-declaration <n> <export.ndjson>\n" ++
@@ -151,6 +153,8 @@ partial def parseArgsLoop
       parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? limit? profileDeclaration? (← setTelemetryFormat replayOptions .jsonl) diagnosticAssumeGenerated rest
   | "--profile-jsonl" :: rest => do
       parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? limit? profileDeclaration? (← setTelemetryFormat replayOptions .profileJsonl) diagnosticAssumeGenerated rest
+  | "--defeq-success-cache" :: rest =>
+      parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? limit? profileDeclaration? { replayOptions with defEqSuccessCache := true } diagnosticAssumeGenerated rest
   | "--diagnostic-assume-generated" :: rest =>
       parseArgsLoop input? checkedLayerPath? saveLayerPath? loadLayerPath? cacheLayerPath? limit? profileDeclaration? replayOptions true rest
   | "--assume-generated" :: rest =>
@@ -630,16 +634,19 @@ def generatedAssumptionCount (config : Config) (state : MPC.Adapters.Export.Pars
 
 def replayConfig (config : Config) (state : MPC.Adapters.Export.ParseState) :
     IO (Result Env) := do
-  let declarations := prepareDeclarations config state
-  match ← replayLoop MPC.Configs.LeanCore429 config.replayOptions 0 0 emptyEnv declarations with
-  | .error err => pure (.error err)
-  | .ok env =>
-      match config.limit? with
-      | some _ => pure (.ok env)
-      | none =>
-          match MPC.Adapters.Export.auditGenerated env state.audit with
-          | .ok () => pure (.ok env)
-          | .error err => pure (.error err)
+  if config.replayOptions.defEqSuccessCache then
+    pure (.error { message := "--defeq-success-cache requires --cache-layer" })
+  else
+    let declarations := prepareDeclarations config state
+    match ← replayLoop MPC.Configs.LeanCore429 config.replayOptions 0 0 emptyEnv declarations with
+    | .error err => pure (.error err)
+    | .ok env =>
+        match config.limit? with
+        | some _ => pure (.ok env)
+        | none =>
+            match MPC.Adapters.Export.auditGenerated env state.audit with
+            | .ok () => pure (.ok env)
+            | .error err => pure (.error err)
 
 structure LayerReplayResult where
   env : Env
@@ -704,6 +711,8 @@ def replayWithCheckedLayer (config : Config) (state : MPC.Adapters.Export.ParseS
     pure (.error { message := "--checked-layer cannot be combined with telemetry output" })
   else if config.replayOptions.trace then
     pure (.error { message := "--checked-layer cannot be combined with --trace" })
+  else if config.replayOptions.defEqSuccessCache then
+    pure (.error { message := "--checked-layer cannot be combined with --defeq-success-cache" })
   else if config.diagnosticAssumeGenerated then
     pure (.error { message := "--checked-layer cannot be combined with diagnostic generated assumptions" })
   else
@@ -724,6 +733,8 @@ def replayWithSavedLayer (config : Config) (state : MPC.Adapters.Export.ParseSta
     pure (.error { message := "--load-layer telemetry requires a SQLite layer" })
   else if config.replayOptions.trace then
     pure (.error { message := "--load-layer cannot be combined with --trace" })
+  else if config.replayOptions.defEqSuccessCache then
+    pure (.error { message := "--load-layer cannot be combined with --defeq-success-cache" })
   else if config.diagnosticAssumeGenerated then
     pure (.error { message := "--load-layer cannot be combined with diagnostic generated assumptions" })
   else
@@ -745,6 +756,7 @@ def replayWithSavedLayer (config : Config) (state : MPC.Adapters.Export.ParseSta
 
 partial def streamCacheLayerLoop (layerPath : System.FilePath)
     (handle : IO.FS.Handle) (observer? : Option MPC.Adapters.Layer.ReplayObserver)
+    (addDeclFn? : Option MPC.Adapters.Layer.AddDeclFn)
     (lineNumber : Nat) (parseState : MPC.Adapters.Export.State)
     (audit : MPC.Adapters.Export.Audit)
     (replayState : MPC.Adapters.Layer.SqliteOnDemandReplayState) :
@@ -760,11 +772,19 @@ partial def streamCacheLayerLoop (layerPath : System.FilePath)
         for declaration in event.declarations do
           match ←
               MPC.Adapters.Layer.replaySqliteOnDemandStep MPC.Configs.LeanCore429
-                layerPath observer? true replayState declaration with
+                layerPath observer? true replayState declaration addDeclFn? with
           | .error err => return .error err
           | .ok nextState => replayState := nextState
-        streamCacheLayerLoop layerPath handle observer? (lineNumber + 1) parseState
+        streamCacheLayerLoop layerPath handle observer? addDeclFn? (lineNumber + 1) parseState
           (MPC.Adapters.Export.mergeAudit audit event.audit) replayState
+
+def cacheLayerAddDeclFn? (config : Config) : Option MPC.Adapters.Layer.AddDeclFn :=
+  if config.replayOptions.defEqSuccessCache then
+    some fun env declaration =>
+      MPC.Adapters.DynamicProfile.addDeclarationWithDefEqSuccessCache
+        MPC.Configs.LeanCore429 env declaration
+  else
+    none
 
 def replayWithCacheLayerStreaming (config : Config) (layerPath : System.FilePath) :
     IO (Result StreamingLayerReplayResult) := do
@@ -787,8 +807,9 @@ def replayWithCacheLayerStreaming (config : Config) (layerPath : System.FilePath
     | .error err => pure (.error err)
     | .ok () =>
         let observer? := layerReplayObserver? config.replayOptions.telemetry
+        let addDeclFn? := cacheLayerAddDeclFn? config
         match ← IO.FS.withFile config.inputPath .read fun handle =>
-            streamCacheLayerLoop layerPath handle observer? 1 {} {} {} with
+            streamCacheLayerLoop layerPath handle observer? addDeclFn? 1 {} {} {} with
         | .error err => pure (.error { message := s!"while using cache layer {layerPath}: {err.message}" })
         | .ok (audit, replayState) =>
             match MPC.Adapters.Layer.finishSqliteOnDemandReplay audit replayState with
@@ -813,6 +834,8 @@ def saveLayerConfig (config : Config) (state : MPC.Adapters.Export.ParseState)
     pure (.error { message := "--save-layer cannot be combined with telemetry output" })
   else if config.replayOptions.trace then
     pure (.error { message := "--save-layer cannot be combined with --trace" })
+  else if config.replayOptions.defEqSuccessCache then
+    pure (.error { message := "--save-layer cannot be combined with --defeq-success-cache" })
   else if config.diagnosticAssumeGenerated then
     pure (.error { message := "--save-layer cannot be combined with diagnostic generated assumptions" })
   else
@@ -883,6 +906,8 @@ def profileDeclarationAtWithCacheLayer
     pure (.error { message := "--cache-layer profile-declaration cannot be combined with telemetry output" })
   else if config.replayOptions.trace then
     pure (.error { message := "--cache-layer cannot be combined with --trace" })
+  else if config.replayOptions.defEqSuccessCache then
+    pure (.error { message := "--cache-layer profile-declaration cannot be combined with --defeq-success-cache" })
   else if config.diagnosticAssumeGenerated then
     pure (.error { message := "--cache-layer cannot be combined with diagnostic generated assumptions" })
   else

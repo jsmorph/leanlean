@@ -11,9 +11,10 @@ structure Config where
   traceEvery : Nat := 100000
   useMemo : Bool := false
   useRepeatDiag : Bool := false
+  useDefEqSuccessCache : Bool := false
 
 def usage : String :=
-  "usage: mpc-dynamic-profile-export --cache-layer <layer.db> --declaration <n> [--budget <n>] [--trace-every <n>] [--memo] [--repeat-diag] <export.ndjson>"
+  "usage: mpc-dynamic-profile-export --cache-layer <layer.db> --declaration <n> [--budget <n>] [--trace-every <n>] [--memo] [--repeat-diag] [--defeq-success-cache] <export.ndjson>"
 
 def filePath (path : String) : Except String System.FilePath :=
   if path.isEmpty then
@@ -35,19 +36,21 @@ def setInputPath (input? : Option String) (path : String) :
 
 partial def parseArgsLoop
     (input? : Option String) (cacheLayerPath? : Option System.FilePath)
-    (declarationIndex? : Option Nat) (budget traceEvery : Nat) (useMemo useRepeatDiag : Bool) :
+    (declarationIndex? : Option Nat) (budget traceEvery : Nat)
+    (useMemo useRepeatDiag useDefEqSuccessCache : Bool) :
     List String →
       Except String
-        (Option String × Option System.FilePath × Option Nat × Nat × Nat × Bool × Bool)
+        (Option String × Option System.FilePath × Option Nat × Nat × Nat × Bool × Bool × Bool)
   | [] =>
       pure
-        (input?, cacheLayerPath?, declarationIndex?, budget, traceEvery, useMemo, useRepeatDiag)
+        (input?, cacheLayerPath?, declarationIndex?, budget, traceEvery, useMemo,
+          useRepeatDiag, useDefEqSuccessCache)
   | "--cache-layer" :: path :: rest => do
       if cacheLayerPath?.isSome then
         .error "multiple cache layers"
       else
         parseArgsLoop input? (some (← filePath path)) declarationIndex? budget traceEvery
-          useMemo useRepeatDiag rest
+          useMemo useRepeatDiag useDefEqSuccessCache rest
   | "--cache-layer" :: [] => .error "missing value after --cache-layer"
   | "--declaration" :: value :: rest => do
       if declarationIndex?.isSome then
@@ -55,33 +58,39 @@ partial def parseArgsLoop
       else
         parseArgsLoop input? cacheLayerPath?
           (some (← parseNatArgument "declaration index" value)) budget traceEvery
-          useMemo useRepeatDiag rest
+          useMemo useRepeatDiag useDefEqSuccessCache rest
   | "--declaration" :: [] => .error "missing value after --declaration"
   | "--budget" :: value :: rest => do
       parseArgsLoop input? cacheLayerPath? declarationIndex?
-        (← parseNatArgument "budget" value) traceEvery useMemo useRepeatDiag rest
+        (← parseNatArgument "budget" value) traceEvery useMemo useRepeatDiag
+        useDefEqSuccessCache rest
   | "--budget" :: [] => .error "missing value after --budget"
   | "--trace-every" :: value :: rest => do
       parseArgsLoop input? cacheLayerPath? declarationIndex? budget
-        (← parseNatArgument "trace interval" value) useMemo useRepeatDiag rest
+        (← parseNatArgument "trace interval" value) useMemo useRepeatDiag
+        useDefEqSuccessCache rest
   | "--trace-every" :: [] => .error "missing value after --trace-every"
   | "--memo" :: rest =>
       parseArgsLoop input? cacheLayerPath? declarationIndex? budget traceEvery true
-        useRepeatDiag rest
+        useRepeatDiag useDefEqSuccessCache rest
   | "--repeat-diag" :: rest =>
       parseArgsLoop input? cacheLayerPath? declarationIndex? budget traceEvery useMemo
-        true rest
+        true useDefEqSuccessCache rest
+  | "--defeq-success-cache" :: rest =>
+      parseArgsLoop input? cacheLayerPath? declarationIndex? budget traceEvery useMemo
+        useRepeatDiag true rest
   | "--help" :: _ => .error usage
   | arg :: rest => do
       if arg.startsWith "-" then
         .error s!"unknown argument: {arg}"
       else
         parseArgsLoop (← setInputPath input? arg) cacheLayerPath? declarationIndex?
-          budget traceEvery useMemo useRepeatDiag rest
+          budget traceEvery useMemo useRepeatDiag useDefEqSuccessCache rest
 
 def parseArgs (args : List String) : Except String Config := do
-  let (input?, cacheLayerPath?, declarationIndex?, budget, traceEvery, useMemo, useRepeatDiag) ←
-    parseArgsLoop none none none 1000000 100000 false false args
+  let (input?, cacheLayerPath?, declarationIndex?, budget, traceEvery, useMemo,
+    useRepeatDiag, useDefEqSuccessCache) ←
+    parseArgsLoop none none none 1000000 100000 false false false args
   let some input := input?
     | .error "missing input path"
   let some cacheLayerPath := cacheLayerPath?
@@ -95,7 +104,8 @@ def parseArgs (args : List String) : Except String Config := do
     budget,
     traceEvery,
     useMemo,
-    useRepeatDiag
+    useRepeatDiag,
+    useDefEqSuccessCache
   }
 
 def replayStatusLabel : MPC.Adapters.Layer.ReplayStepStatus → String
@@ -148,7 +158,7 @@ def runProfile (config : Config) : IO (Result Lean.Json) := do
             let json ←
               MPC.Adapters.DynamicProfile.profileDeclaration
                 MPC.Configs.LeanCore429 env config.budget config.traceEvery config.useMemo
-                config.useRepeatDiag declaration
+                config.useRepeatDiag config.useDefEqSuccessCache declaration
             pure (.ok json)
 
 def run (args : List String) : IO UInt32 := do

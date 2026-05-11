@@ -74,6 +74,9 @@ structure ReplayStep where
 abbrev ReplayObserver :=
   ReplayStep → IO Unit
 
+abbrev AddDeclFn :=
+  Env → Declaration → IO (Result Env)
+
 structure SaveSummary where
   declarations : Nat
   envLength : Nat
@@ -1417,7 +1420,8 @@ def emitReplayStep (observer? : Option ReplayObserver) (index : Nat) (declaratio
 
 def replaySqliteOnDemandStep (manifest : Manifest) (layerPath : System.FilePath)
     (observer? : Option ReplayObserver) (persist : Bool)
-    (state : SqliteOnDemandReplayState) (declaration : Declaration) :
+    (state : SqliteOnDemandReplayState) (declaration : Declaration)
+    (addDeclFn? : Option AddDeclFn := none) :
     IO (Result SqliteOnDemandReplayState) := do
   let startMs? ← emitReplayStart observer? state.index declaration state.cumulativeMs
   let key := declarationContentKey declaration
@@ -1481,7 +1485,11 @@ def replaySqliteOnDemandStep (manifest : Manifest) (layerPath : System.FilePath)
           })
       | .ok false =>
           let before := state.env
-          match addDecl manifest state.env declaration with
+          let checked ←
+            match addDeclFn? with
+            | some addDeclFn => addDeclFn state.env declaration
+            | none => pure (addDecl manifest state.env declaration)
+          match checked with
           | .ok env =>
               match addedEntries before env with
               | .error err =>

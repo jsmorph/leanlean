@@ -55,6 +55,10 @@ structure Stats where
   defEqCacheHits : Nat := 0
   defEqCacheMisses : Nat := 0
   defEqCacheEntries : Nat := 0
+  defEqSuccessCacheHits : Nat := 0
+  defEqSuccessCacheMisses : Nat := 0
+  defEqSuccessCacheEntries : Nat := 0
+  defEqSuccessCacheDropped : Nat := 0
   constructorProofFieldSkips : Nat := 0
   defEqRepeatObservations : Nat := 0
   defEqRepeatHits : Nat := 0
@@ -94,8 +98,10 @@ structure Profiler where
   markRef : IO.Ref String
   whnfCacheRef : IO.Ref (Std.HashMap WhnfKey Expr)
   defEqCacheRef : IO.Ref (Std.HashMap DefEqKey Unit)
+  defEqSuccessCacheRef : IO.Ref (Std.HashMap DefEqKey Unit)
   useMemo : Bool := false
   useRepeatDiag : Bool := false
+  useDefEqSuccessCache : Bool := false
   traceEvery : Nat := 1000
 
 abbrev M := ExceptT Error IO
@@ -204,6 +210,9 @@ def repeatMapLimit : Nat :=
 
 def repeatTopLimit : Nat :=
   30
+
+def defEqSuccessCacheLimit : Nat :=
+  200000
 
 def hashText {α : Type} [Hashable α] (value : α) : String :=
   toString (hash value)
@@ -426,6 +435,34 @@ def Profiler.noteDefEq (profiler : Profiler) (ctx : Context) (left right : Expr)
       defEqShapePairs := incrementString stats.defEqShapePairs shapeKey,
       defEqContextDepths := incrementString stats.defEqContextDepths ctxKey }
 
+def recordStats (profiler : Profiler) (update : Stats → Stats) : M Unit := do
+  let stats ← profiler.ref.get
+  profiler.ref.set (update stats)
+
+def Profiler.checkDefEqSuccessCache? (profiler : Profiler) (key : DefEqKey) :
+    M Bool := do
+  match (← profiler.defEqSuccessCacheRef.get).get? key with
+  | some () => do
+      recordStats profiler fun stats =>
+        { stats with defEqSuccessCacheHits := stats.defEqSuccessCacheHits + 1 }
+      pure true
+  | none => do
+      recordStats profiler fun stats =>
+        { stats with defEqSuccessCacheMisses := stats.defEqSuccessCacheMisses + 1 }
+      pure false
+
+def Profiler.insertDefEqSuccessCache (profiler : Profiler) (key : DefEqKey) : M Unit := do
+  let cache ← profiler.defEqSuccessCacheRef.get
+  if cache.contains key then
+    pure ()
+  else if cache.size < defEqSuccessCacheLimit then
+    profiler.defEqSuccessCacheRef.set (cache.insert key ())
+    recordStats profiler fun stats =>
+      { stats with defEqSuccessCacheEntries := stats.defEqSuccessCacheEntries + 1 }
+  else
+    recordStats profiler fun stats =>
+      { stats with defEqSuccessCacheDropped := stats.defEqSuccessCacheDropped + 1 }
+
 def Profiler.noteStructuralCompare (profiler : Profiler) (left right : Expr) : M Unit := do
   let key := exprShapeLabel left ++ " | " ++ exprShapeLabel right
   let stats ← profiler.ref.get
@@ -463,10 +500,6 @@ def Profiler.noteUnfold (profiler : Profiler) (name : Name) : M Unit := do
 
 def recordAttempt (profiler : Profiler) (update : Stats → Stats) : M Unit :=
   profiler.step update
-
-def recordStats (profiler : Profiler) (update : Stats → Stats) : M Unit := do
-  let stats ← profiler.ref.get
-  profiler.ref.set (update stats)
 
 mutual
 
@@ -1143,6 +1176,16 @@ partial def profileDefEq (profiler : Profiler) (manifest : Manifest) (env : Env)
     recordStats profiler fun stats =>
       { stats with defEqAlphaEqHits := stats.defEqAlphaEqHits + 1 }
   else do
+    let successCacheKey? :=
+      if profiler.useDefEqSuccessCache then
+        some ({ levelParams, ctx, left, right } : DefEqKey)
+      else
+        none
+    match successCacheKey? with
+    | some key =>
+        if ← profiler.checkDefEqSuccessCache? key then
+          return ()
+    | none => pure ()
     let observation? ←
       if profiler.useRepeatDiag then
         let stats ← profiler.ref.get
@@ -1179,13 +1222,21 @@ partial def profileDefEq (profiler : Profiler) (manifest : Manifest) (env : Env)
           match observation? with
           | some observation => profiler.noteDefEqRepeatOutcome observation true
           | none => pure ()
+          match successCacheKey? with
+          | some key => profiler.insertDefEqSuccessCache key
+          | none => pure ()
       | Except.error err => do
           match observation? with
           | some observation => profiler.noteDefEqRepeatOutcome observation false
           | none => pure ()
           throw err
     else
-      runCompare
+      match ← capture runCompare with
+      | Except.ok () => do
+          match successCacheKey? with
+          | some key => profiler.insertDefEqSuccessCache key
+          | none => pure ()
+      | Except.error err => throw err
 
 partial def profileDefEqCore (profiler : Profiler) (manifest : Manifest) (env : Env)
     (levelParams : LevelContext) (ctx : Context) (left right : Expr) : M Unit := do
@@ -1248,6 +1299,30 @@ def checkDeclaration (profiler : Profiler) (manifest : Manifest) (env : Env) :
       let _ ← liftResult (MPC.addDecl manifest env declaration)
       pure ()
 
+def addDeclaration (profiler : Profiler) (manifest : Manifest) (env : Env) :
+    Declaration → M Env
+  | .axiom name levelParams type => do
+      liftResult (Manifest.validate manifest)
+      let _ ← inferSort profiler manifest env levelParams [] type
+      liftResult (Env.add env { name, levelParams, type, kind := .axiom })
+  | .definition name levelParams type value => do
+      liftResult (Manifest.validate manifest)
+      let _ ← inferSort profiler manifest env levelParams [] type
+      check profiler manifest env levelParams [] value type
+      liftResult (Env.add env { name, levelParams, type, value? := some value, kind := .definition })
+  | .opaque name levelParams type value => do
+      liftResult (Manifest.validate manifest)
+      let _ ← inferSort profiler manifest env levelParams [] type
+      check profiler manifest env levelParams [] value type
+      liftResult (Env.add env { name, levelParams, type, value? := some value, kind := .opaque })
+  | .theorem name levelParams type value => do
+      liftResult (Manifest.validate manifest)
+      isPropExpr profiler manifest env levelParams [] type
+      check profiler manifest env levelParams [] value type
+      liftResult (Env.add env { name, levelParams, type, value? := some value, kind := .theorem })
+  | declaration =>
+      liftResult (MPC.addDecl manifest env declaration)
+
 def Stats.toJson (stats : Stats) : Lean.Json :=
   Lean.Json.mkObj [
     ("steps", jsonNat stats.steps),
@@ -1284,6 +1359,10 @@ def Stats.toJson (stats : Stats) : Lean.Json :=
     ("defeq_cache_hits", jsonNat stats.defEqCacheHits),
     ("defeq_cache_misses", jsonNat stats.defEqCacheMisses),
     ("defeq_cache_entries", jsonNat stats.defEqCacheEntries),
+    ("defeq_success_cache_hits", jsonNat stats.defEqSuccessCacheHits),
+    ("defeq_success_cache_misses", jsonNat stats.defEqSuccessCacheMisses),
+    ("defeq_success_cache_entries", jsonNat stats.defEqSuccessCacheEntries),
+    ("defeq_success_cache_dropped", jsonNat stats.defEqSuccessCacheDropped),
     ("constructor_proof_field_skips", jsonNat stats.constructorProofFieldSkips),
     ("defeq_nonalpha_repeat_observations", jsonNat stats.defEqRepeatObservations),
     ("defeq_nonalpha_repeat_hits", jsonNat stats.defEqRepeatHits),
@@ -1308,18 +1387,42 @@ def Stats.toJson (stats : Stats) : Lean.Json :=
     ("structural_lambda_samples", stringPairsJson stats.structuralLambdaSamples)
   ]
 
-def profileDeclaration (manifest : Manifest) (env : Env) (budget traceEvery : Nat)
-    (useMemo useRepeatDiag : Bool) (declaration : Declaration) : IO Lean.Json := do
+def newProfiler (budget traceEvery : Nat)
+    (useMemo useRepeatDiag useDefEqSuccessCache : Bool) : IO Profiler := do
   let ref ← IO.mkRef ({} : Stats)
   let markRef ← IO.mkRef "start"
   let whnfCacheRef ← IO.mkRef ({} : Std.HashMap WhnfKey Expr)
   let defEqCacheRef ← IO.mkRef ({} : Std.HashMap DefEqKey Unit)
-  let profiler : Profiler :=
-    { budget, ref, markRef, whnfCacheRef, defEqCacheRef, useMemo, useRepeatDiag, traceEvery }
+  let defEqSuccessCacheRef ← IO.mkRef ({} : Std.HashMap DefEqKey Unit)
+  pure {
+    budget,
+    ref,
+    markRef,
+    whnfCacheRef,
+    defEqCacheRef,
+    defEqSuccessCacheRef,
+    useMemo,
+    useRepeatDiag,
+    useDefEqSuccessCache,
+    traceEvery
+  }
+
+def replayProfilerBudget : Nat :=
+  10000000000
+
+def addDeclarationWithDefEqSuccessCache (manifest : Manifest) (env : Env)
+    (declaration : Declaration) : IO (Result Env) := do
+  let profiler ← newProfiler replayProfilerBudget 0 false false true
+  (addDeclaration profiler manifest env declaration).run
+
+def profileDeclaration (manifest : Manifest) (env : Env) (budget traceEvery : Nat)
+    (useMemo useRepeatDiag useDefEqSuccessCache : Bool)
+    (declaration : Declaration) : IO Lean.Json := do
+  let profiler ← newProfiler budget traceEvery useMemo useRepeatDiag useDefEqSuccessCache
   let startedMs ← IO.monoMsNow
   let result ← (checkDeclaration profiler manifest env declaration).run
   let stoppedMs ← IO.monoMsNow
-  let stats ← ref.get
+  let stats ← profiler.ref.get
   let statusAndMessage :=
     match result with
     | .ok () => ("checked", "")
@@ -1336,6 +1439,7 @@ def profileDeclaration (manifest : Manifest) (env : Env) (budget traceEvery : Na
     ("budget", jsonNat budget),
     ("trace_every", jsonNat traceEvery),
     ("repeat_diag", Lean.Json.bool useRepeatDiag),
+    ("defeq_success_cache", Lean.Json.bool useDefEqSuccessCache),
     ("stats", stats.toJson)
   ]
   pure (Lean.Json.mkObj fields)
