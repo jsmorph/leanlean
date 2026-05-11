@@ -529,3 +529,5 @@ The full `Real.continuous_sqrt` replay accepts after this change.  It reused 6,5
 `Nat.primeFactorsList_unique` accepts once the same cache contains the `Nat.sqrt` support checked by the measure probe.  The replay reused 2,889 declaration entries, checked 414 declarations, accepted 3,303 target declarations, produced environment size 3,730, and emitted no stderr.  The target theorem checked in 15 ms, while the remaining measured cost stayed in the reused numeric-support region.
 
 `Finset.prod_biUnion` also accepts after wider probes populated the old Grind dependency wall.  The replay reused 3,386 declaration entries, checked 40 declarations, accepted 3,426 target declarations, produced environment size 3,852, and emitted no stderr.  The checked suffix totaled 102,014 counted steps and 24,627 WHNF calls; the target theorem checked in 10 ms.
+
+`Finset.range_filter_eq` accepts under the same conditions.  The replay reused 2,453 declaration entries, checked 201 declarations, accepted 2,654 target declarations, produced environment size 2,975, and emitted no stderr.  The old range proof boundary checked in 367 ms, and the target theorem checked in 4 ms.
